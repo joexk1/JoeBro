@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+*.moved-aside
+.swiftpm/
+
+# Python
+__pycache__/
+*.pyc
+
+# Local runtime data (never commit a user's data/keys)
+*.sqlite3
+
+# Dev artifacts (not for release)
+test_screenshots/

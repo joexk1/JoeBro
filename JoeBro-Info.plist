@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>JoeBro needs full calendar access to read, create, edit, and delete events when you connect macOS Calendar.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>JoeBro needs calendar access to show and manage your events locally.</string>
+	<!-- JoeBro talks to a loopback backend and optional user-added local or
+	     Tailscale model endpoints, many of which are plain HTTP. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+</dict>
+</plist>
