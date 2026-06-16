@@ -51,7 +51,7 @@ It's one window, not ten apps:
 ![The Brain tab — your AI's persistent memory](README_assets/memory.png)
 
 - **Skills** — JoeBro teaches itself the things you do often. Review, edit, or prune them by hand whenever you like.
-- **AI Check** — quick model health and status at a glance.
+- **AI Check** — paste text to see how AI-written it reads, with the suspect sentences flagged.
 
 For a full walkthrough of every tab, control and right-click menu, see the **[User Guide](USER_GUIDE.md)**. To go from zero to your first message in under a minute, start with **[Getting Started](GETTING_STARTED.md)**.
 
