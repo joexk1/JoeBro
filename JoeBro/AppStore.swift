@@ -93,6 +93,13 @@ final class AppStore {
     var activeDocID: String?
     var editorVisible = false
     var editorDetached = false     // editor lives in its own window
+    // Per-session editor state, so returning to a chat restores its open docs
+    // exactly as you left them (no matter where you went meanwhile).
+    private var editorStateBySession: [String: EditorSnapshot] = [:]
+    // AI doc edits that arrived while you were on another chat — surfaced as a
+    // bouncing dot on that chat, then opened with the approval prompt on return.
+    private var deferredDocEdits: [String: DeferredDocEdit] = [:]
+    var docAlertSessions: Set<String> = []
     var quickLookURL: URL?            // binary files (PDF/images) from the bound folder
     var requireDocApproval: Bool = UserDefaults.standard.object(forKey: "requireDocApproval") == nil
         ? true : UserDefaults.standard.bool(forKey: "requireDocApproval")
@@ -231,17 +238,27 @@ final class AppStore {
         guard id != selectedSessionID else { return }
         // Don't cancel an in-flight generation — let it finish in the background
         // (the sidebar shows a spinner). Only the Stop button cancels.
+        // Snapshot the chat we're leaving so its editor comes back intact.
+        if let cur = selectedSessionID {
+            editorStateBySession[cur] = EditorSnapshot(
+                openDocs: openDocs, activeDocID: activeDocID, editorVisible: editorVisible)
+        }
         selectedSessionID = id
         isStreaming = id.map { workingSessions.contains($0) } ?? false
         messages = []
-        openDocs = []
-        activeDocID = nil
-        editorVisible = false
+        // Restore this chat's editor exactly as it was left (or empty for a
+        // chat we haven't opened this session).
+        let snap = id.flatMap { editorStateBySession[$0] }
+        openDocs = snap?.openDocs ?? []
+        activeDocID = snap?.activeDocID
+        editorVisible = snap?.editorVisible ?? false
         Task { await loadWorkdir() }
         guard let id else { return }
         // The composer switch mirrors the session's saved mode — the
         // sidebar hammer and the switch always agree.
         agentMode = sessions.first(where: { $0.id == id })?.mode == "agent"
+        // A doc the AI edited while you were away — open it with the approval prompt.
+        applyDeferredDocEdit(for: id)
         Task { await loadHistory(for: id) }
     }
 
@@ -838,7 +855,17 @@ final class AppStore {
                     // keep draining (so the backend finishes + persists) but stop
                     // mutating the UI, which now belongs to a different session.
                     if selectedSessionID != sid { detached = true }
-                    if detached { continue }
+                    if detached {
+                        // Headless: keep draining so the backend finishes, but
+                        // don't mutate another session's UI. Capture doc edits so
+                        // they aren't silently applied behind your back — surface
+                        // them on the origin chat for approval when you return.
+                        if case .docUpdate(let id, let title, let language, let content, let version) = event {
+                            queueDeferredDocEdit(session: sid, id: id, title: title,
+                                                 language: language, content: content, version: version)
+                        }
+                        continue
+                    }
                     switch event {
                     case .delta(let d):
                         buffer += d
@@ -1094,6 +1121,46 @@ final class AppStore {
     // MARK: Editor pane (co-editing)
 
     private let streamingDocID = "_streaming_"
+
+    struct EditorSnapshot { var openDocs: [EditorDoc]; var activeDocID: String?; var editorVisible: Bool }
+    struct DeferredDocEdit { var id: String; var title: String; var language: String; var content: String; var version: Int? }
+
+    /// A doc the AI edited while you were on another chat. Don't touch the live
+    /// (now different) session's UI — queue it and flag a dot on the origin chat.
+    private func queueDeferredDocEdit(session: String, id: String, title: String,
+                                      language: String?, content: String, version: Int?) {
+        // With approval off the server's saved copy is authoritative and the doc
+        // just reloads fresh on open; only the approval-gated case needs deferring.
+        guard requireDocApproval else { return }
+        deferredDocEdits[session] = DeferredDocEdit(
+            id: id, title: title, language: language ?? "markdown", content: content, version: version)
+        docAlertSessions.insert(session)
+    }
+
+    /// On returning to a chat, open the doc the AI edited and gate it for approval.
+    private func applyDeferredDocEdit(for session: String) {
+        docAlertSessions.remove(session)
+        guard let edit = deferredDocEdits.removeValue(forKey: session) else { return }
+        openDocs.removeAll { $0.id == streamingDocID }   // drop any stale placeholder
+        if matchOpenDoc(id: edit.id, title: edit.title) != nil {
+            // Still open from when you left — the local copy is the pre-edit
+            // version, so the normal gate works and Reject can restore it.
+            handleDocUpdate(id: edit.id, title: edit.title, language: edit.language,
+                            content: edit.content, version: edit.version)
+        } else {
+            // Closed — fetch it and surface the AI's version behind the chip.
+            Task {
+                do {
+                    let d: DocDetail = try await api.getJSON("api/document/\(edit.id)")
+                    guard selectedSessionID == session else { return }
+                    openDoc(d)
+                    if let i = docIndex(edit.id) { openDocs[i].pendingAIContent = edit.content }
+                    activeDocID = edit.id
+                    editorVisible = true
+                } catch { loadError = "Open document: " + error.localizedDescription }
+            }
+        }
+    }
 
     func docIndex(_ id: String?) -> Int? {
         guard let id else { return nil }

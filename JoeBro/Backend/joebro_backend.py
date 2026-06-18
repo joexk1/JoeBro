@@ -1300,7 +1300,12 @@ class Handler(BaseHTTPRequestHandler):
         # mode there are no tools, so we only strip stray tool markup — we never
         # execute it (running it would let chat mode silently edit files).
         run_text_tools = (f.get("mode") or "").lower() == "agent"
-        reply, tool_results = self.execute_ai_file_tools(sid, reply, f, run=run_text_tools)
+        # The per-turn tool cap spans BOTH paths: when the model can't call tools
+        # natively (or we cut it off), it emits tool markup as text and this pass
+        # runs it. Subtract what the loop already used so the total honours the cap.
+        _cap = max(0, int(f.get("max_tool_calls") or 0))
+        _remaining = max(0, _cap - len(tool_events)) if _cap else None   # None = unlimited
+        reply, tool_results = self.execute_ai_file_tools(sid, reply, f, run=run_text_tools, max_calls=_remaining)
         for ev in tool_results:
             emit({"type": "tool_start", "tool": ev.get("tool"), "command": ev.get("command", "")})
             emit({"type": "tool_output", "tool": ev.get("tool"), "command": ev.get("command", ""),
@@ -1316,7 +1321,15 @@ class Handler(BaseHTTPRequestHandler):
         if not streamed_live:
             for token in saved_reply.split(" "):
                 sse({"delta": token + " "})
-        sse({"type": "metrics", "data": {"total_time": round(time.time() - started, 2)}})
+        # tok/s + context-window gauge. Endpoints rarely return token usage on a
+        # stream, so estimate from text (~4 chars/token) — close enough for the
+        # readout. The full prompt is every message stored for this session so far
+        # (the assistant reply isn't persisted until below), plus the response.
+        elapsed = round(time.time() - started, 2)
+        m = self._response_stats(sid, saved_reply, thinking, f.get("model"), elapsed)
+        sse({"type": "metrics", "data": {"total_time": elapsed, "response_time": elapsed,
+                                         "tokens_per_second": m["tokens_per_second"],
+                                         "context_percent": m["context_percent"]}})
         if client_alive["ok"]:
             try:
                 self.wfile.write(b"data: [DONE]\n\n")
@@ -1325,7 +1338,10 @@ class Handler(BaseHTTPRequestHandler):
                 client_alive["ok"] = False
 
         # Persist the assistant message AFTER streaming (with tool_events meta).
-        metadata = {"model": f.get("model") or "Local fallback"}
+        metadata = {"model": f.get("model") or "Local fallback",
+                    "response_time": elapsed,
+                    "tokens_per_second": m["tokens_per_second"],
+                    "context_percent": m["context_percent"]}
         if thinking:
             metadata["thinking"] = thinking
         if tool_events:
@@ -1662,6 +1678,15 @@ class Handler(BaseHTTPRequestHandler):
             for tc in raw_calls:
                 fn = tc.get("function") or {}
                 name = (fn.get("name") or "").strip().lower()
+                # Per-turn tool-call cap, enforced inside the round too: a model
+                # can batch several calls in one round, so the per-round check
+                # alone would let them all through. Acknowledge the skipped calls
+                # (every tool_call_id needs a reply or the next request 400s) but
+                # don't run them; the next round runs tools-off for a final answer.
+                if max_tool_calls and tool_calls_made >= max_tool_calls:
+                    messages.append({"role": "tool", "tool_call_id": tc.get("id") or name,
+                                     "content": "Tool-use limit for this turn reached; not executed."})
+                    continue
                 try:
                     params = json.loads(fn.get("arguments") or "{}")
                 except Exception:
@@ -2164,7 +2189,7 @@ class Handler(BaseHTTPRequestHandler):
         self.add_message(sid, "assistant", reply, {"model": f.get("model") or "Local fallback"})
         return reply
 
-    def execute_ai_file_tools(self, sid, reply, form=None, run=True):
+    def execute_ai_file_tools(self, sid, reply, form=None, run=True, max_calls=None):
         if not sid or not reply:
             return reply, []
         form = form or {}
@@ -2184,6 +2209,8 @@ class Handler(BaseHTTPRequestHandler):
         if not run:
             return cleaned, []
         for tool, body in TOOL_BLOCK_RE.findall(reply):
+            if max_calls is not None and len(events) >= max_calls:
+                break   # per-turn tool-use cap reached (shared with the agent loop)
             name = tool.strip().lower()
             if name == "write_file" or name in OBSOLETE_AI_TOOLS:
                 continue
@@ -3704,6 +3731,43 @@ class Handler(BaseHTTPRequestHandler):
             "insert into messages(session_id,role,content,metadata,created_at) values(?,?,?,?,?)",
             (sid, role, content or "", json.dumps(metadata or {}), now_iso()),
         )
+
+    @staticmethod
+    def _context_window(model):
+        """Best-guess context-window size (tokens) for the gauge. Approximate —
+        it only drives the 'context used' circle, not any real limit."""
+        m = (model or "").lower()
+        if "claude" in m:
+            return 200_000
+        if "gemini" in m:
+            return 1_000_000
+        if any(k in m for k in ("gpt-4o", "gpt-4.1", "gpt-5", "o1", "o3", "o4", "gpt-oss", "120b")):
+            return 128_000
+        if "deepseek" in m:
+            return 128_000
+        if any(k in m for k in ("llama", "qwen", "mistral", "gemma", "phi")):
+            return 32_000
+        return 128_000
+
+    def _response_stats(self, sid, reply, thinking, model, elapsed):
+        """tok/s + context-window-used %, estimated from text (~4 chars/token).
+        Endpoints seldom return real usage on a stream, and this only feeds the
+        readout, so an estimate is fine and works for every endpoint."""
+        out_chars = len(reply or "") + len(thinking or "")
+        out_tokens = out_chars / 4.0
+        tps = round(out_tokens / elapsed, 1) if elapsed and elapsed > 0 else 0.0
+        # Prompt ≈ every message stored for this session so far (the assistant
+        # reply isn't persisted yet) + ~1.5k for the system prompt / tool schemas.
+        try:
+            prompt_chars = sum(len(r.get("content") or "")
+                               for r in self.store.rows(
+                                   "select content from messages where session_id=?", (sid,)))
+        except Exception:
+            prompt_chars = 0
+        used = prompt_chars / 4.0 + 1500 + out_tokens
+        window = self._context_window(model)
+        ctx = round(min(100.0, max(0.0, 100.0 * used / window)), 1) if window else 0.0
+        return {"tokens_per_second": tps, "context_percent": ctx}
 
     def pref(self, key):
         row = self.store.one("select value from prefs where key=?", (key,))

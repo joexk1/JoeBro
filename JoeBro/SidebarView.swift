@@ -55,7 +55,8 @@ struct SidebarView: View {
                         ForEach(store.filteredSessions) { session in
                             SessionRow(session: session,
                                        isSelected: store.activeTab == .chat && session.id == store.selectedSessionID,
-                                       isWorking: store.workingSessions.contains(session.id))
+                                       isWorking: store.workingSessions.contains(session.id),
+                                       hasDocAlert: store.docAlertSessions.contains(session.id))
                                 .onTapGesture { store.select(session.id) }
                                 .contextMenu {
                                     Button(session.isImportant == true ? "Unpin" : "Pin") { store.togglePin(session.id) }
@@ -454,7 +455,9 @@ private struct SessionRow: View {
     let session: ChatSessionInfo
     let isSelected: Bool
     var isWorking = false
+    var hasDocAlert = false
     @State private var hovering = false
+    @State private var bounceY: CGFloat = 0
 
     var body: some View {
         HStack(spacing: 8) {
@@ -474,6 +477,14 @@ private struct SessionRow: View {
                 }
             }
             Spacer(minLength: 0)
+            if hasDocAlert && !isWorking {
+                Circle()
+                    .fill(Color.accentColor)
+                    .frame(width: 6, height: 6)
+                    .offset(y: bounceY)
+                    .transition(.scale.combined(with: .opacity))
+                    .help("The AI edited a document — open this chat to review")
+            }
             if isWorking {
                 ProgressView()
                     .controlSize(.small)
@@ -503,6 +514,16 @@ private struct SessionRow: View {
         )
         .scaleEffect(hovering ? 1.02 : 1)
         .contentShape(RoundedRectangle(cornerRadius: 9))
+        .animation(.spring(duration: 0.3), value: hasDocAlert)
+        .onChange(of: hasDocAlert, initial: true) { _, on in
+            if on {
+                withAnimation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true)) {
+                    bounceY = -4
+                }
+            } else {
+                withAnimation(.spring(duration: 0.25)) { bounceY = 0 }
+            }
+        }
         .onHover { h in
             withAnimation(.spring(duration: 0.22)) { hovering = h }
         }

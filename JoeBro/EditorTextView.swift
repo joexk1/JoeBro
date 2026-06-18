@@ -327,9 +327,10 @@ struct RichDocEditor: NSViewRepresentable {
             let m = NSMutableAttributedString(attributedString: attr)
             let full = NSRange(location: 0, length: m.length)
             if editable {
-                // Edit mode: every glyph white (colour/highlight flattened like
-                // Markdown). Save strips colour again so white isn't baked in.
-                m.addAttribute(.foregroundColor, value: NSColor.white, range: full)
+                // Edit mode: flatten colour/highlight to the adaptive system text
+                // colour (dark on light mode, light on dark) so the transparent
+                // editor never renders white-on-white. Save strips colour again.
+                m.addAttribute(.foregroundColor, value: NSColor.textColor, range: full)
                 m.removeAttribute(.backgroundColor, range: full)
                 m.removeAttribute(.underlineColor, range: full)
             }
@@ -354,7 +355,7 @@ struct RichDocEditor: NSViewRepresentable {
         }
         tv.pageTopInset = min(max(top, 10), 48)
         tv.textContainerInset = NSSize(width: min(max(left, 14), 72), height: min(max(top, 10), 48))
-        tv.insertionPointColor = .white
+        tv.insertionPointColor = .textColor
         if editable { commands.textView = tv }
         context.coordinator.textView = tv
         context.coordinator.url = url
@@ -678,7 +679,7 @@ final class JBTextView: NSTextView {
         let chars = string as NSString
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular),
-            .foregroundColor: NSColor.white,
+            .foregroundColor: NSColor.secondaryLabelColor,
         ]
 
         // Line number of the first visible glyph
