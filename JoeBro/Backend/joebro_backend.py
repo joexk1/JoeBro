@@ -85,6 +85,12 @@ _PERMISSION_REGISTRY: dict = {}        # request_id -> {"event": Event, "decisio
 _PERMISSION_GUARD = threading.Lock()
 _SESSION_ALLOW: dict = {}              # session_id -> set of tools "always allowed this session"
 
+# Cache of the assembled model picker list — each endpoint needs a live network
+# fetch, so we don't redo it on every /api/models call.
+_MODELS_CACHE: dict = {"ts": 0.0, "items": None}
+_MODELS_CACHE_LOCK = threading.Lock()
+_MODELS_TTL = 300                      # seconds
+
 
 def lock_for_path(path) -> threading.Lock:
     key = str(path)
@@ -873,7 +879,8 @@ class Handler(BaseHTTPRequestHandler):
                 "name": (session or {}).get("name"),
             })
         if path == "/api/models":
-            return self.json({"models": [], "items": self.model_items()})
+            refresh = str(q.get("refresh") or "").lower() in ("1", "true", "yes")
+            return self.json({"models": [], "items": self.model_items(refresh=refresh)})
         if path == "/api/model-endpoints":
             eps = self.store.rows("select id,name,base_url,is_enabled from endpoints order by created_at")
             return self.json([
@@ -1235,9 +1242,20 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, "text/event-stream")
         started = time.time()
 
+        # If the user switches chats / closes the tab mid-run, the client drops
+        # the SSE socket. Swallow the write error and keep computing server-side
+        # so the agent still finishes and the reply is persisted (loaded when
+        # they come back) — otherwise a backgrounded turn silently loses its answer.
+        client_alive = {"ok": True}
+
         def sse(obj):
-            self.wfile.write(f"data: {json.dumps(obj)}\n\n".encode("utf-8"))
-            self.wfile.flush()
+            if not client_alive["ok"]:
+                return
+            try:
+                self.wfile.write(f"data: {json.dumps(obj)}\n\n".encode("utf-8"))
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                client_alive["ok"] = False
 
         def emit(obj):
             # Live events from run_agent. A doc payload is streamed into the
@@ -1278,8 +1296,11 @@ class Handler(BaseHTTPRequestHandler):
             tool_events.extend(agent_events)
             streamed_live = True
         # Catch any text-format tool calls in the FINAL reply + strip markup.
-        # These weren't seen during the loop, so stream their rows now.
-        reply, tool_results = self.execute_ai_file_tools(sid, reply, f)
+        # These weren't seen during the loop, so stream their rows now. In CHAT
+        # mode there are no tools, so we only strip stray tool markup — we never
+        # execute it (running it would let chat mode silently edit files).
+        run_text_tools = (f.get("mode") or "").lower() == "agent"
+        reply, tool_results = self.execute_ai_file_tools(sid, reply, f, run=run_text_tools)
         for ev in tool_results:
             emit({"type": "tool_start", "tool": ev.get("tool"), "command": ev.get("command", "")})
             emit({"type": "tool_output", "tool": ev.get("tool"), "command": ev.get("command", ""),
@@ -1296,8 +1317,12 @@ class Handler(BaseHTTPRequestHandler):
             for token in saved_reply.split(" "):
                 sse({"delta": token + " "})
         sse({"type": "metrics", "data": {"total_time": round(time.time() - started, 2)}})
-        self.wfile.write(b"data: [DONE]\n\n")
-        self.wfile.flush()
+        if client_alive["ok"]:
+            try:
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                client_alive["ok"] = False
 
         # Persist the assistant message AFTER streaming (with tool_events meta).
         metadata = {"model": f.get("model") or "Local fallback"}
@@ -1376,6 +1401,34 @@ class Handler(BaseHTTPRequestHandler):
                 f"append to / change \"the doc\", call edit_document for that path with `content` set to the "
                 f"entire updated file (current text plus their additions) — do not create a new file. "
                 f"Current content of `{doc['path']}`:\n\"\"\"\n{doc['content']}\n\"\"\""
+            )
+        return system
+
+    def _chat_system(self, f):
+        """System prompt for CHAT mode — pure conversation, NO tools. Spells out
+        that the assistant cannot take actions so it stops claiming it edited the
+        doc / sent mail / ran something, and stops emitting tool-call syntax."""
+        now = datetime.now().astimezone()
+        system = (
+            "You are the assistant inside the native JoeBro app, in CHAT mode. This is a plain "
+            "conversation: you have NO tools and CANNOT take any action on the user's machine. "
+            "You cannot edit, create, or save files, cannot send or read email, cannot search the "
+            "web, run commands, or change the calendar. NEVER claim or imply you did any of these — "
+            "do not say you 'edited', 'updated', 'saved', 'created', 'sent', or 'added' anything, and "
+            "never output tool-call syntax, XML tags, or function calls (they will not run). "
+            "If the user wants you to actually DO something — edit the open document, manage email, "
+            "search the web, run a task — tell them to turn on Agent mode (the hammer toggle next to "
+            "the message box) and you'll carry it out there.\n"
+            f"Today is {now.strftime('%A, %Y-%m-%d')} and the local time is {now.strftime('%H:%M')} "
+            f"({now.strftime('%z') or 'local'})."
+        )
+        doc = self.open_doc_context(f)
+        if doc:
+            system += (
+                f"\n\nThe user has this document OPEN: `{doc['path']}`. You may read, quote, and "
+                f"discuss it, and you can describe or draft changes in your reply as text — but you "
+                f"cannot modify the file itself in chat mode. Current content:\n"
+                f"\"\"\"\n{doc['content']}\n\"\"\""
             )
         return system
 
@@ -1558,7 +1611,11 @@ class Handler(BaseHTTPRequestHandler):
         root_text = ((session or {}).get("workdir") or "").strip()
         root = Path(root_text).expanduser().resolve() if root_text else None
 
-        system = self._agent_system(f)
+        # Chat mode is pure conversation (no tools); agent mode gets the full
+        # tool-using prompt. Using the agent prompt in chat mode made weak models
+        # claim they'd "edited the doc" or emit tool syntax that never ran.
+        agent = (f.get("mode") or "").lower() == "agent"
+        system = self._agent_system(f) if agent else self._chat_system(f)
         skills_ctx = self._use_relevant_skills(f.get("message", ""))   # inject + bump confidence
         if skills_ctx:
             system += "\n\n" + skills_ctx
@@ -1568,13 +1625,18 @@ class Handler(BaseHTTPRequestHandler):
         messages = [{"role": "system", "content": system}] + self._history_messages(f)
         tools = self.tools_for(f, has_folder=root is not None)
         events, thinking_parts, final_text = [], [], ""
+        # Optional hard cap on tool calls per turn (Settings). 0 = unlimited.
+        max_tool_calls = max(0, int(f.get("max_tool_calls") or 0))
+        tool_calls_made = 0
         rounds, call_sigs, stuck = 0, {}, False
         while True:
             rounds += 1
             # No artificial low cap, but never hang forever: if the model repeats
-            # the SAME tool call (a read/list/edit loop) or blows past a generous
-            # backstop, drop tools so it MUST give a final answer this round.
-            use_tools = None if (stuck or rounds > 60) else tools
+            # the SAME tool call (a read/list/edit loop), hits the user's tool-use
+            # limit, or blows past a generous backstop, drop tools so it MUST give
+            # a final answer this round.
+            hit_limit = max_tool_calls and tool_calls_made >= max_tool_calls
+            use_tools = None if (stuck or hit_limit or rounds > 60) else tools
             # Stream every round: content + reasoning deltas reach the client
             # live (the final answer no longer appears all at once after a wait).
             msg = self._stream_chat(f, messages, use_tools, emit)
@@ -1626,6 +1688,7 @@ class Handler(BaseHTTPRequestHandler):
                         continue
                 # Announce the tool the moment it starts so the row appears live.
                 emit({"type": "tool_start", "tool": name, "command": command})
+                tool_calls_made += 1
                 event = self._run_one_tool(root, name, body, f, allow_outside, readonly)
                 if event is None:
                     event = {"tool": name, "command": command,
@@ -2101,7 +2164,7 @@ class Handler(BaseHTTPRequestHandler):
         self.add_message(sid, "assistant", reply, {"model": f.get("model") or "Local fallback"})
         return reply
 
-    def execute_ai_file_tools(self, sid, reply, form=None):
+    def execute_ai_file_tools(self, sid, reply, form=None, run=True):
         if not sid or not reply:
             return reply, []
         form = form or {}
@@ -2118,6 +2181,8 @@ class Handler(BaseHTTPRequestHandler):
         def strip_recognized(match):
             return "" if match.group(1).strip().lower() in recognized else match.group(0)
         cleaned = re.sub(r"\n{3,}", "\n\n", TOOL_BLOCK_RE.sub(strip_recognized, reply)).strip()
+        if not run:
+            return cleaned, []
         for tool, body in TOOL_BLOCK_RE.findall(reply):
             name = tool.strip().lower()
             if name == "write_file" or name in OBSOLETE_AI_TOOLS:
@@ -3253,6 +3318,7 @@ class Handler(BaseHTTPRequestHandler):
             criterion = "FLAGGED"
         out = []
         errors = []
+        total_matched = 0   # all messages matching the filter, before the page limit
         for account in sources:
             try:
                 conn = self.imap_connect(account)
@@ -3265,6 +3331,7 @@ class Handler(BaseHTTPRequestHandler):
                 if status != "OK":
                     raise RuntimeError("Search failed")
                 uids = (data[0] or b"").split()
+                total_matched += len(uids)
                 selected = list(reversed(uids if limit == 0 else uids[-limit:]))
                 for raw_uid in selected:
                     status, rows = conn.uid("fetch", raw_uid, "(BODY.PEEK[HEADER] FLAGS RFC822.SIZE)")
@@ -3314,7 +3381,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 return 0
         out.sort(key=sort_key, reverse=True)
-        return self.json({"emails": out, "total": len(out), "configured": bool(sources), "error": "; ".join(errors) if errors and not out else None})
+        return self.json({"emails": out, "total": total_matched, "configured": bool(sources), "error": "; ".join(errors) if errors and not out else None})
 
     def email_read(self, uid):
         account, msg_uid = self.split_mail_uid(uid)
@@ -3645,64 +3712,132 @@ class Handler(BaseHTTPRequestHandler):
     def set_pref(self, key, value):
         self.store.exec("insert or replace into prefs(key,value) values(?,?)", (key, json.dumps(value)))
 
-    def model_items(self):
+    def _models_sig(self):
+        """Cheap (DB-only) fingerprint of the endpoint config + hidden-model prefs.
+        When it changes the model cache auto-invalidates — no need to bust it from
+        every endpoint add/edit/delete/hide site."""
+        parts = []
+        for e in self.store.rows("select id,base_url,api_key,is_enabled from endpoints order by id"):
+            parts.append(f"{e['id']}:{e['base_url']}:{e['is_enabled']}:{bool(e.get('api_key'))}")
+            parts.append(",".join(sorted(self.pref("hidden_models_" + e["id"]) or [])))
+        return "|".join(parts)
+
+    def model_items(self, refresh=False):
+        # Cached: model lists barely change but each endpoint needs a live network
+        # call (one slow/sleeping endpoint can take ~16s), so recomputing on every
+        # /api/models made the picker stall. Serve a cache keyed on the config
+        # signature; any endpoint/visibility change refreshes it automatically.
+        # Stale-while-revalidate: once warm we always answer instantly and refresh
+        # in the background, so only the very first call after a restart can block.
+        now = time.time()
+        sig = self._models_sig()
+        # All DB access happens HERE on the request thread — sqlite isn't safe to
+        # touch from the background/worker threads below.
+        specs = self._endpoint_specs()
+        if not refresh:
+            with _MODELS_CACHE_LOCK:
+                c = _MODELS_CACHE
+                same = c["items"] is not None and c.get("sig") == sig
+                fresh = same and now - c["ts"] < _MODELS_TTL
+                cached = c["items"] if same else None
+            if fresh:
+                return cached
+            if cached is not None:
+                # Same config, just stale — hand back the stale list now and
+                # refresh off the request path (network only, no DB).
+                threading.Thread(target=self._build_model_items, args=(specs, sig),
+                                 daemon=True).start()
+                return cached
+        return self._build_model_items(specs, sig)
+
+    def _endpoint_specs(self):
+        """(id, name, base_url, api_key, hidden-set) per enabled endpoint — the
+        DB-side data the model list needs, gathered on the request thread."""
+        return [(ep["id"], ep["name"], ep["base_url"], ep.get("api_key") or "",
+                 set(self.pref("hidden_models_" + ep["id"]) or []))
+                for ep in self.store.rows("select * from endpoints where is_enabled=1 order by created_at")]
+
+    def _build_model_items(self, specs, sig):
+        """Network-only: fetch each endpoint's models IN PARALLEL and cache the
+        assembled picker list. No DB access, so it's safe to run in a thread."""
+        global _MODELS_CACHE
+        import concurrent.futures
+        fetched = {}
+        if specs:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(specs))) as ex:
+                futs = {ex.submit(self._fetch_models, base, key): epid
+                        for (epid, _name, base, key, _h) in specs}
+                for fut in concurrent.futures.as_completed(futs):
+                    try:
+                        fetched[futs[fut]] = fut.result()
+                    except Exception:
+                        fetched[futs[fut]] = []
         items = []
-        for ep in self.store.rows("select * from endpoints where is_enabled=1 order by created_at"):
+        for (epid, name, base, key, hidden) in specs:
             # Exclude models the user deselected (hidden) — the picker only
             # shows what's selected; the settings list uses the per-endpoint
             # /models route which still returns everything with is_hidden.
-            models = [m["id"] for m in self.endpoint_models(ep["id"]) if not m["is_hidden"]]
+            models = [mid for mid in fetched.get(epid, []) if mid not in hidden]
             if not models:
                 continue
             items.append({
-                "url": ep["base_url"],
-                "endpoint_id": ep["id"],
-                "endpoint_name": ep["name"],
+                "url": base,
+                "endpoint_id": epid,
+                "endpoint_name": name,
                 "category": "local",
                 "offline": False,
                 "models": models,
                 "models_display": models,
             })
+        with _MODELS_CACHE_LOCK:
+            _MODELS_CACHE = {"ts": time.time(), "items": items, "sig": sig}
         return items
+
+    def _fetch_models(self, base, api_key):
+        """Network-only model-id list for one endpoint (no DB — thread-safe)."""
+        base = (base or "").rstrip("/")
+        if base.endswith("/v1"):
+            candidates = [base + "/models", base[:-3] + "/api/tags"]
+        else:
+            candidates = [base + "/models", base + "/v1/models", base + "/api/tags"]
+        is_anthropic = "anthropic.com" in base
+        data = None
+        for url in candidates:
+            req = urllib.request.Request(url)
+            # A real User-Agent — Groq/Cerebras sit behind Cloudflare, which
+            # 1010-blocks urllib's default UA.
+            req.add_header("User-Agent",
+                           "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15")
+            if api_key:
+                if is_anthropic:
+                    # Anthropic doesn't accept Bearer on /v1/models.
+                    req.add_header("x-api-key", api_key)
+                    req.add_header("anthropic-version", "2023-06-01")
+                else:
+                    req.add_header("Authorization", "Bearer " + api_key)
+            try:
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                break
+            except Exception:
+                continue
+        if not data:
+            return []
+        rows = data.get("data") or data.get("models") or []
+        out = []
+        for row in rows:
+            mid = (row.get("id") or row.get("name") or row.get("model")) if isinstance(row, dict) else str(row)
+            if mid:
+                out.append(mid)
+        return out
 
     def endpoint_models(self, ep_id):
         ep = self.store.one("select * from endpoints where id=?", (ep_id,))
         if not ep:
             return []
-        base = ep["base_url"].rstrip("/")
-        candidates = []
-        if base.endswith("/v1"):
-            candidates.append(base + "/models")
-            candidates.append(base[:-3] + "/api/tags")
-        else:
-            candidates.append(base + "/models")
-            candidates.append(base + "/v1/models")
-            candidates.append(base + "/api/tags")
-        try:
-            data = None
-            for url in candidates:
-                req = urllib.request.Request(url)
-                if ep.get("api_key"):
-                    req.add_header("Authorization", "Bearer " + ep["api_key"])
-                try:
-                    with urllib.request.urlopen(req, timeout=8) as resp:
-                        data = json.loads(resp.read().decode("utf-8"))
-                    break
-                except Exception:
-                    continue
-            if not data:
-                return []
-            rows = data.get("data") or data.get("models") or []
-            hidden = set(self.pref("hidden_models_" + ep_id) or [])
-            out = []
-            for row in rows:
-                mid = (row.get("id") or row.get("name") or row.get("model")) if isinstance(row, dict) else str(row)
-                if not mid:
-                    continue
-                out.append({"id": mid, "display": mid, "is_hidden": mid in hidden})
-            return out
-        except Exception:
-            return []
+        hidden = set(self.pref("hidden_models_" + ep_id) or [])
+        return [{"id": mid, "display": mid, "is_hidden": mid in hidden}
+                for mid in self._fetch_models(ep["base_url"], ep.get("api_key") or "")]
 
     def _multipart(self, field):
         """Minimal multipart/form-data parser via the email package —
@@ -4445,6 +4580,15 @@ def main():
         except Exception:
             pass
     threading.Thread(target=_boot_searxng, daemon=True).start()
+    # Warm the model picker cache at boot so the first /api/models is instant
+    # instead of waiting on every endpoint's live fetch.
+    def _warm_models():
+        h = Handler.__new__(Handler); h.server = server
+        try:
+            h.model_items(refresh=True)
+        except Exception:
+            pass
+    threading.Thread(target=_warm_models, daemon=True).start()
     print(f"JoeBro backend listening on http://{args.host}:{args.port}", flush=True)
     server.serve_forever()
 

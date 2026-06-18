@@ -557,6 +557,104 @@ final class JBTextView: NSTextView {
         setSelectedRange(NSRange(location: lineRange.location, length: replaced.utf16.count))
     }
 
+    // MARK: List & indent niceties (markdown)
+
+    private static let indentUnit = "  "   // two spaces = one indent level
+
+    /// Tab indents the current line / selection; Shift-Tab outdents. On a list
+    /// item this turns "- x" into "  - x" (a sub-bullet).
+    override func insertTab(_ sender: Any?) { indentSelection(by: 1) }
+    override func insertBacktab(_ sender: Any?) { indentSelection(by: -1) }
+
+    /// Return continues a list: it repeats the bullet / next number with the same
+    /// indent. Pressing it on an empty item ends the list instead.
+    override func insertNewline(_ sender: Any?) {
+        let ns = string as NSString
+        let sel = selectedRange()
+        guard sel.length == 0 else { super.insertNewline(sender); return }
+        let lineRange = ns.lineRange(for: NSRange(location: sel.location, length: 0))
+        let raw = ns.substring(with: lineRange)
+        let line = raw.hasSuffix("\n") ? String(raw.dropLast()) : raw
+        guard let info = Self.listPrefix(line) else { super.insertNewline(sender); return }
+
+        let afterMarker = String(line.dropFirst(info.prefix.count))
+        if afterMarker.trimmingCharacters(in: .whitespaces).isEmpty {
+            // Empty item — end the list by clearing this line's marker.
+            let clear = NSRange(location: lineRange.location, length: (info.prefix as NSString).length)
+            guard shouldChangeText(in: clear, replacementString: "") else { return }
+            textStorage?.replaceCharacters(in: clear, with: "")
+            setSelectedRange(NSRange(location: lineRange.location, length: 0))
+            didChangeText()
+            return
+        }
+        let nextPrefix = info.isNumber
+            ? info.indent + "\(info.number + 1). "
+            : info.indent + info.bullet + " "
+        let insert = "\n" + nextPrefix
+        guard shouldChangeText(in: sel, replacementString: insert) else { return }
+        textStorage?.replaceCharacters(in: sel, with: insert)
+        setSelectedRange(NSRange(location: sel.location + (insert as NSString).length, length: 0))
+        didChangeText()
+    }
+
+    private func indentSelection(by direction: Int) {
+        let ns = string as NSString
+        let sel = selectedRange()
+        if sel.length == 0 {
+            let lineRange = ns.lineRange(for: sel)
+            let raw = ns.substring(with: lineRange)
+            let line = raw.hasSuffix("\n") ? String(raw.dropLast()) : raw
+            let suffix = raw.hasSuffix("\n") ? "\n" : ""
+            let newLine = direction > 0 ? Self.indentUnit + line : Self.outdent(line)
+            let replacement = newLine + suffix
+            guard shouldChangeText(in: lineRange, replacementString: replacement) else { return }
+            textStorage?.replaceCharacters(in: lineRange, with: replacement)
+            let diff = (newLine as NSString).length - (line as NSString).length
+            setSelectedRange(NSRange(location: max(lineRange.location, sel.location + diff), length: 0))
+            didChangeText()
+            return
+        }
+        let lineRange = ns.lineRange(for: sel)
+        var lines = ns.substring(with: lineRange).components(separatedBy: "\n")
+        let lastEmpty = lines.last == ""
+        for i in lines.indices where !(i == lines.count - 1 && lastEmpty) {
+            lines[i] = direction > 0 ? Self.indentUnit + lines[i] : Self.outdent(lines[i])
+        }
+        let out = lines.joined(separator: "\n")
+        guard shouldChangeText(in: lineRange, replacementString: out) else { return }
+        textStorage?.replaceCharacters(in: lineRange, with: out)
+        setSelectedRange(NSRange(location: lineRange.location, length: (out as NSString).length))
+        didChangeText()
+    }
+
+    private static func outdent(_ line: String) -> String {
+        if line.hasPrefix(indentUnit) { return String(line.dropFirst(indentUnit.count)) }
+        if line.hasPrefix("\t") { return String(line.dropFirst()) }
+        var s = line, n = indentUnit.count
+        while n > 0, s.hasPrefix(" ") { s.removeFirst(); n -= 1 }
+        return s
+    }
+
+    /// Leading indent + list marker on a line, or nil if it isn't a list item.
+    private static func listPrefix(_ line: String) -> (prefix: String, indent: String, bullet: String, isNumber: Bool, number: Int)? {
+        let chars = Array(line)
+        var i = 0
+        while i < chars.count, chars[i] == " " || chars[i] == "\t" { i += 1 }
+        let indent = String(chars[0..<i])
+        guard i < chars.count else { return nil }
+        if "-*+".contains(chars[i]), i + 1 < chars.count, chars[i + 1] == " " {
+            let b = String(chars[i])
+            return (indent + b + " ", indent, b, false, 0)
+        }
+        var j = i
+        while j < chars.count, chars[j].isNumber { j += 1 }
+        if j > i, j + 1 < chars.count, chars[j] == ".", chars[j + 1] == " " {
+            let num = Int(String(chars[i..<j])) ?? 0
+            return (indent + String(chars[i..<j]) + ". ", indent, "", true, num)
+        }
+        return nil
+    }
+
     /// In-view gutter: line numbers, full-height margin line, and
     /// ruled-paper hairlines — all in plain view drawing, no NSRulerView.
     override func drawBackground(in rect: NSRect) {

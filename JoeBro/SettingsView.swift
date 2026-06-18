@@ -104,7 +104,29 @@ struct SettingsView: View {
                         UserDefaults.standard.set($0, forKey: "requireDocApproval")
                     }
                 ))
-                Text("When on, the AI's changes to an open document wait for your Apply/Reject.")
+                Text("When on, the AI's changes to an open document wait for your Apply/Reject — review them in the editor. When off, the AI edits the open document directly, whether you're editing it or just viewing it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Unlimited tool use", isOn: Binding(
+                    get: { store.maxToolCalls == 0 },
+                    set: { store.maxToolCalls = $0 ? 0 : 10 }
+                ))
+                if store.maxToolCalls > 0 {
+                    HStack {
+                        Text("Tool-use limit per turn")
+                        Spacer()
+                        TextField("", value: Binding(
+                            get: { store.maxToolCalls },
+                            set: { store.maxToolCalls = max(1, $0) }
+                        ), format: .number)
+                        .labelsHidden()
+                        .multilineTextAlignment(.trailing)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 64)
+                    }
+                }
+                Text("Caps how many tools the agent may call in a single turn before it must answer.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -329,7 +351,7 @@ struct ModelsSettingsTab: View {
             } header: {
                 Text("Endpoints & API Keys")
             } footer: {
-                Text("Untick a model to hide it from the picker — same visibility list the web app uses.")
+                Text("Untick a model to hide it from the picker.")
                     .font(.caption)
             }
         }

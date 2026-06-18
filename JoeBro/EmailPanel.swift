@@ -114,6 +114,10 @@ struct EmailPanel: View {
                 emails = .loaded(r.emails)
                 if folder == "INBOX", filter == "all" { store.emailCache = r.emails }
                 syncUnreadBadge()
+                // Pin the sidebar dot to the server's authoritative UNSEEN count
+                // (not just the unread rows in this limited page), so a stray
+                // mis-parsed flag can't leave a phantom dot when all mail is read.
+                await store.refreshEmailUnread()
             }
         } catch {
             if case .loaded = emails {} else { emails = .failed(error.localizedDescription) }
@@ -280,6 +284,20 @@ struct EmailPanel: View {
 
     /// Optimistic read-state flip — instant UI, server call in background.
     private func setRead(_ uid: String, read: Bool) {
+        // In the Unread view, a message that's now read no longer belongs —
+        // drop it from the list so the filter stays honest instead of showing
+        // read mail. Keep the open detail (the user may have just opened it).
+        if filter == "unread", read {
+            if case .loaded(var list) = emails {
+                list.removeAll { $0.uid == uid }
+                emails = .loaded(list)
+            }
+            Task {
+                await APIClient.shared.emailMarkRead(uid: uid, folder: folder, read: true)
+                await store.refreshEmailUnread()
+            }
+            return
+        }
         if case .loaded(var list) = emails,
            let i = list.firstIndex(where: { $0.uid == uid }) {
             list[i].isRead = read

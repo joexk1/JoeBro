@@ -96,6 +96,10 @@ final class AppStore {
     var quickLookURL: URL?            // binary files (PDF/images) from the bound folder
     var requireDocApproval: Bool = UserDefaults.standard.object(forKey: "requireDocApproval") == nil
         ? true : UserDefaults.standard.bool(forKey: "requireDocApproval")
+    // Hard cap on tool calls per agent turn. 0 = unlimited.
+    var maxToolCalls: Int = UserDefaults.standard.integer(forKey: "maxToolCalls") {
+        didSet { UserDefaults.standard.set(maxToolCalls, forKey: "maxToolCalls") }
+    }
     private var autosaveTask: Task<Void, Never>?
 
     // Bound folder (workdir) file tree — shown in the sidebar
@@ -136,9 +140,20 @@ final class AppStore {
     private func startStatusPoller() {
         Task {
             var tick = 0
+            var wasUp = false
             while !Task.isCancelled {
                 tick += 1
-                backendStatus = (await api.ping()) != nil ? .up : .down
+                let up = (await api.ping()) != nil
+                backendStatus = up ? .up : .down
+                // Self-heal: if the backend was still spawning at launch the model
+                // & session lists come back empty and never retry. When it comes
+                // up, reload what's missing so the model picker fills in without a
+                // manual "Refresh models".
+                if up, !wasUp || models.isEmpty || sessions.isEmpty {
+                    if models.isEmpty { await loadModels() }
+                    if sessions.isEmpty { await loadSessions() }
+                }
+                wasUp = up
                 if activeTab != .research,
                    let active = try? await api.researchActive(), !active.isEmpty {
                     researchDot = true
@@ -805,14 +820,17 @@ final class AppStore {
                     allowBash: allowBash,
                     permissionMode: permissionMode,
                     askPermission: askBeforeCommands,
-                    // Never send the transient "_streaming_" placeholder — the
-                    // backend can't resolve it, so the AI loses the open-doc
-                    // context and creates a new file / asks "which document?".
-                    activeDocID: (editorVisible && activeDocID != streamingDocID) ? activeDocID : nil,
+                    // Send the open doc's id whenever one is genuinely open — even
+                    // if the editor pane is collapsed — so the agent edits it in
+                    // place instead of asking "which document?". Never send the
+                    // transient "_streaming_" placeholder (the backend can't
+                    // resolve it).
+                    activeDocID: (activeDocID != nil && activeDocID != streamingDocID) ? activeDocID : nil,
                     model: selectedModel?.modelID,
                     endpointID: selectedModel?.endpointID,
                     endpointURL: selectedModel?.endpointURL,
-                    effort: effortFor(selectedModel)
+                    effort: effortFor(selectedModel),
+                    maxToolCalls: agentMode ? maxToolCalls : 0
                 )
 
                 for try await event in stream {
@@ -1275,11 +1293,15 @@ final class AppStore {
                 // wrote the file, so force it to re-read and show the AI's edit.
                 openDocs[i].reloadNonce += 1
             } else if requireDocApproval && !openDocs[i].content.isEmpty && openDocs[i].content != content {
-                // Gate AI edits to an open doc behind explicit approval —
+                // Ask-before-editing ON: gate AI edits behind explicit approval —
                 // the server already saved its version; Reject restores ours.
                 openDocs[i].pendingAIContent = content
             } else {
+                // Ask-before-editing OFF (or a first write): apply straight to the
+                // doc's content. This re-renders whether it's in edit OR preview
+                // mode, so the agent can edit a doc you're only viewing.
                 openDocs[i].content = content
+                openDocs[i].pendingAIContent = nil
                 openDocs[i].dirty = false
             }
             openDocs[i].version = version ?? openDocs[i].version

@@ -26,11 +26,29 @@ final class APIClient {
         cfg.timeoutIntervalForRequest = 120
         cfg.timeoutIntervalForResource = 600
         cfg.httpCookieStorage = .shared
+        // Never serve API responses from cache. The backend is live state
+        // (models, sessions, email); URLSession's default heuristic caching was
+        // serving a stale empty /api/models from before endpoints were configured,
+        // leaving the model picker permanently empty until the cache expired.
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        cfg.urlCache = nil
         return URLSession(configuration: cfg)
     }()
 
     private func request(_ path: String, method: String = "GET") -> URLRequest {
-        var req = URLRequest(url: baseURL.appendingPathComponent(path))
+        // appendingPathComponent percent-encodes "?" into the PATH (…/sessions%3Fdevice=…),
+        // which the backend can't route — "Sessions: not found". Split off any query
+        // string and attach it as a real query instead.
+        let url: URL
+        if let q = path.firstIndex(of: "?") {
+            let base = baseURL.appendingPathComponent(String(path[..<q]))
+            var comps = URLComponents(url: base, resolvingAgainstBaseURL: false)
+            comps?.percentEncodedQuery = String(path[path.index(after: q)...])
+            url = comps?.url ?? base
+        } else {
+            url = baseURL.appendingPathComponent(path)
+        }
+        var req = URLRequest(url: url)
         req.httpMethod = method
         // Minutes west of UTC, matching JS getTimezoneOffset() — backend
         // uses this so calendar/notes tools work in the user's timezone.
@@ -480,7 +498,8 @@ final class APIClient {
         model: String? = nil,
         endpointID: String? = nil,
         endpointURL: String? = nil,
-        effort: String? = nil
+        effort: String? = nil,
+        maxToolCalls: Int = 0
     ) -> AsyncThrowingStream<StreamEvent, Error> {
         var req = request("api/chat_stream", method: "POST")
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -499,6 +518,7 @@ final class APIClient {
         if let endpointURL, !endpointURL.isEmpty { fields["endpoint_url"] = endpointURL }
         fields["max_tokens"] = "8192"
         if let effort { fields["effort"] = effort }
+        if maxToolCalls > 0 { fields["max_tool_calls"] = String(maxToolCalls) }
         // Backend semantics: in agent mode the toggle enables the web_search TOOL;
         // in chat mode it pre-fetches results into context.
         if useWeb {
