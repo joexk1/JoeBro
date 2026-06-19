@@ -19,3 +19,9 @@ __pycache__/
 
 # Dev artifacts (not for release)
 test_screenshots/
+
+# Release build outputs — DMGs go to GitHub Releases, not the repo.
+# (appcast.xml IS tracked: it's the Sparkle update feed.)
+dist/
+.build-dd/
+.sparkle-tools/

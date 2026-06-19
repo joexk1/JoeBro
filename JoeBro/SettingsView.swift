@@ -3,6 +3,8 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(AppStore.self) private var store
+    @ObservedObject private var updater = UpdaterManager.shared
+    @State private var autoUpdate = UpdaterManager.shared.automaticallyChecksForUpdates
     @AppStorage("serverURL") private var serverURL = "http://127.0.0.1:8765"
     @AppStorage("emailLoadCount") private var emailLoadCount = 0
     @State private var showWallpaperImporter = false
@@ -138,6 +140,23 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Section("Updates") {
+                Toggle("Check for updates automatically", isOn: Binding(
+                    get: { autoUpdate },
+                    set: { autoUpdate = $0; updater.automaticallyChecksForUpdates = $0 }
+                ))
+                HStack {
+                    Button("Check for Updates…") { updater.checkForUpdates() }
+                        .disabled(!updater.canCheckForUpdates)
+                    Spacer()
+                    Text("Version \(appVersionString)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text("JoeBro checks GitHub for new releases and installs them in place. The first launch of an update may need the same right-click → Open as the original install.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .task { await loadIntegrationStatus() }
@@ -152,6 +171,12 @@ struct SettingsView: View {
                 await loadIntegrationStatus()
             }
         }
+    }
+
+    private var appVersionString: String {
+        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        return "\(v) (\(b))"
     }
 
     private var calendarStatusLabel: String {

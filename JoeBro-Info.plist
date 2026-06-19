@@ -13,5 +13,16 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<!-- Sparkle auto-update. Updates are verified with our own EdDSA key
+	     (SUPublicEDKey) — no Apple Developer ID required. The appcast is hosted
+	     free on GitHub; the release script regenerates and signs it. -->
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/joexk1/joebro/main/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>0X8l6BzzwwHRKyMRsLPm2QpL8tZYaQg4moS3mVQrg+E=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>

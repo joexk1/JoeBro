@@ -74,6 +74,20 @@ For a full walkthrough of every tab, control and right-click menu, see the **[Us
 
 ---
 
+## Install (download)
+
+Grab the latest **JoeBro.dmg** from the [Releases page](https://github.com/joexk1/joebro/releases), open it, and drag **JoeBro** into Applications.
+
+**First launch — do this once.** JoeBro is a free indie app and isn't notarized by Apple, so macOS Gatekeeper blocks the *first* open. To get past it:
+
+1. **Right-click** JoeBro in Applications → **Open**.
+2. In the warning dialog, click **Open** again. *(A normal double-click won't offer the Open button — you have to right-click → Open.)*
+3. Still blocked? Go to **System Settings → Privacy & Security**, scroll to the bottom, and click **Open Anyway** next to the JoeBro message, then reopen.
+
+You only do this once. JoeBro updates itself from then on (**Settings → General → Check for Updates**, or automatically), and updates don't repeat the Gatekeeper step.
+
+---
+
 ## Build and run
 
 1. Open `JoeBro.xcodeproj` in Xcode.
@@ -104,6 +118,8 @@ USER_GUIDE.md                  full feature and right-click reference
 ## Contributing
 
 Issues and pull requests are welcome. Keep changes focused and in the spirit of the project: simple, local-first, and genuinely useful to people who are not engineers.
+
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for how to submit a PR, report bugs, and get in touch with me directly — GitHub [@joexk1](https://github.com/joexk1) or Twitter [@joexjl](https://twitter.com/joexjl).
 
 ---
 

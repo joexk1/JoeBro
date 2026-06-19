@@ -96,6 +96,7 @@ struct JoeBroApp: App {
 
     init() {
         LocalBackend.shared.start()
+        _ = UpdaterManager.shared   // start Sparkle's scheduled update checks
     }
 
     var body: some Scene {
