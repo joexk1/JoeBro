@@ -23,6 +23,8 @@ JoeBro is another way. It hands a busy person the full power of modern AI withou
 
 AI is better when it knows you, so keep it close, away from big tech.
 
+**Read the technical breakdown** on why I built this with zero dependencies and no Electron [on Dev.to](https://dev.to/joexk1/why-i-built-a-native-macos-ai-workspace-with-zero-dependencies-1c2i)
+
 ---
 
 ## What it is
