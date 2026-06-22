@@ -121,10 +121,39 @@ USER_GUIDE.md                  full feature and right-click reference
 
 Issues and pull requests are welcome. Keep changes focused and in the spirit of the project: simple, local-first, and genuinely useful to people who are not engineers.
 
-See **[CONTRIBUTING.md](CONTRIBUTING.md)** for how to submit a PR, report bugs, and get in touch with me directly — GitHub [@joexk1](https://github.com/joexk1) or Twitter [@joexjl](https://twitter.com/joexjl).
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for how to submit a PR, report bugs, and get in touch with me directly — GitHub [@joexk1](https://github.com/joexk1) 
 
 ---
 
 ## Inspiration
 
 Huge thanks to **PewDiePie**, whose videos on running your own local AI and his workspace project **Odysseus** were the spark for this whole thing. The idea that anyone can own their AI, instead of renting a window into someone else's, and the vision of a real workspace, not just a chat box, came straight from there.
+
+---
+
+# Coming Soon
+
+Stuff I am actively working on. This repo is alive. These are the next things landing.
+
+---
+
+## NEW Tools Tab
+
+A proper tools tab in the workspace section of the sidebar. Lets you hand-roll any tool through:
+
+- **API calls:** Point it at any JSON endpoint, give it a description, and the model figures out how to use it.
+- **MCP:** Pre-loaded servers for common stuff (file system, GitHub, SQLite, web scraping) with one-click enable, plus an advanced panel for power users who want full control.
+- **Plugins:** Upload your own as files from your computer. Foreground ones add extra tools. Background ones act as guardrails.
+
+## Chat Section in Sidebar
+
+- Group chats into folders and pin the folders themselves. Right-click a chat to create a folder.
+- Drag and drop to rearrange chats however you like.
+
+## Task Editing
+
+- Choose which agent mode a task runs in (sandbox, readonly, full).
+- Set which day of the week weekly tasks fire on.
+- The agent can create richer tasks that account for these settings.
+
+---
