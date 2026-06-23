@@ -736,18 +736,6 @@ private struct ConnectionSheetChrome<Content: View>: View {
     }
 }
 
-private struct StepperField: View {
-    let label: String
-    @Binding var value: Int
-    let range: ClosedRange<Int>
-
-    var body: some View {
-        Stepper(value: $value, in: range) {
-            LabeledContent(label, value: "\(value)")
-        }
-    }
-}
-
 @MainActor
 final class MacCalendarBridge {
     static let shared = MacCalendarBridge()

@@ -3,8 +3,19 @@
     <channel>
         <title>JoeBro</title>
         <item>
+            <title>1.1</title>
+            <pubDate>Tue, 23 Jun 2026 13:06:47 +0200</pubDate>
+            <sparkle:version>2</sparkle:version>
+            <sparkle:shortVersionString>1.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.1/JoeBro-1.1.dmg" length="7596069" type="application/octet-stream" sparkle:edSignature="/skwft60iwkArb6RjjTVvIAX14uliOCyZ88gyjotGDYfVUQTdjyriR0nNJiskknSlB1WpMZqFHaYNIvnYDgJBg=="/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.1/JoeBro2-1.delta" sparkle:deltaFrom="1" length="1453934" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="Z3IpFilwr+9qORXGmKGK3UYBkYiWg7vpkplSFDHmp+dGqcP+97gX8jpR14nSf4nE7GQ7Uk3CRlVrlN1Lyph0Cw=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>1.0</title>
-            <pubDate>Fri, 19 Jun 2026 10:19:07 +0200</pubDate>
+            <pubDate>Fri, 19 Jun 2026 10:19:54 +0200</pubDate>
             <sparkle:version>1</sparkle:version>
             <sparkle:shortVersionString>1.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>

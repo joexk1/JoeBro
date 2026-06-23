@@ -176,6 +176,10 @@ struct MessageBubbleView: View, Equatable {
                 MemoriesUsedView(memories: message.memoriesUsed)
             }
 
+            if !message.pluginsUsed.isEmpty {
+                PluginsUsedView(plugins: message.pluginsUsed)
+            }
+
             if !message.attachments.isEmpty {
                 AttachmentChipsView(attachments: message.attachments)
             }
@@ -496,6 +500,47 @@ struct ThinkingDots: View {
 
 
 /// "🧠 N memories" — which Brain entries informed this reply.
+struct PluginsUsedView: View {
+    let plugins: [String]
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Button {
+                withAnimation(.spring(duration: 0.25)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "puzzlepiece.extension.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.accentColor)
+                    Text("\(plugins.count) plugin\(plugins.count == 1 ? "" : "s") used")
+                        .font(.system(size: 10.5, weight: .medium))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 7, weight: .bold))
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if expanded {
+                ForEach(Array(plugins.enumerated()), id: \.offset) { _, p in
+                    HStack(alignment: .top, spacing: 5) {
+                        Image(systemName: "puzzlepiece.extension")
+                            .font(.system(size: 8))
+                            .foregroundStyle(Color.accentColor)
+                            .padding(.top, 2)
+                        Text(p)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+}
+
 struct MemoriesUsedView: View {
     let memories: [String]
     @State private var expanded = false

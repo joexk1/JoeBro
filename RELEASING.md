@@ -4,7 +4,7 @@ JoeBro updates itself with [Sparkle](https://sparkle-project.org). No Apple
 Developer account is required — Sparkle verifies each update with our own EdDSA
 signature, and the appcast + DMGs are hosted free on GitHub.
 
-## One-time setup — already done
+## One-time setup 
 
 - ✅ A Sparkle EdDSA **signing key** was generated. The **private key lives in
   your login Keychain** (item: "Private key for signing Sparkle updates"). The

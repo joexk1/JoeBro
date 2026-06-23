@@ -20,11 +20,10 @@ struct EmailPanel: View {
             Picker("", selection: $filter) {
                 Text("All").tag("all")
                 Text("Unread").tag("unread")
-                Text("Flagged").tag("favorites")
             }
             .pickerStyle(.segmented)
             .controlSize(.small)
-            .frame(width: 190)
+            .frame(width: 140)
 
             Menu {
                 ForEach(folders, id: \.self) { f in
@@ -125,6 +124,12 @@ struct EmailPanel: View {
     }
 
     private func searchFiltered(_ list: [EmailSummary]) -> [EmailSummary] {
+        // Apply the Unread filter client-side too, so the list is correct even
+        // when the IMAP server's SEARCH UNSEEN is unreliable (e.g. the ProtonMail
+        // bridge marks everything \Seen) or a stale list lingers from the previous
+        // filter. With all mail read, the Unread view is then correctly empty.
+        var list = list
+        if filter == "unread" { list = list.filter { $0.isRead == false } }
         let q = search.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return list }
         return list.filter {
@@ -238,7 +243,7 @@ struct EmailPanel: View {
                 ProgressView().frame(maxHeight: .infinity)
             case .failed(let e):
                 ContentUnavailableView("Couldn't load", systemImage: "wifi.exclamationmark", description: Text(e))
-            case .loaded(let list) where list.isEmpty:
+            case .loaded(let list) where searchFiltered(list).isEmpty:
                 if emailStatus?.configured == true {
                     ContentUnavailableView("No emails", systemImage: "tray")
                 } else {

@@ -166,7 +166,7 @@ struct TasksPanel: View {
         .contentShape(Rectangle())
         .contextMenu {
             Button("Run now", systemImage: "play.fill") {
-                store.runTaskInChat(name: t.name ?? "Task", prompt: t.prompt ?? "")
+                store.runTask(t)
             }
             Button("Edit…") { editing = t }
             Button(paused ? "Resume" : "Pause") {
@@ -247,6 +247,8 @@ struct NewTaskSheet: View {
     @State private var prompt = ""
     @State private var schedule = "daily"
     @State private var time = "09:00"
+    @State private var repeatDay = 0
+    @State private var mode = "sandbox"
     @State private var error: String?
 
     var body: some View {
@@ -271,14 +273,32 @@ struct NewTaskSheet: View {
                     Text("Weekly").tag("weekly")
                     Text("Monthly").tag("monthly")
                 }
+                if schedule == "weekly" {
+                    Picker("On", selection: $repeatDay) {
+                        Text("Monday").tag(0)
+                        Text("Tuesday").tag(1)
+                        Text("Wednesday").tag(2)
+                        Text("Thursday").tag(3)
+                        Text("Friday").tag(4)
+                        Text("Saturday").tag(5)
+                        Text("Sunday").tag(6)
+                    }
+                }
                 TextField("Time (HH:MM)", text: $time)
+                Picker("Agent access", selection: $mode) {
+                    Text("Bound folder").tag("sandbox")
+                    Text("Read-only").tag("readonly")
+                    Text("Full access").tag("full")
+                }
+                Text("Tasks run as an agent. This sets how much of your files it can touch when it runs.")
+                    .font(.caption).foregroundStyle(.secondary)
                 if let error {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }
             }
             .formStyle(.grouped)
         }
-        .frame(width: 420, height: 340)
+        .frame(width: 420, height: 440)
     }
 
     private func create() {
@@ -286,7 +306,7 @@ struct NewTaskSheet: View {
             do {
                 try await APIClient.shared.createTask(
                     name: name.isEmpty ? String(prompt.prefix(40)) : name,
-                    prompt: prompt, schedule: schedule, time: time)
+                    prompt: prompt, schedule: schedule, time: time, permissionMode: mode, repeatDay: repeatDay)
                 await onSaved()
                 dismiss()
             } catch {
@@ -306,6 +326,7 @@ struct EditTaskSheet: View {
     @State private var schedule = "daily"
     @State private var time = "09:00"
     @State private var mode = "sandbox"
+    @State private var repeatDay = 0
     @State private var error: String?
 
     var body: some View {
@@ -330,6 +351,17 @@ struct EditTaskSheet: View {
                     Text("Weekly").tag("weekly")
                     Text("Monthly").tag("monthly")
                 }
+                if schedule == "weekly" {
+                    Picker("On", selection: $repeatDay) {
+                        Text("Monday").tag(0)
+                        Text("Tuesday").tag(1)
+                        Text("Wednesday").tag(2)
+                        Text("Thursday").tag(3)
+                        Text("Friday").tag(4)
+                        Text("Saturday").tag(5)
+                        Text("Sunday").tag(6)
+                    }
+                }
                 TextField("Time (HH:MM)", text: $time)
                 Picker("Agent access", selection: $mode) {
                     Text("Bound folder").tag("sandbox")
@@ -351,6 +383,7 @@ struct EditTaskSheet: View {
             schedule = task.schedule ?? "daily"
             time = task.scheduledTime ?? "09:00"
             mode = task.permissionMode ?? "sandbox"
+            repeatDay = task.repeatDay ?? 0
         }
     }
 
@@ -358,7 +391,7 @@ struct EditTaskSheet: View {
         Task {
             do {
                 try await APIClient.shared.updateTask(
-                    id: task.id, name: name, prompt: prompt, schedule: schedule, time: time, permissionMode: mode)
+                    id: task.id, name: name, prompt: prompt, schedule: schedule, time: time, permissionMode: mode, repeatDay: repeatDay)
                 await onSaved()
                 dismiss()
             } catch {

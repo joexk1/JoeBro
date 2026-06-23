@@ -12,11 +12,13 @@ struct ChatSessionInfo: Identifiable, Decodable, Hashable {
     var createdAt: FlexibleString?
     var mode: String?
     var isImportant: Bool?
+    var sortOrder: Double?
 
     enum CodingKeys: String, CodingKey {
         case id, name, model, archived, folder, mode
         case createdAt = "created_at"
         case isImportant = "is_important"
+        case sortOrder = "sort_order"
     }
 }
 
@@ -144,10 +146,6 @@ struct ProviderBrand {
 
 // MARK: - Model endpoints (settings)
 
-struct EndpointsResponse: Decodable {
-    var endpoints: [EndpointInfo]
-}
-
 struct EndpointInfo: Decodable, Identifiable, Hashable {
     var id: String
     var name: String?
@@ -202,6 +200,7 @@ struct Message: Identifiable, Equatable {
     var thinkingTime: Double?
     var isIntermediate = false     // agent round narration — collapsed by default
     var memoriesUsed: [String] = []
+    var pluginsUsed: [String] = []
     var isStreaming = false
 
     var isUser: Bool { role == "user" }
@@ -367,6 +366,7 @@ enum StreamEvent {
     case docSuggestions(docID: String, suggestions: [DocSuggestion])
     case researchStarted(id: String)
     case memoriesUsed([String])
+    case pluginsUsed([String])
     case permissionRequest(id: String, tool: String, command: String)
     case error(String)
     case done
@@ -458,8 +458,28 @@ struct WorkdirEntry: Decodable, Identifiable, Hashable {
 
 // MARK: - Workspace tabs
 
+struct Plugin: Identifiable, Codable, Hashable {
+    let id: String
+    var name: String
+    var kind: String
+    var repoPath: String?
+    var description: String?
+    var isEnabled: Bool?
+    var source: String?
+    var permissionMode: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, kind, description, source
+        case repoPath = "repo_path"
+        case isEnabled = "is_enabled"
+        case permissionMode = "permission_mode"
+    }
+}
+
+struct PluginsResponse: Codable { var plugins: [Plugin] }
+
 enum WorkspaceTab: String, CaseIterable, Identifiable {
-    case chat, email, calendar, brain, notes, tasks, skills, aiCheck, research
+    case chat, email, calendar, brain, notes, tasks, skills, tools, aiCheck, research
 
     var id: String { rawValue }
 
@@ -472,6 +492,7 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
         case .notes: return "Notes"
         case .tasks: return "Tasks"
         case .skills: return "Skills"
+        case .tools: return "Tools"
         case .aiCheck: return "AI Check"
         case .research: return "Deep Research"
         }
@@ -486,9 +507,55 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
         case .notes: return "note.text"
         case .tasks: return "clock.badge.checkmark"
         case .skills: return "graduationcap"
+        case .tools: return "wrench.and.screwdriver"
         case .aiCheck: return "checkmark.shield"
         case .research: return "antenna.radiowaves.left.and.right"
         }
+    }
+}
+
+// MARK: - API Tools (custom callable APIs)
+
+struct ToolsResponse: Decodable {
+    var tools: [APITool]
+}
+
+struct APITool: Decodable, Identifiable, Hashable {
+    var id: String
+    var name: String
+    var funcName: String?
+    var baseURL: String?
+    var hasKey: Bool?
+    var method: String?
+    var description: String?
+    var isEnabled: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, method, description
+        case funcName = "func_name"
+        case baseURL = "base_url"
+        case hasKey = "has_key"
+        case isEnabled = "is_enabled"
+    }
+}
+
+// MARK: - MCP servers (Model Context Protocol, stdio transport)
+
+struct MCPServersResponse: Decodable {
+    var servers: [MCPServer]
+}
+
+struct MCPServer: Decodable, Identifiable, Hashable {
+    var id: String
+    var name: String
+    var command: String
+    var args: String
+    var enabled: Bool
+    var tools: [String]
+    var error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, command, args, enabled, tools, error
     }
 }
 
@@ -979,6 +1046,7 @@ struct TaskItem: Decodable, Identifiable, Hashable {
     var lastRun: String?
     var status: String?
     var permissionMode: String?
+    var repeatDay: Int?
 
     enum CodingKeys: String, CodingKey {
         case id, name, prompt, schedule, status
@@ -987,6 +1055,7 @@ struct TaskItem: Decodable, Identifiable, Hashable {
         case nextRun = "next_run"
         case lastRun = "last_run"
         case permissionMode = "permission_mode"
+        case repeatDay = "repeat_day"
     }
 }
 

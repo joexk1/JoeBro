@@ -43,7 +43,6 @@ For anything that doesn't fit an issue or PR — questions, ideas, "is this wort
 doing before I build it" — reach me directly:
 
 - **GitHub:** open an issue or send a message via [@joexk1](https://github.com/joexk1)
-- **Twitter / X:** [@joexjl](https://twitter.com/joexjl)
 
-I'd genuinely rather you ask first than burn a weekend on something I can't
+I'd rather you ask first than burn a weekend on something I can't
 merge. Don't be shy.

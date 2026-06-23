@@ -7,6 +7,9 @@ struct PanelChrome<Actions: View, Content: View>: View {
     let icon: String
     @ViewBuilder var actions: Actions
     @ViewBuilder var content: Content
+    // Rebuild the header (icon + glass) when the system flips light/dark, so the
+    // top-bar SF icon and glass don't keep the appearance they launched in.
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(spacing: 12) {
@@ -21,6 +24,7 @@ struct PanelChrome<Actions: View, Content: View>: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .joeGlassCapsule()
+            .id(colorScheme)
 
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -136,6 +140,9 @@ private struct JoeGlass: ViewModifier {
     var interactive = false
     var backingRatio = 0.85       // chrome panels take the full effect
     @Environment(GlassSettings.self) private var settings
+    // Liquid Glass caches its render and won't refresh when the system flips
+    // light/dark while the app is open — rebuild the glass layer on the change.
+    @Environment(\.colorScheme) private var colorScheme
 
     func body(content: Content) -> some View {
         let s = settings.solidity
@@ -153,6 +160,7 @@ private struct JoeGlass: ViewModifier {
                     Color.clear
                         .glassEffect(g, in: .rect(cornerRadius: r))
                         .opacity(glassOpacity)
+                        .id(colorScheme)
                     // Control-Center depth: a soft specular sheen down from the
                     // top edge, and a faint darkening toward the bottom — this is
                     // what gives that glass its rich, lit-from-above look.
@@ -190,6 +198,7 @@ private struct JoeGlass: ViewModifier {
                     Color.clear
                         .glassEffect(g, in: .capsule)
                         .opacity(glassOpacity)
+                        .id(colorScheme)
                     Capsule()
                         .strokeBorder(.white.opacity(0.28 - min(s, 1) * 0.10), lineWidth: 0.9)
                         .blendMode(.plusLighter)

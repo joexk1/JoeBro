@@ -25,6 +25,10 @@ final class APIClient {
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest = 120
         cfg.timeoutIntervalForResource = 600
+        // Default is 6/host. A slow IMAP fetch or an open chat SSE stream would
+        // otherwise queue the quick data calls (sessions/models/history) behind
+        // them, so the whole app appears to "not load". Give the fast loads headroom.
+        cfg.httpMaximumConnectionsPerHost = 12
         cfg.httpCookieStorage = .shared
         // Never serve API responses from cache. The backend is live state
         // (models, sessions, email); URLSession's default heuristic caching was
@@ -108,6 +112,35 @@ final class APIClient {
         var req = request("api/session/\(id)", method: "PATCH")
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         req.httpBody = formEncode(["mode": mode])
+        let (data, resp) = try await session.data(for: req)
+        try check(data, resp)
+    }
+
+    /// Set (or, with an empty string, clear) the project folder a chat is
+    /// grouped under in the sidebar.
+    func setSessionFolder(_ id: String, folder: String) async throws {
+        var req = request("api/session/\(id)", method: "PATCH")
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.httpBody = formEncode(["folder": folder])
+        let (data, resp) = try await session.data(for: req)
+        try check(data, resp)
+    }
+
+    /// Drag-to-reorder / move a chat into or out of a project folder. Sends an
+    /// empty folder to ungroup it. sortOrder positions it in the sidebar.
+    func moveSession(_ id: String, folder: String, sortOrder: Double) async throws {
+        var req = request("api/session/\(id)/move", method: "POST")
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.httpBody = formEncode(["folder": folder, "sort_order": String(sortOrder)])
+        let (data, resp) = try await session.data(for: req)
+        try check(data, resp)
+    }
+
+    /// Rename a project folder (re-tags every chat under the old name).
+    func renameFolder(old: String, new: String) async throws {
+        var req = request("api/folder/rename", method: "POST")
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.httpBody = formEncode(["old": old, "new": new])
         let (data, resp) = try await session.data(for: req)
         try check(data, resp)
     }
@@ -255,6 +288,93 @@ final class APIClient {
         try check(data, resp)
     }
 
+    @discardableResult
+    private func postFormReturning(_ path: String, method: String, fields: [String: String]) async throws -> [String: Any] {
+        var req = request(path, method: method)
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.httpBody = formEncode(fields)
+        let (data, resp) = try await session.data(for: req)
+        try check(data, resp)
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    }
+
+    // MARK: Custom API tools
+
+    func apiTools() async throws -> [APITool] {
+        let r: ToolsResponse = try await getJSON("api/tools")
+        return r.tools
+    }
+
+    func createAPITool(name: String, baseURL: String, apiKey: String,
+                       method: String, description: String) async throws {
+        try await postForm("api/tools", fields: [
+            "name": name,
+            "base_url": baseURL,
+            "api_key": apiKey,
+            "method": method,
+            "description": description,
+        ])
+    }
+
+    func updateAPITool(id: String, fields: [String: String]) async throws {
+        try await postFormMethod("api/tools/\(id)", method: "PUT", fields: fields)
+    }
+
+    func deleteAPITool(id: String) async throws {
+        try await sendJSON("api/tools/\(id)", method: "DELETE")
+    }
+
+    // MARK: Plugins
+
+    func plugins() async throws -> [Plugin] {
+        let r: PluginsResponse = try await getJSON("api/plugins")
+        return r.plugins
+    }
+    func createPlugin(name: String, kind: String, repoPath: String, description: String) async throws {
+        try await postForm("api/plugins", fields: [
+            "name": name, "kind": kind, "repo_path": repoPath, "description": description,
+        ])
+    }
+    func updatePlugin(id: String, fields: [String: String]) async throws {
+        try await postFormMethod("api/plugins/\(id)", method: "PUT", fields: fields)
+    }
+    func deletePlugin(id: String) async throws {
+        try await sendJSON("api/plugins/\(id)", method: "DELETE")
+    }
+
+    // MARK: MCP servers (Model Context Protocol)
+
+    func mcpServers() async throws -> [MCPServer] {
+        let r: MCPServersResponse = try await getJSON("api/mcp")
+        return r.servers
+    }
+
+    /// Create an MCP server. The backend attempts discovery (with a hard timeout)
+    /// and returns the server with its discovered tools (or an error string).
+    @discardableResult
+    func createMCPServer(name: String, command: String, args: String) async throws -> MCPServer? {
+        let raw = try await postForm("api/mcp", fields: [
+            "name": name, "command": command, "args": args,
+        ])
+        return decodeServer(raw)
+    }
+
+    @discardableResult
+    func updateMCPServer(id: String, fields: [String: String]) async throws -> MCPServer? {
+        let raw = try await postFormReturning("api/mcp/\(id)", method: "PUT", fields: fields)
+        return decodeServer(raw)
+    }
+
+    func deleteMCPServer(id: String) async throws {
+        try await sendJSON("api/mcp/\(id)", method: "DELETE")
+    }
+
+    private func decodeServer(_ raw: [String: Any]) -> MCPServer? {
+        guard let server = raw["server"],
+              let data = try? JSONSerialization.data(withJSONObject: server) else { return nil }
+        return try? JSONDecoder().decode(MCPServer.self, from: data)
+    }
+
     // MARK: Scheduled tasks
 
     func tasks() async throws -> [TaskItem] {
@@ -262,7 +382,7 @@ final class APIClient {
         return r.tasks
     }
 
-    func createTask(name: String, prompt: String, schedule: String, time: String, permissionMode: String = "sandbox") async throws {
+    func createTask(name: String, prompt: String, schedule: String, time: String, permissionMode: String = "sandbox", repeatDay: Int = 0) async throws {
         try await sendJSON("api/tasks", body: [
             "name": name,
             "prompt": prompt,
@@ -270,16 +390,18 @@ final class APIClient {
             "schedule": schedule,
             "scheduled_time": time,
             "permission_mode": permissionMode,
+            "repeat_day": repeatDay,
             "trigger_type": "schedule",
             "output_target": "session",
         ])
     }
 
-    func updateTask(id: String, name: String, prompt: String, schedule: String, time: String, permissionMode: String = "sandbox") async throws {
+    func updateTask(id: String, name: String, prompt: String, schedule: String, time: String, permissionMode: String = "sandbox", repeatDay: Int = 0) async throws {
         try await sendJSON("api/tasks/\(id)", method: "PUT", body: [
             "name": name, "prompt": prompt,
             "schedule": schedule, "scheduled_time": time,
             "permission_mode": permissionMode,
+            "repeat_day": repeatDay,
         ])
     }
 
@@ -600,6 +722,11 @@ final class APIClient {
                                         return nil
                                     }
                                     if !items.isEmpty { continuation.yield(.memoriesUsed(items)) }
+                                }
+                            case "plugins_used":
+                                if let arr = obj["data"] as? [Any] {
+                                    let items = arr.compactMap { $0 as? String }
+                                    if !items.isEmpty { continuation.yield(.pluginsUsed(items)) }
                                 }
                             case "permission_request":
                                 continuation.yield(.permissionRequest(

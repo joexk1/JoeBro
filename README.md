@@ -34,28 +34,44 @@ JoeBro is a native macOS app (SwiftUI) with a small backend bundled right inside
 It's one window, not ten apps:
 
 **Core**
-- **Chat** with any model, with live streaming, extended thinking, and a real agent mode.
-- **Agent mode** that uses tools. It reads files, edits documents, runs the terminal, searches the web, and manages your calendar and email.
+- **Chat** with any model, with live streaming, extended thinking, and a real agent mode. Sort chats into folders to keep side projects away from work, or split things by topic. Just drag and drop.
+- **Agent mode** that uses tools. It reads files, edits documents, runs the terminal, searches the web, calls your own APIs, and manages your calendar and email.
 - **Deep Research** that reads many sources and writes a cited report.
 - **Documents** opened right beside the conversation, including real Word `.doc` and `.docx` files, edited in place.
 
 ![Co-editing a document alongside the chat](README_assets/co_editing.png)
 
-- **Theming** — an adaptive glass interface over any wallpaper you choose, with built-in colour accents to match your style.
+- **Theming**: an adaptive glass interface over any wallpaper you choose, with built-in colour accents to match your style.
 
 ![The glass interface adapts to any wallpaper with your choice of colour accents](README_assets/theming.png)
 
-**Workspace tools** — all local, self-improving, and manually manageable.
-- **Email** over IMAP — read, compose, reply, forward, triage. All on your machine.
-- **Calendar** — your events, add/edit/delete, all from within the app.
-- **Brain** — long-term memory that persists across sessions and improves the more you use it. Add, edit, search, or delete memories manually anytime.
+**Workspace tools**, all local, self-improving, and manually manageable.
+- **Email** over IMAP: read, compose, reply, forward, triage. All on your machine.
+- **Calendar**: your events, add, edit and delete, all from within the app.
+- **Brain**: long-term memory that persists across sessions and improves the more you use it. Add, edit, search, or delete memories manually anytime.
 
-![The Brain tab — your AI's persistent memory](README_assets/memory.png)
+![The Brain tab, your AI's persistent memory](README_assets/memory.png)
 
-- **Skills** — JoeBro teaches itself the things you do often. Review, edit, or prune them by hand whenever you like.
-- **AI Check** — paste text to see how AI-written it reads, with the suspect sentences flagged.
+- **Skills**: JoeBro teaches itself the things you do often. Review, edit, or prune them by hand whenever you like.
+- **AI Check**: paste text to see how AI-written it reads, with the suspect sentences flagged.
 
 For a full walkthrough of every tab, control and right-click menu, see the **[User Guide](USER_GUIDE.md)**. To go from zero to your first message in under a minute, start with **[Getting Started](GETTING_STARTED.md)**.
+
+---
+
+## Tools: bring your own
+
+The Tools tab has three tiers, all surfaced to the model in Agent mode as callable functions. This is where JoeBro stops being a chat box and starts being a workspace the agent can actually act in.
+
+![The Tools tab: API tools, MCP servers and plugins](README_assets/tools.png)
+
+**API Tools** give any JSON endpoint straight to the model. You give it a URL, a name, a description, and optionally an API key and a method. Put `{query}` anywhere in the URL and the model's input gets dropped in right there. The description tells the model when to call it. A weather API gets called when someone asks about the weather. A HackerNews search when the topic is tech. It just works. Point it at any public database right in chat. LinkedIn, Crunchbase, GitHub, you name it. No curated list, anything with a URL works.
+
+**MCP Servers** are the Model Context Protocol over stdio. The app launches the server, discovers its tools, and offers them to the model. The connection is stateless. Spawn, initialize, call, kill. No long-running processes. No zombie children. There is a hard wall clock timeout on every interaction so a broken server never hangs a turn. The git MCP server returns real diffs. The model calls it, the server spawns, it runs, it dies, the diff comes back.
+
+**Plugins** are the third tier. They are folders on disk that can ship their own tools, memory, and agent logic. They can be foreground (active tools the model can invoke) or background (guardrails that shape every turn). The bundled one is the macOS Use plugin. Dependency free. It controls the Mac through `osascript` and `screencapture`. No node module, no Python package, no Docker image. It calls System Events directly and the model can use it to open apps, click buttons, and take screenshots.
+
+The agent calls API tools, memory, tasks, calendar, and plugins in one conversation. It looks like any other chat.
 
 ---
 
@@ -80,10 +96,10 @@ For a full walkthrough of every tab, control and right-click menu, see the **[Us
 
 Grab the latest **JoeBro.dmg** from the [Releases page](https://github.com/joexk1/joebro/releases), open it, and drag **JoeBro** into Applications.
 
-**First launch: do this once.** JoeBro is a free indie app and isn't notarized by Apple, so macOS Gatekeeper blocks the *first* open. To get past it:
+**First launch, do this once.** JoeBro is a free indie app and isn't notarized by Apple, so macOS Gatekeeper blocks the *first* open. To get past it:
 
-1. **Right-click** JoeBro in Applications → **Open**.
-2. In the warning dialog, click **Open** again. *(A normal double-click won't offer the Open button, you have to right-click → Open.)*
+1. **Right-click** JoeBro in Applications, then **Open**.
+2. In the warning dialog, click **Open** again. *(A normal double-click won't offer the Open button, so you have to right-click then Open.)*
 3. Still blocked? Go to **System Settings → Privacy & Security**, scroll to the bottom, and click **Open Anyway** next to the JoeBro message, then reopen.
 
 You only do this once. JoeBro updates itself from then on (**Settings → General → Check for Updates**, or automatically), and updates don't repeat the Gatekeeper step.
@@ -107,13 +123,24 @@ JoeBro/
   JoeBroApp.swift              app entry, launches the bundled backend
   AppStore.swift               central @Observable state
   APIClient.swift              talks to the local backend
-  *Panel.swift / *View.swift   the tabs and UI (Chat, Email, Calendar, Brain, ...)
+  *Panel.swift / *View.swift   the tabs and UI (Chat, Email, Calendar, Brain, Tools, ...)
+  ToolsPanel.swift             the Tools tab: API tools, MCP servers, plugins
   EditorPane / EditorTextView  the document editor (Markdown + Word docs)
-  Backend/joebro_backend.py    the local server (stdlib Python, SQLite)
+  Backend/                     the local server (stdlib Python, SQLite)
+    joebro_backend.py          entry point: HTTP router + server bootstrap
+    jb_core.py                 shared library: helpers, constants, the SQLite store
+    jb_chat.py                 chat, the agent loop, streaming, compaction
+    jb_tools.py                tool dispatch and execution: native calls, XML blocks, API tools, MCP, plugins, macOS use
+    jb_assistant.py            memory, skills, tasks, deep research
+    jb_email.py / jb_calendar.py / jb_docs.py    integrations
+    jb_models.py               model discovery, API tools, MCP servers, plugins
+    jb_files.py                workdir browsing and uploads
 assets/                        logo and brand
 GETTING_STARTED.md             60-second quickstart
 USER_GUIDE.md                  full feature and right-click reference
 ```
+
+The backend is still zero dependencies. It is not one file anymore though. It grew to the point where that stopped making sense, so it is split into small sibling modules: one entry point that holds the HTTP router, and feature mixins composed onto it. `jb_tools.py` routes every tool path in one place: native function calls, XML tool blocks, custom API tools, MCP servers, plugins, and macOS use. The MCP client is stateless, with a background reader thread so a hanging subprocess can never block a request, and a hard deadline on every server interaction. If a server does not reply in time, the process gets killed and reaped and the turn continues. Standard library only. No `pip install`. One Xcode project, one Build, and it runs.
 
 ---
 
@@ -121,39 +148,10 @@ USER_GUIDE.md                  full feature and right-click reference
 
 Issues and pull requests are welcome. Keep changes focused and in the spirit of the project: simple, local-first, and genuinely useful to people who are not engineers.
 
-See **[CONTRIBUTING.md](CONTRIBUTING.md)** for how to submit a PR, report bugs, and get in touch with me directly — GitHub [@joexk1](https://github.com/joexk1) 
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for how to submit a PR, report bugs, and get in touch with me directly on GitHub at [@joexk1](https://github.com/joexk1).
 
 ---
 
 ## Inspiration
 
 Huge thanks to **PewDiePie**, whose videos on running your own local AI and his workspace project **Odysseus** were the spark for this whole thing. The idea that anyone can own their AI, instead of renting a window into someone else's, and the vision of a real workspace, not just a chat box, came straight from there.
-
----
-
-# Coming Soon
-
-Stuff I am actively working on. This repo is alive. These are the next things landing.
-
----
-
-## NEW Tools Tab
-
-A proper tools tab in the workspace section of the sidebar. Lets you hand-roll any tool through:
-
-- **API calls:** Point it at any JSON endpoint, give it a description, and the model figures out how to use it.
-- **MCP:** Pre-loaded servers for common stuff (file system, GitHub, SQLite, web scraping) with one-click enable, plus an advanced panel for power users who want full control.
-- **Plugins:** Upload your own as files from your computer. Foreground ones add extra tools. Background ones act as guardrails.
-
-## Chat Section in Sidebar
-
-- Group chats into folders and pin the folders themselves. Right-click a chat to create a folder.
-- Drag and drop to rearrange chats however you like.
-
-## Task Editing
-
-- Choose which agent mode a task runs in (sandbox, readonly, full).
-- Set which day of the week weekly tasks fire on.
-- The agent can create richer tasks that account for these settings.
-
----

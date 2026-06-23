@@ -74,6 +74,102 @@ final class AppStore {
         if let unread = await api.emailUnreadTotal() { applyEmailUnread(unread) }
     }
 
+    // MARK: Custom API tools
+
+    func loadAPITools() async {
+        if let tools = try? await api.apiTools() { apiTools = tools }
+    }
+
+    func createAPITool(name: String, baseURL: String, apiKey: String,
+                       method: String, description: String) async {
+        try? await api.createAPITool(name: name, baseURL: baseURL, apiKey: apiKey,
+                                     method: method, description: description)
+        await loadAPITools()
+    }
+
+    func updateAPITool(id: String, fields: [String: String]) async {
+        try? await api.updateAPITool(id: id, fields: fields)
+        await loadAPITools()
+    }
+
+    func toggleAPITool(_ tool: APITool, enabled: Bool) async {
+        try? await api.updateAPITool(id: tool.id, fields: ["is_enabled": enabled ? "true" : "false"])
+        await loadAPITools()
+    }
+
+    func deleteAPITool(id: String) async {
+        try? await api.deleteAPITool(id: id)
+        await loadAPITools()
+    }
+
+    func loadPlugins() async {
+        if let p = try? await api.plugins() { plugins = p }
+    }
+    func createPlugin(name: String, kind: String, repoPath: String, description: String = "") {
+        Task {
+            do { try await api.createPlugin(name: name, kind: kind, repoPath: repoPath, description: description); await loadPlugins() }
+            catch { loadError = "Add plugin: " + error.localizedDescription }
+        }
+    }
+    func togglePlugin(_ p: Plugin, enabled: Bool) {
+        Task {
+            do { try await api.updatePlugin(id: p.id, fields: ["is_enabled": enabled ? "true" : "false"]); await loadPlugins() }
+            catch { loadError = "Plugin: " + error.localizedDescription }
+        }
+    }
+    func deletePlugin(id: String) {
+        Task {
+            do { try await api.deletePlugin(id: id); await loadPlugins() }
+            catch { loadError = "Delete plugin: " + error.localizedDescription }
+        }
+    }
+    func updatePlugin(id: String, fields: [String: String]) {
+        Task {
+            do { try await api.updatePlugin(id: id, fields: fields); await loadPlugins() }
+            catch { loadError = "Plugin: " + error.localizedDescription }
+        }
+    }
+
+    // MARK: MCP servers (Model Context Protocol)
+
+    func loadMCPServers() async {
+        if let servers = try? await api.mcpServers() { mcpServers = servers }
+    }
+
+    /// Add an MCP server. The backend runs discovery (spawn → tools/list) before
+    /// returning, which can be slow the first time (npx may download the package),
+    /// so this is marked busy and any discovery error is surfaced to the UI.
+    func createMCPServer(name: String, command: String, args: String) async {
+        mcpBusy = true
+        mcpError = nil
+        defer { mcpBusy = false }
+        do {
+            let server = try await api.createMCPServer(name: name, command: command, args: args)
+            if let err = server?.error, !err.isEmpty { mcpError = err }
+        } catch {
+            mcpError = "Couldn't add the server."
+        }
+        await loadMCPServers()
+    }
+
+    func updateMCPServer(id: String, fields: [String: String]) async {
+        mcpBusy = true
+        mcpError = nil
+        defer { mcpBusy = false }
+        let server = try? await api.updateMCPServer(id: id, fields: fields)
+        if let err = server?.error, !err.isEmpty { mcpError = err }
+        await loadMCPServers()
+    }
+
+    func toggleMCPServer(_ server: MCPServer, enabled: Bool) async {
+        await updateMCPServer(id: server.id, fields: ["enabled": enabled ? "true" : "false"])
+    }
+
+    func deleteMCPServer(id: String) async {
+        try? await api.deleteMCPServer(id: id)
+        await loadMCPServers()
+    }
+
     enum BackendStatus { case up, slow, down, checking }
 
     // Composer options
@@ -118,6 +214,15 @@ final class AppStore {
     var wallpaperURL: URL? {
         didSet { UserDefaults.standard.set(wallpaperURL?.path, forKey: "wallpaperPath") }
     }
+
+    // Custom API tools (registered in the Tools workspace tab)
+    var apiTools: [APITool] = []
+    var plugins: [Plugin] = []
+
+    // MCP servers (registered in the Tools workspace tab)
+    var mcpServers: [MCPServer] = []
+    var mcpBusy = false           // discovery/connect in progress (npx may download)
+    var mcpError: String?         // last discovery/connection error, surfaced in the UI
 
     private let api = APIClient.shared
     private var streamTask: Task<Void, Never>?
@@ -347,6 +452,10 @@ final class AppStore {
                 if !mems.isEmpty, let last = segments.lastIndex(where: { $0.kind == .text }) {
                     segments[last].memoriesUsed = dedupeMemories(mems)
                 }
+                let plugs = (hm.metadata?["plugins_used"]?.arrayValue ?? []).compactMap { $0.stringValue }
+                if !plugs.isEmpty, let last = segments.lastIndex(where: { $0.kind == .text }) {
+                    segments[last].pluginsUsed = plugs
+                }
                 if !atts.isEmpty {
                     if let last = segments.indices.last, segments[last].kind == .text {
                         segments[last].attachments = atts
@@ -394,6 +503,13 @@ final class AppStore {
         messages[index].memoriesUsed = dedupeMemories(messages[index].memoriesUsed + items)
     }
 
+    private func appendPluginsUsed(_ items: [String], to index: Int) {
+        var seen = Set(messages[index].pluginsUsed)
+        for it in items where !seen.contains(it) {
+            messages[index].pluginsUsed.append(it); seen.insert(it)
+        }
+    }
+
     func newChat() {
         stopStreaming()
         activeTab = .chat
@@ -434,6 +550,90 @@ final class AppStore {
                 }
             } catch {
                 loadError = "Rename: " + error.localizedDescription
+            }
+        }
+    }
+
+    /// Existing project-folder names (for the context menu), sorted.
+    var folderNames: [String] {
+        Set(sessions.compactMap { name in
+            name.folder.map { $0.trimmingCharacters(in: .whitespaces) }
+        }.filter { !$0.isEmpty }).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    /// Move a chat into a project folder, or out of one (empty string).
+    func setFolder(_ id: String, folder: String) {
+        let trimmed = folder.trimmingCharacters(in: .whitespaces)
+        guard let i = sessions.firstIndex(where: { $0.id == id }) else { return }
+        let previous = sessions[i].folder
+        sessions[i].folder = trimmed.isEmpty ? nil : trimmed
+        Task {
+            do { try await api.setSessionFolder(id, folder: trimmed) }
+            catch {
+                loadError = "Folder: " + error.localizedDescription
+                if let j = sessions.firstIndex(where: { $0.id == id }) {
+                    sessions[j].folder = previous
+                }
+            }
+        }
+    }
+
+    /// Drag-to-reorder a chat and/or move it into / out of a project folder.
+    /// Optimistic: update locally and re-sort by sort_order, then persist.
+    /// Pinning is applied on top in `filteredSessions`, so reordering never
+    /// overrides which chats float to the top.
+    func moveSession(_ id: String, toFolder folder: String?, sortOrder: Double) {
+        guard let i = sessions.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = folder?.trimmingCharacters(in: .whitespaces)
+        sessions[i].folder = (trimmed?.isEmpty ?? true) ? nil : trimmed
+        sessions[i].sortOrder = sortOrder
+        sessions.sort { ($0.sortOrder ?? 0) < ($1.sortOrder ?? 0) }
+        Task {
+            do { try await api.moveSession(id, folder: trimmed ?? "", sortOrder: sortOrder) }
+            catch {
+                loadError = "Move: " + error.localizedDescription
+                await loadSessions()
+            }
+        }
+    }
+
+    /// Live, NETWORK-FREE reorder while a drag is in progress, so the other
+    /// chats animate out of the dragged chat's way. Persisted on drop.
+    func reorderLocal(_ id: String, toFolder folder: String?, sortOrder: Double) {
+        guard let i = sessions.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = folder?.trimmingCharacters(in: .whitespaces)
+        sessions[i].folder = (trimmed?.isEmpty ?? true) ? nil : trimmed
+        sessions[i].sortOrder = sortOrder
+        sessions.sort { ($0.sortOrder ?? 0) < ($1.sortOrder ?? 0) }
+    }
+
+    /// Commit a dragged chat's current folder + position to the backend (called
+    /// once, on drop). The optimistic order is already live from reorderLocal.
+    func persistMove(_ id: String) {
+        guard let s = sessions.first(where: { $0.id == id }) else { return }
+        let folder = s.folder ?? ""
+        let order = s.sortOrder ?? 0
+        Task {
+            do { try await api.moveSession(id, folder: folder, sortOrder: order) }
+            catch {
+                loadError = "Move: " + error.localizedDescription
+                await loadSessions()
+            }
+        }
+    }
+
+    /// Rename a project folder: re-tag every chat under the old name, then persist.
+    func renameFolder(_ old: String, to new: String) {
+        let n = new.trimmingCharacters(in: .whitespaces)
+        guard !n.isEmpty, n != old else { return }
+        for i in sessions.indices where (sessions[i].folder?.trimmingCharacters(in: .whitespaces) ?? "") == old {
+            sessions[i].folder = n
+        }
+        Task {
+            do { try await api.renameFolder(old: old, new: n) }
+            catch {
+                loadError = "Rename folder: " + error.localizedDescription
+                await loadSessions()
             }
         }
     }
@@ -653,13 +853,13 @@ final class AppStore {
     /// `[TASK] <name>` (so the sidebar shows it as such) and sends the task's
     /// prompt as the first normal user message. The explicit name means
     /// `ensureSession` won't auto-derive a title from the prompt.
-    func runTaskInChat(name: String, prompt: String) {
+    func runTask(_ task: TaskItem) {
         newChat()
         let model = selectedModel
         Task {
             do {
                 let created = try await api.createSession(
-                    name: "[TASK] \(name)",
+                    name: "[TASK] \(task.name ?? "Task")",
                     model: model?.modelID ?? "",
                     endpointURL: model?.endpointURL ?? "",
                     endpointID: model?.endpointID ?? ""
@@ -667,8 +867,12 @@ final class AppStore {
                 selectedSessionID = created.id
                 sessions.insert(created, at: 0)
                 // selectedSessionID is set, so send() reuses this session and
-                // never overwrites its `[TASK] <name>` title.
-                send(prompt)
+                // never overwrites its `[TASK] <name>` title. Tasks ALWAYS run as
+                // an agent, at the task's own permission level — never the
+                // composer's current chat/permission state (which made the task's
+                // permission setting pointless).
+                send(task.prompt ?? "", forceAgent: true,
+                     permissionOverride: task.permissionMode ?? "sandbox")
             } catch {
                 loadError = "Run task: " + error.localizedDescription
             }
@@ -739,7 +943,7 @@ final class AppStore {
         Task { await api.respondPermission(p.id, decision: decision) }
     }
 
-    func send(_ text: String) {
+    func send(_ text: String, forceAgent: Bool = false, permissionOverride: String? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !pendingAttachments.isEmpty, !isStreaming else { return }
 
@@ -747,8 +951,15 @@ final class AppStore {
         pendingAttachments = []
 
         // Terminal access only exists in agent mode — flip the switch so the
-        // toggle visibly does something instead of silently no-oping.
-        if (allowBash || permissionMode == "full") && !agentMode { agentMode = true }
+        // toggle visibly does something instead of silently no-oping. Only for
+        // interactive sends; a forced run (e.g. a task) must not mutate the
+        // composer's own mode/permission.
+        if permissionOverride == nil, !forceAgent,
+           (allowBash || permissionMode == "full"), !agentMode { agentMode = true }
+        // Effective values for THIS send: a task run forces agent + its own
+        // permission; an interactive send uses the composer's current state.
+        let effPermission = permissionOverride ?? permissionMode
+        let effAgent = forceAgent || agentMode || allowBash || effPermission == "full"
 
         var userMsg = Message(role: "user", content: trimmed)
         userMsg.attachments = atts.map { Attachment(id: $0.id, name: $0.name, mime: $0.mime) }
@@ -777,6 +988,15 @@ final class AppStore {
                 return
             }
             var currentModel: String?
+            // Keep this session's saved mode in step with how it's actually being
+            // sent. A brand-new chat is created server-side as "chat", so without
+            // this the sidebar hammer wouldn't appear until a mode toggle or a
+            // restart reloaded the agent mode the backend set mid-stream.
+            let sentMode = effAgent ? "agent" : "chat"
+            if let i = sessions.firstIndex(where: { $0.id == sid }), sessions[i].mode != sentMode {
+                sessions[i].mode = sentMode
+                Task { try? await api.setSessionMode(sid, mode: sentMode) }
+            }
             // Track this session as working so the sidebar shows a spinner, and
             // let it keep generating if the user switches to another chat.
             workingSessions.insert(sid)
@@ -830,12 +1050,12 @@ final class AppStore {
                 let stream = api.chatStream(
                     message: trimmed,
                     sessionID: sid,
-                    agentMode: agentMode,
+                    agentMode: effAgent,
                     useWeb: useWeb,
                     thinking: thinkingOn ? nil : false,
                     attachmentIDs: atts.map(\.id),
                     allowBash: allowBash,
-                    permissionMode: permissionMode,
+                    permissionMode: effPermission,
                     askPermission: askBeforeCommands,
                     // Send the open doc's id whenever one is genuinely open — even
                     // if the editor pane is collapsed — so the agent edits it in
@@ -920,6 +1140,8 @@ final class AppStore {
                         if !id.isEmpty { pendingResearchID = id }
                     case .memoriesUsed(let items):
                         appendMemoriesUsed(items, to: currentTextIndex())
+                    case .pluginsUsed(let items):
+                        appendPluginsUsed(items, to: currentTextIndex())
                     case .docStreamOpen(let title, let language):
                         handleDocStreamOpen(title: title, language: language)
                     case .docStreamDelta(let content):
@@ -990,7 +1212,13 @@ final class AppStore {
         final.modelName = texts.compactMap(\.modelName).last ?? selectedModel?.modelID
         final.metrics = texts.compactMap(\.metrics).last
         final.contextPercent = texts.compactMap(\.contextPercent).last
-        final.memoriesUsed = texts.flatMap(\.memoriesUsed)
+        // Gather from the whole turn, not just non-empty text segments: the
+        // memories/plugins events fire at the start of the turn and land on the
+        // first text placeholder, which is empty (and thus filtered out of
+        // `texts`) when tool calls come before any prose.
+        final.memoriesUsed = dedupeMemories(turn.flatMap(\.memoriesUsed))
+        var seenPlugins = Set<String>()
+        final.pluginsUsed = turn.flatMap(\.pluginsUsed).filter { seenPlugins.insert($0).inserted }
         final.attachments = texts.flatMap(\.attachments)
 
         var rebuilt = tools
