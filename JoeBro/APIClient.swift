@@ -616,6 +616,7 @@ final class APIClient {
         allowBash: Bool = false,
         permissionMode: String = "sandbox",
         askPermission: Bool = false,
+        askDocEdit: Bool = false,
         activeDocID: String? = nil,
         model: String? = nil,
         endpointID: String? = nil,
@@ -634,6 +635,7 @@ final class APIClient {
         fields.merge(memoryRetrievalFields(for: message)) { _, new in new }
         if allowBash { fields["allow_bash"] = "true" }
         if askPermission { fields["ask_permission"] = "true" }
+        if askDocEdit { fields["ask_doc_edit"] = "true" }
         if let activeDocID, !activeDocID.isEmpty { fields["active_doc_id"] = activeDocID }
         if let model, !model.isEmpty { fields["model"] = model }
         if let endpointID, !endpointID.isEmpty { fields["endpoint_id"] = endpointID }
@@ -727,6 +729,11 @@ final class APIClient {
                                 if let arr = obj["data"] as? [Any] {
                                     let items = arr.compactMap { $0 as? String }
                                     if !items.isEmpty { continuation.yield(.pluginsUsed(items)) }
+                                }
+                            case "skills_used":
+                                if let arr = obj["data"] as? [Any] {
+                                    let items = arr.compactMap { $0 as? String }
+                                    if !items.isEmpty { continuation.yield(.skillsUsed(items)) }
                                 }
                             case "permission_request":
                                 continuation.yield(.permissionRequest(

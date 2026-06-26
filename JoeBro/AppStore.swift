@@ -456,6 +456,10 @@ final class AppStore {
                 if !plugs.isEmpty, let last = segments.lastIndex(where: { $0.kind == .text }) {
                     segments[last].pluginsUsed = plugs
                 }
+                let skls = (hm.metadata?["skills_used"]?.arrayValue ?? []).compactMap { $0.stringValue }
+                if !skls.isEmpty, let last = segments.lastIndex(where: { $0.kind == .text }) {
+                    segments[last].skillsUsed = skls
+                }
                 if !atts.isEmpty {
                     if let last = segments.indices.last, segments[last].kind == .text {
                         segments[last].attachments = atts
@@ -507,6 +511,13 @@ final class AppStore {
         var seen = Set(messages[index].pluginsUsed)
         for it in items where !seen.contains(it) {
             messages[index].pluginsUsed.append(it); seen.insert(it)
+        }
+    }
+
+    private func appendSkillsUsed(_ items: [String], to index: Int) {
+        var seen = Set(messages[index].skillsUsed)
+        for it in items where !seen.contains(it) {
+            messages[index].skillsUsed.append(it); seen.insert(it)
         }
     }
 
@@ -1057,6 +1068,7 @@ final class AppStore {
                     allowBash: allowBash,
                     permissionMode: effPermission,
                     askPermission: askBeforeCommands,
+                    askDocEdit: requireDocApproval,
                     // Send the open doc's id whenever one is genuinely open — even
                     // if the editor pane is collapsed — so the agent edits it in
                     // place instead of asking "which document?". Never send the
@@ -1083,6 +1095,12 @@ final class AppStore {
                         if case .docUpdate(let id, let title, let language, let content, let version) = event {
                             queueDeferredDocEdit(session: sid, id: id, title: title,
                                                  language: language, content: content, version: version)
+                        } else if case .permissionRequest(let id, let tool, let command) = event {
+                            // The backend is blocking on approval (e.g. a doc edit
+                            // it won't write until you say yes). Surface it even
+                            // though you're on another chat — otherwise it sits
+                            // unanswered and times out as a denial.
+                            pendingPermission = PendingPermission(id: id, tool: tool, command: command)
                         }
                         continue
                     }
@@ -1142,6 +1160,8 @@ final class AppStore {
                         appendMemoriesUsed(items, to: currentTextIndex())
                     case .pluginsUsed(let items):
                         appendPluginsUsed(items, to: currentTextIndex())
+                    case .skillsUsed(let items):
+                        appendSkillsUsed(items, to: currentTextIndex())
                     case .docStreamOpen(let title, let language):
                         handleDocStreamOpen(title: title, language: language)
                     case .docStreamDelta(let content):
@@ -1219,6 +1239,8 @@ final class AppStore {
         final.memoriesUsed = dedupeMemories(turn.flatMap(\.memoriesUsed))
         var seenPlugins = Set<String>()
         final.pluginsUsed = turn.flatMap(\.pluginsUsed).filter { seenPlugins.insert($0).inserted }
+        var seenSkills = Set<String>()
+        final.skillsUsed = turn.flatMap(\.skillsUsed).filter { seenSkills.insert($0).inserted }
         final.attachments = texts.flatMap(\.attachments)
 
         var rebuilt = tools
@@ -1365,24 +1387,24 @@ final class AppStore {
         docAlertSessions.insert(session)
     }
 
-    /// On returning to a chat, open the doc the AI edited and gate it for approval.
+    /// On returning to a chat, show the doc the AI edited while you were away.
+    /// The edit was already approved server-side before it was written (see
+    /// ask_doc_edit), so this just surfaces the result — it doesn't re-ask.
     private func applyDeferredDocEdit(for session: String) {
         docAlertSessions.remove(session)
         guard let edit = deferredDocEdits.removeValue(forKey: session) else { return }
         openDocs.removeAll { $0.id == streamingDocID }   // drop any stale placeholder
         if matchOpenDoc(id: edit.id, title: edit.title) != nil {
-            // Still open from when you left — the local copy is the pre-edit
-            // version, so the normal gate works and Reject can restore it.
+            // Still open from when you left — update it in place.
             handleDocUpdate(id: edit.id, title: edit.title, language: edit.language,
                             content: edit.content, version: edit.version)
         } else {
-            // Closed — fetch it and surface the AI's version behind the chip.
+            // Closed — open the saved version so you can see what changed.
             Task {
                 do {
                     let d: DocDetail = try await api.getJSON("api/document/\(edit.id)")
                     guard selectedSessionID == session else { return }
                     openDoc(d)
-                    if let i = docIndex(edit.id) { openDocs[i].pendingAIContent = edit.content }
                     activeDocID = edit.id
                     editorVisible = true
                 } catch { loadError = "Open document: " + error.localizedDescription }
@@ -1587,14 +1609,12 @@ final class AppStore {
                 // The rich .doc/.docx editor reads from disk; the server already
                 // wrote the file, so force it to re-read and show the AI's edit.
                 openDocs[i].reloadNonce += 1
-            } else if requireDocApproval && !openDocs[i].content.isEmpty && openDocs[i].content != content {
-                // Ask-before-editing ON: gate AI edits behind explicit approval —
-                // the server already saved its version; Reject restores ours.
-                openDocs[i].pendingAIContent = content
             } else {
-                // Ask-before-editing OFF (or a first write): apply straight to the
-                // doc's content. This re-renders whether it's in edit OR preview
-                // mode, so the agent can edit a doc you're only viewing.
+                // Apply straight to the doc's content (re-renders in edit OR
+                // preview mode, so the agent can update a doc you're only
+                // viewing). Ask-before-editing is now enforced server-side BEFORE
+                // the write (see ask_doc_edit / _gate_doc_edit), so by the time an
+                // edit arrives here it was already approved — no second gate.
                 openDocs[i].content = content
                 openDocs[i].pendingAIContent = nil
                 openDocs[i].dirty = false

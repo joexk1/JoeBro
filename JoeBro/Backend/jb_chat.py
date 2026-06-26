@@ -60,7 +60,7 @@ class ChatMixin:
             except (BrokenPipeError, ConnectionResetError, OSError):
                 client_alive["ok"] = False
 
-        captured_meta = {"memories_used": [], "plugins_used": []}
+        captured_meta = {"memories_used": [], "plugins_used": [], "skills_used": []}
         def emit(obj):
             # Live events from run_agent. A doc payload is streamed into the
             # editor; everything else (tool_start/tool_output/thinking delta)
@@ -79,7 +79,14 @@ class ChatMixin:
                     captured_meta["memories_used"] = obj.get("data") or []
                 elif obj.get("type") == "plugins_used":
                     captured_meta["plugins_used"] = obj.get("data") or []
+                elif obj.get("type") == "skills_used":
+                    captured_meta["skills_used"] = obj.get("data") or []
                 sse(obj)
+
+        # Hand the live SSE channel to the tool layer so document writes can ask
+        # for approval before touching disk (see _gate_doc_edit). Request-scoped:
+        # a fresh Handler per request, so there's no cross-talk between sessions.
+        self._perm_emit = emit
 
         native = self.native_agent_tool_result(sid, message, f)
         thinking = ""
@@ -160,6 +167,8 @@ class ChatMixin:
             metadata["memories_used"] = captured_meta["memories_used"]
         if captured_meta["plugins_used"]:
             metadata["plugins_used"] = captured_meta["plugins_used"]
+        if captured_meta["skills_used"]:
+            metadata["skills_used"] = captured_meta["skills_used"]
         self.add_message(sid, "assistant", saved_reply, metadata)
 
         # Self-improving: quietly learn a memory / skill from this turn (off the
@@ -420,9 +429,11 @@ class ChatMixin:
         # claim they'd "edited the doc" or emit tool syntax that never ran.
         agent = (f.get("mode") or "").lower() == "agent"
         system = self._agent_system(f) if agent else self._chat_system(f)
-        skills_ctx = self._use_relevant_skills(f.get("message", ""))   # inject + bump confidence
+        skills_ctx, skills_used = self._use_relevant_skills(f.get("message", ""))   # inject + bump confidence
         if skills_ctx:
             system += "\n\n" + skills_ctx
+        if skills_used:
+            emit({"type": "skills_used", "data": skills_used})
         mem_ctx, mem_used = self._use_relevant_memories(f.get("message", ""))   # inject + bump use_count
         if mem_ctx:
             system += "\n\n" + mem_ctx
@@ -436,6 +447,17 @@ class ChatMixin:
             system += "\n\nActive guardrail plugins — follow these:\n" + guard
             emit({"type": "plugins_used", "data": [p.get("name") for p in bg_plugins]})
         messages = [{"role": "system", "content": system}] + self._history_messages(f)
+        # Images the user attached to THIS turn (dropped/picked in chat): fold them
+        # into the latest user message as vision blocks so the model can see them.
+        att_imgs = self._attachment_image_blocks(f)
+        if att_imgs:
+            for i in range(len(messages) - 1, -1, -1):
+                if messages[i].get("role") == "user":
+                    txt = messages[i].get("content")
+                    if not isinstance(txt, str):
+                        txt = f.get("message", "")
+                    messages[i]["content"] = ([{"type": "text", "text": txt}] if txt else []) + att_imgs
+                    break
         # Agent→Chat mid-conversation: the history can be full of earlier Agent-mode
         # actions ("I edited the doc", tool narration). In CHAT mode the model tends
         # to follow that in-context precedent over the system prompt and keep claiming
@@ -554,6 +576,38 @@ class ChatMixin:
         if not final_text:
             final_text = "I stopped without a final answer. Ask me to continue."
         return final_text, "\n\n".join(thinking_parts), events
+
+    def _attachment_image_blocks(self, f):
+        """Vision blocks for files the user attached to this turn. The app uploads
+        dropped/picked files and sends their ids in the `attachments` form field;
+        each image becomes an inline data-URL block so the model actually sees it."""
+        raw = (f.get("attachments") or "").strip()
+        if not raw:
+            return []
+        try:
+            ids = json.loads(raw)
+        except Exception:
+            ids = [x.strip() for x in raw.split(",") if x.strip()]
+        if not isinstance(ids, list):
+            return []
+        blocks = []
+        for uid in ids:
+            row = self.store.one("select * from uploads where id=?", (str(uid),))
+            if not row:
+                continue
+            path = row.get("path") or ""
+            mime = (row.get("mime") or "").lower()
+            ext = os.path.splitext(row.get("name") or path)[1].lower()
+            if not (mime.startswith("image/") or ext in IMAGE_EXTS):
+                continue
+            try:
+                b64 = base64.b64encode(Path(path).read_bytes()).decode("ascii")
+            except Exception:
+                continue
+            if not mime:
+                mime = mimetypes.guess_type(path)[0] or "image/png"
+            blocks.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+        return blocks
 
     def _image_vision_message(self, f, root, body, allow_outside):
         """Build a vision user-message for an image the agent just read, so the

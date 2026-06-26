@@ -9,9 +9,12 @@ struct TasksPanel: View {
     @State private var selection: Set<String> = []
     @State private var generating = false
     @State private var genError: String?
+    @State private var search = ""
+    @State private var searchOpen = false
 
     var body: some View {
         PanelChrome(title: "Tasks", icon: "clock.badge.checkmark") {
+            PanelSearchField(text: $search, open: $searchOpen, placeholder: "Search tasks")
             Button {
                 Task { await load() }
             } label: {
@@ -43,13 +46,14 @@ struct TasksPanel: View {
                 case .loaded(let list) where list.isEmpty:
                     ContentUnavailableView("No scheduled tasks", systemImage: "clock")
                 case .loaded(let list):
+                    let shown = filtered(list)
                     VStack(spacing: 0) {
                         if !selection.isEmpty {
-                            selectionBar(total: list.count, allIDs: list.map(\.id))
+                            selectionBar(total: shown.count, allIDs: shown.map(\.id))
                         }
                         ScrollView {
                             LazyVStack(spacing: 8) {
-                                ForEach(list) { t in
+                                ForEach(shown) { t in
                                     taskRow(t)
                                 }
                             }
@@ -70,6 +74,16 @@ struct TasksPanel: View {
         }
         .sheet(item: $editing) { t in
             EditTaskSheet(task: t) { await load() }
+        }
+    }
+
+    private func filtered(_ list: [TaskItem]) -> [TaskItem] {
+        let q = search.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return list }
+        return list.filter { t in
+            let name = t.name ?? ""
+            let prompt = t.prompt ?? ""
+            return (name + " " + prompt).localizedCaseInsensitiveContains(q)
         }
     }
 

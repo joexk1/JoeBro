@@ -5,18 +5,13 @@ import SwiftUI
 struct BrainPanel: View {
     @State private var memories: Loadable<[MemoryEntry]> = .loading
     @State private var search = ""
+    @State private var searchOpen = false
     @State private var editing: MemoryEntry?
     @State private var selection: Set<String> = []
 
     var body: some View {
         PanelChrome(title: "Brain", icon: "brain.head.profile") {
-            TextField("Search memories", text: $search)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .frame(width: 180)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(.quaternary.opacity(0.5), in: Capsule())
+            PanelSearchField(text: $search, open: $searchOpen, placeholder: "Search memories")
             Button {
                 Task { await load() }
             } label: {

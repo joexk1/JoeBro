@@ -369,3 +369,48 @@ struct QuickAddBar: View {
         text = ""
     }
 }
+
+/// Panel-header search: a magnifying-glass button that expands into an inline
+/// search field in place, and collapses + clears on the x. Shared by Skills,
+/// Brain, and Tasks so the affordance is identical everywhere.
+struct PanelSearchField: View {
+    @Binding var text: String
+    @Binding var open: Bool
+    var placeholder = "Search"
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if open {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                TextField(placeholder, text: $text)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .frame(width: 150)
+                    .focused($focused)
+                Button {
+                    withAnimation(.spring(duration: 0.25)) { text = ""; open = false }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+            } else {
+                Button {
+                    withAnimation(.spring(duration: 0.25)) { open = true }
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+                .buttonStyle(.borderless)
+                .help("Search")
+            }
+        }
+        .padding(.horizontal, open ? 10 : 0)
+        .padding(.vertical, open ? 5 : 0)
+        .background(open ? AnyShapeStyle(.quaternary.opacity(0.5)) : AnyShapeStyle(.clear), in: Capsule())
+        .onChange(of: open) { _, isOpen in if isOpen { focused = true } }
+    }
+}

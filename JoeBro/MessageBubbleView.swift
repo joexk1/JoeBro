@@ -180,6 +180,10 @@ struct MessageBubbleView: View, Equatable {
                 PluginsUsedView(plugins: message.pluginsUsed)
             }
 
+            if !message.skillsUsed.isEmpty {
+                SkillsUsedView(skills: message.skillsUsed)
+            }
+
             if !message.attachments.isEmpty {
                 AttachmentChipsView(attachments: message.attachments)
             }
@@ -531,6 +535,47 @@ struct PluginsUsedView: View {
                             .foregroundStyle(Color.accentColor)
                             .padding(.top, 2)
                         Text(p)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+}
+
+struct SkillsUsedView: View {
+    let skills: [String]
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Button {
+                withAnimation(.spring(duration: 0.25)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "graduationcap.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.accentColor)
+                    Text("\(skills.count) skill\(skills.count == 1 ? "" : "s") used")
+                        .font(.system(size: 10.5, weight: .medium))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 7, weight: .bold))
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if expanded {
+                ForEach(Array(skills.enumerated()), id: \.offset) { _, s in
+                    HStack(alignment: .top, spacing: 5) {
+                        Image(systemName: "graduationcap")
+                            .font(.system(size: 8))
+                            .foregroundStyle(Color.accentColor)
+                            .padding(.top, 2)
+                        Text(s)
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }

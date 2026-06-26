@@ -1,6 +1,12 @@
 """Tool dispatch, execution, web/image search, tool parsing."""
 from jb_core import *  # noqa: F401,F403
 
+# AI tools that write a document to disk. When the app has "ask before editing"
+# on it sends ask_doc_edit and these are gated behind explicit approval BEFORE
+# the file is touched (see _gate_doc_edit) — so an edit can't land behind your
+# back while JoeBro is in the background or you're on another chat.
+DOC_WRITE_TOOLS = {"create_document", "edit_document", "update_document"}
+
 
 class ToolsMixin:
 
@@ -182,6 +188,23 @@ class ToolsMixin:
                 return r, tool
         return None, None
 
+    @staticmethod
+    def _mcp_inject_repo_path(server_args, arguments):
+        """If a server is launched with --repository <path> (mcp-server-git),
+        pin the call's repo_path to it so the model never has to know or guess
+        the path. Returns the (possibly updated) arguments dict."""
+        toks = mcp_split_args(server_args)
+        repo = ""
+        for i, t in enumerate(toks):
+            if t in ("--repository", "--repo") and i + 1 < len(toks):
+                repo = toks[i + 1]
+            elif t.startswith("--repository="):
+                repo = t.split("=", 1)[1]
+        if repo and arguments.get("repo_path") != repo:
+            arguments = dict(arguments)
+            arguments["repo_path"] = repo
+        return arguments
+
     def run_mcp_tool(self, row, real_tool, arguments):
         """Invoke one MCP tool (spawn -> initialize -> tools/call -> kill) and
         return the standard event dict. NEVER raises — failures come back as
@@ -190,6 +213,11 @@ class ToolsMixin:
         label = (row.get("name") or "MCP") + ": " + real_tool
         if not isinstance(arguments, dict):
             arguments = {}
+        # Path-bound servers (mcp-server-git) take a REQUIRED repo_path the model
+        # often omits or guesses ("."), which the server then rejects. The server
+        # is already pinned to one repo via --repository, so force repo_path to it
+        # — there's no other repo it would accept anyway.
+        arguments = self._mcp_inject_repo_path(row.get("args") or "", arguments)
         try:
             text, is_error = mcp_call_tool(row.get("command") or "", row.get("args") or "",
                                            real_tool, arguments)
@@ -315,6 +343,9 @@ class ToolsMixin:
                     params = {"query": body or ""}
                 return self.run_custom_api_tool(crow, params)
             return None
+        gate = self._gate_doc_edit(name, body, form)
+        if gate is not None:
+            return gate
         try:
             output = self.execute_production_tool(root, name, body, form, allow_outside=allow_outside)
             event = {"tool": name, "command": self.tool_command_summary(name, body),
@@ -325,6 +356,34 @@ class ToolsMixin:
         except Exception as exc:
             return {"tool": name, "command": self.tool_command_summary(name, body),
                     "output": str(exc), "exit_code": 1}
+
+    def _gate_doc_edit(self, name, body, form):
+        """Block an AI document write until the user approves it, when the app
+        has 'ask before editing' on (it sends ask_doc_edit). Reuses the command-
+        permission prompt machinery so the file is NOT written behind your back —
+        independent of window focus or which chat is open. Returns a denied event
+        to skip the write, or None to allow it. No-ops unless the app opted in and
+        a live stream is attached, so approval-off / task runs are unchanged."""
+        if name not in DOC_WRITE_TOOLS:
+            return None
+        emit = getattr(self, "_perm_emit", None)
+        f = form or {}
+        if not emit or str(f.get("ask_doc_edit") or "").lower() not in ("1", "true", "yes"):
+            return None
+        sid = f.get("session") or ""
+        with _PERMISSION_GUARD:
+            if "doc_edit" in _SESSION_ALLOW.get(sid, set()):
+                return None
+        command = self.tool_command_summary(name, body)
+        decision = self._await_permission(emit, name, command)
+        if decision == "always":
+            with _PERMISSION_GUARD:
+                _SESSION_ALLOW.setdefault(sid, set()).add("doc_edit")
+            return None
+        if decision == "allow":
+            return None
+        return {"tool": name, "command": command,
+                "output": "Edit not applied — you declined it.", "exit_code": 1}
 
     def _doc_event_payload(self, root, name, body, allow_outside):
         """The {doc_id,title,language,content} for a document the AI just wrote,

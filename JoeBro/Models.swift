@@ -201,6 +201,7 @@ struct Message: Identifiable, Equatable {
     var isIntermediate = false     // agent round narration — collapsed by default
     var memoriesUsed: [String] = []
     var pluginsUsed: [String] = []
+    var skillsUsed: [String] = []
     var isStreaming = false
 
     var isUser: Bool { role == "user" }
@@ -367,6 +368,7 @@ enum StreamEvent {
     case researchStarted(id: String)
     case memoriesUsed([String])
     case pluginsUsed([String])
+    case skillsUsed([String])
     case permissionRequest(id: String, tool: String, command: String)
     case error(String)
     case done

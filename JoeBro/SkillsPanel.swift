@@ -13,9 +13,12 @@ struct SkillsPanel: View {
     @State private var busyID: String?
     @State private var selection: Set<String> = []
     @State private var generatePrefill = ""
+    @State private var search = ""
+    @State private var searchOpen = false
 
     var body: some View {
         PanelChrome(title: "Skills", icon: "graduationcap") {
+            PanelSearchField(text: $search, open: $searchOpen, placeholder: "Search skills")
             Button {
                 Task { await load() }
             } label: {
@@ -60,13 +63,14 @@ struct SkillsPanel: View {
                     ContentUnavailableView("No skills yet", systemImage: "graduationcap",
                                            description: Text("The agent learns skills from successful sessions — or add one with +."))
                 case .loaded(let list):
+                    let shown = filtered(list)
                     VStack(spacing: 0) {
                         if !selection.isEmpty {
-                            selectionBar(total: list.count, allIDs: list.compactMap { $0["id"]?.stringValue ?? $0["name"]?.stringValue })
+                            selectionBar(total: shown.count, allIDs: shown.compactMap { $0["id"]?.stringValue ?? $0["name"]?.stringValue })
                         }
                         ScrollView {
                             LazyVStack(spacing: 8) {
-                                ForEach(list, id: \.skillRowID) { s in
+                                ForEach(shown, id: \.skillRowID) { s in
                                     skillRow(s)
                                 }
                             }
@@ -115,6 +119,17 @@ struct SkillsPanel: View {
         guard !described.isEmpty else { return }
         generatePrefill = described
         showGenerate = true
+    }
+
+    private func filtered(_ list: [JSONValue]) -> [JSONValue] {
+        let q = search.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return list }
+        return list.filter { s in
+            let name = s["name"]?.stringValue ?? ""
+            let desc = s["description"]?.stringValue ?? ""
+            let body = s["content"]?.stringValue ?? ""
+            return (name + " " + desc + " " + body).localizedCaseInsensitiveContains(q)
+        }
     }
 
     private func load() async {
@@ -294,8 +309,19 @@ struct SkillEditorSheet: View {
                 TextField("Category", text: $draft.category)
                 TextField("When to use", text: $draft.whenToUse, axis: .vertical)
                     .lineLimit(2...4)
-                TextField("Procedure (markdown)", text: $draft.procedure, axis: .vertical)
-                    .lineLimit(6...14)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Procedure (markdown)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    // Fixed-height TextEditor so a long procedure scrolls inside
+                    // the field instead of stretching the whole sheet.
+                    TextEditor(text: $draft.procedure)
+                        .font(.system(size: 12, design: .monospaced))
+                        .frame(height: 240)
+                        .scrollContentBackground(.hidden)
+                        .padding(6)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+                }
                 if let error {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }

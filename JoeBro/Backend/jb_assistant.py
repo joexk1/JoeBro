@@ -103,35 +103,77 @@ class AssistantMixin:
         lines = "\n".join(f"- {r.get('text')}" for r in matched)
         return "What you know about the user (memory):\n" + lines, [r.get("text") or "" for r in matched]
 
+    # Words too generic to make a skill "relevant" on their own — they show up in
+    # lots of skill descriptions and used to drag UI/design skills into plain chat.
+    _SKILL_STOPWORDS = frozenset({
+        "this", "that", "with", "have", "your", "from", "they", "will", "make",
+        "makes", "help", "want", "need", "just", "like", "about", "into", "what",
+        "when", "where", "there", "their", "then", "than", "some", "more", "most",
+        "also", "been", "being", "does", "done", "could", "would", "should",
+        "please", "thanks", "thank", "hello", "give", "gives", "using", "used",
+        "over", "very", "much", "many", "good", "well", "here", "know", "look",
+        "tell", "show", "find", "take", "them", "time", "work", "stuff", "thing",
+    })
+
     def _use_relevant_skills(self, message):
         """Find saved skills relevant to this request, inject them, and RAISE
         their confidence (frequency of use). Skills that keep getting used climb
         and survive the audit; ones that never match stay low and get pruned —
-        the self-improving loop."""
+        the self-improving loop. Matching is whole-word against the CURATED fields
+        only (name/description/when-to-use), with a real threshold, so a skill's
+        long procedure body no longer pulls it into unrelated chat."""
         rows = self.store.rows("select * from skills where status != 'archived'")
         if not rows:
-            return ""
-        words = [w for w in re.findall(r"[a-z0-9]+", (message or "").lower()) if len(w) > 3]
+            return "", []
+        words = {w for w in re.findall(r"[a-z0-9]+", (message or "").lower())
+                 if len(w) > 3 and w not in self._SKILL_STOPWORDS}
         if not words:
-            return ""
+            return "", []
+        # Per-skill curated word sets, plus document frequency across the library:
+        # a word in many skills (design, image, project) is weak signal; one in
+        # just a couple is distinctive enough to match on its own.
+        sig = {}
+        df = {}
+        for r in rows:
+            nw = set(re.findall(r"[a-z0-9]+", (r.get("name") or "").lower()))
+            sw = nw | set(re.findall(
+                r"[a-z0-9]+",
+                ((r.get("description") or "") + " " + (r.get("when_to_use") or "")).lower()))
+            sig[r["id"]] = (nw, sw)
+            for w in sw:
+                df[w] = df.get(w, 0) + 1
         scored = []
         for r in rows:
-            hay = " ".join([r.get("name") or "", r.get("description") or "", r.get("content") or ""]).lower()
-            hits = sum(1 for w in set(words) if w in hay)
-            if hits:
-                scored.append((hits, r))
+            name_words, signal_words = sig[r["id"]]
+            hits = words & signal_words
+            if not hits:
+                continue
+            name_hit = bool(words & name_words)
+            # A distinctive word = rare in the library AND a substantial token, so
+            # a common short verb that's merely rare here (write, reply) doesn't
+            # count, but a real noun (discord, tiktok, exhibition) does.
+            rare_hit = any(df.get(w, 0) <= 2 and len(w) >= 6 for w in hits)
+            # Qualify on real signal: 2+ matching words, a hit on the skill's own
+            # name, or a single DISTINCTIVE word. A lone generic word still won't.
+            if len(hits) >= 2 or name_hit or rare_hit:
+                rank = len(hits) + (2 if name_hit else 0) + (1 if rare_hit else 0)
+                scored.append((rank, len(hits), r))
+        if not scored:
+            return "", []
         scored.sort(key=lambda t: t[0], reverse=True)
-        matched = [r for _, r in scored[:3]]
-        if not matched:
-            return ""
-        for hits, r in scored[:3]:
-            # Confidence rises with FREQUENCY (each use) and EFFICACY (stronger,
-            # multi-word matches = more on-point applications count for more).
-            bump = min(25, 8 + 4 * hits)
+        top = scored[:3]
+        matched = [r for _, _, r in top]
+        for _, nhits, r in top:
+            # Confidence climbs HARSH and incremental: a few on-point uses to clear
+            # the 30% audit threshold, not one. Based on distinct matching words
+            # (real efficacy), not the match rank — so name/rare bonuses sharpen
+            # WHICH skills match without inflating how fast they gain trust.
+            bump = min(8, 2 + nhits)
             new_conf = min(100, (r.get("confidence") if r.get("confidence") is not None else 60) + bump)
             self.store.exec("update skills set confidence=?, updated_at=? where id=?", (new_conf, now_iso(), r["id"]))
         lines = "\n".join(f"- {r.get('name')}: {(r.get('content') or '').strip()[:300]}" for r in matched)
-        return "Relevant saved skills you can apply to this request:\n" + lines
+        return ("Relevant saved skills you can apply to this request:\n" + lines,
+                [r.get("name") for r in matched if r.get("name")])
 
     def _auto_learn(self, sid, user_msg, reply, endpoint_id, model):
         """After a turn, quietly extract a durable user memory and/or a reusable
