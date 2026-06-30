@@ -133,6 +133,14 @@ final class GlassSettings {
     var backgroundPreset: String = UserDefaults.standard.string(forKey: "bgPreset") ?? "purple" {
         didSet { UserDefaults.standard.set(backgroundPreset, forKey: "bgPreset") }
     }
+    /// Trade the live Liquid Glass for a cheap frosted material. Liquid Glass
+    /// re-composites every surface when the window's active state flips (e.g.
+    /// switching Spaces), which can stutter on dense layouts / older Macs; the
+    /// material doesn't. Off by default; also forced on by the system's
+    /// "Reduce transparency" accessibility setting (see JoeGlass).
+    var reduceGlass: Bool = UserDefaults.standard.bool(forKey: "reduceGlass") {
+        didSet { UserDefaults.standard.set(reduceGlass, forKey: "reduceGlass") }
+    }
 }
 
 private struct JoeGlass: ViewModifier {
@@ -143,8 +151,19 @@ private struct JoeGlass: ViewModifier {
     // Liquid Glass caches its render and won't refresh when the system flips
     // light/dark while the app is open — rebuild the glass layer on the change.
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     func body(content: Content) -> some View {
+        // Reduced mode: a static frosted material instead of live Liquid Glass.
+        // The OS re-renders glass on every window active-state change (Space
+        // switch, app focus); a material doesn't, so this kills that stutter.
+        if settings.reduceGlass || reduceTransparency {
+            return AnyView(content.modifier(JoeReducedSurface(cornerRadius: cornerRadius)))
+        }
+        return AnyView(glassBody(content))
+    }
+
+    private func glassBody(_ content: Content) -> some View {
         let s = settings.solidity
         // The glass itself lives in a background layer so it can FADE:
         // left of centre the frost dissolves toward bare wallpaper;
@@ -217,6 +236,33 @@ private struct JoeGlass: ViewModifier {
                                 .fill(LinearGradient(colors: [.white, .clear],
                                                      startPoint: .topLeading, endPoint: .bottomTrailing))
                         )
+                }
+            }
+        }
+    }
+}
+
+/// Cheap stand-in for JoeGlass: a frosted material + soft border, no Liquid
+/// Glass. Used when "Reduce glass effects" (or the system Reduce Transparency
+/// setting) is on, so window active-state changes don't re-composite glass.
+private struct JoeReducedSurface: ViewModifier {
+    var cornerRadius: CGFloat?
+    @Environment(GlassSettings.self) private var settings
+
+    func body(content: Content) -> some View {
+        let backing = Color(nsColor: .windowBackgroundColor).opacity(0.25 + settings.solidity * 0.5)
+        return content.background {
+            if let r = cornerRadius {
+                ZStack {
+                    RoundedRectangle(cornerRadius: r).fill(.ultraThinMaterial)
+                    RoundedRectangle(cornerRadius: r).fill(backing)
+                    RoundedRectangle(cornerRadius: r).strokeBorder(.white.opacity(0.12), lineWidth: 0.8)
+                }
+            } else {
+                ZStack {
+                    Capsule().fill(.ultraThinMaterial)
+                    Capsule().fill(backing)
+                    Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 0.8)
                 }
             }
         }

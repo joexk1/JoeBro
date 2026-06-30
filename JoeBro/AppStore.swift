@@ -198,7 +198,9 @@ final class AppStore {
     var docAlertSessions: Set<String> = []
     var quickLookURL: URL?            // binary files (PDF/images) from the bound folder
     var requireDocApproval: Bool = UserDefaults.standard.object(forKey: "requireDocApproval") == nil
-        ? true : UserDefaults.standard.bool(forKey: "requireDocApproval")
+        ? true : UserDefaults.standard.bool(forKey: "requireDocApproval") {
+        didSet { UserDefaults.standard.set(requireDocApproval, forKey: "requireDocApproval") }
+    }
     // Hard cap on tool calls per agent turn. 0 = unlimited.
     var maxToolCalls: Int = UserDefaults.standard.integer(forKey: "maxToolCalls") {
         didSet { UserDefaults.standard.set(maxToolCalls, forKey: "maxToolCalls") }
@@ -238,8 +240,43 @@ final class AppStore {
 
     func bootstrap() async {
         startStatusPoller()
+        startActiveChatPoller()
         await waitForBackend()
         await loadAll()
+    }
+
+    // Live-refresh the open chat when messages are added server-side (a
+    // background task, or an AI edit while you were away). Polls a tiny "tip"
+    // (last message id) every few seconds and reloads history only when it
+    // changes — so externally-added turns appear without reopening the chat.
+    private var activeChatPoller: Task<Void, Never>?
+    private var pollSid: String?
+    private var pollTipID = 0
+
+    private func startActiveChatPoller() {
+        activeChatPoller?.cancel()
+        activeChatPoller = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(4))
+                guard !Task.isCancelled, let sid = selectedSessionID, !isStreaming else { continue }
+                guard let tip = try? await api.sessionTip(sid) else { continue }
+                guard selectedSessionID == sid, !isStreaming else { continue }
+                if sid != pollSid {
+                    pollSid = sid; pollTipID = tip   // first sight — baseline, don't reload
+                } else if tip != pollTipID {
+                    pollTipID = tip
+                    await loadHistory(for: sid)
+                }
+            }
+        }
+    }
+
+    /// Re-baseline the poller to the current tip — call after our own turn so it
+    /// doesn't redundantly reload the history we just streamed locally.
+    private func resyncChatTip(_ sid: String) async {
+        if let tip = try? await api.sessionTip(sid) {
+            pollSid = sid; pollTipID = tip
+        }
     }
 
     private func waitForBackend() async {
@@ -351,6 +388,9 @@ final class AppStore {
         selectedSessionID = id
         isStreaming = id.map { workingSessions.contains($0) } ?? false
         messages = []
+        // Clear the bound-folder tree synchronously so we never show the chat
+        // you just left's files while the new one's tree loads.
+        workdirPath = nil; treeEntries = [:]; expandedDirs = []
         // Restore this chat's editor exactly as it was left (or empty for a
         // chat we haven't opened this session).
         let snap = id.flatMap { editorStateBySession[$0] }
@@ -1214,6 +1254,7 @@ final class AppStore {
             // cancelled by Stop — a cancelled refresh was how new chats
             // vanished from the sidebar.
             Task { await self.loadSessions() }
+            Task { await self.resyncChatTip(sid) }   // baseline the live poller to our own turn
         }
     }
 
@@ -1313,10 +1354,9 @@ final class AppStore {
 
     /// Remove a sent message from the conversation (server + local).
     func unsend(_ message: Message) {
-        guard let sid = selectedSessionID else {
-            messages.removeAll { $0.id == message.id }
-            return
-        }
+        // Remove from the UI immediately — the server delete reconciles after.
+        messages.removeAll { $0.id == message.id }
+        guard let sid = selectedSessionID else { return }
         Task {
             var dbID = message.dbID
             if dbID == nil {
@@ -1331,7 +1371,6 @@ final class AppStore {
             if let dbID {
                 try? await api.deleteMessages(sessionID: sid, ids: [dbID])
             }
-            messages.removeAll { $0.id == message.id }
         }
     }
 
@@ -1471,6 +1510,19 @@ final class AppStore {
         // Rich .doc/.docx tabs persist themselves from the NSTextView (preserving
         // formatting); the String content path would clobber that.
         if doc.richDoc { return }
+        if let xlsxURL = doc.xlsxURL {
+            // .xlsx-backed grid: content is CSV — convert and write the workbook.
+            Task {
+                do {
+                    let data = try await api.csvToXLSX(doc.content)
+                    try data.write(to: xlsxURL)
+                    if let j = docIndex(id) { openDocs[j].dirty = false }
+                } catch {
+                    loadError = "Save \(doc.title): " + error.localizedDescription
+                }
+            }
+            return
+        }
         if let path = doc.localPath {
             // Bound-folder file: write straight to disk, no backend hop.
             do {
@@ -1622,10 +1674,13 @@ final class AppStore {
             openDocs[i].version = version ?? openDocs[i].version
             openDocs[i].aiWriting = false
         } else {
-            openDocs.append(EditorDoc(
+            var d = EditorDoc(
                 id: id, title: title.isEmpty ? "Untitled" : title,
                 language: language ?? "markdown", content: content,
-                version: version ?? 1))
+                version: version ?? 1)
+            let lower = d.title.lowercased()
+            d.spreadsheet = lower.hasSuffix(".csv") || lower.hasSuffix(".xlsx")
+            openDocs.append(d)
         }
         activeDocID = id
         editorVisible = true
@@ -1695,8 +1750,12 @@ final class AppStore {
         treeEntries = [:]
         expandedDirs = []
         guard let sid = selectedSessionID else { return }
-        workdirPath = try? await api.sessionWorkdir(sid: sid)
-        if let path = workdirPath {
+        let path = try? await api.sessionWorkdir(sid: sid)
+        // The session may have changed while we awaited — never apply a stale
+        // chat's folder over the one now selected.
+        guard selectedSessionID == sid else { return }
+        workdirPath = path
+        if let path {
             startWorkdirAccess(path)
             treeEntries[""] = listEntries("")
         }
@@ -1759,7 +1818,47 @@ final class AppStore {
             loadDocxExtrasIfNeeded(id: id, sub: sub, ext: ext)
             return
         }
-        let binary = ["mp4", "mov", "zip", "xlsx", "pptx", "key", "numbers", "pages"].contains(ext)
+        // Spreadsheets open in the grid editor. CSV is text (saves to disk
+        // directly); .xlsx round-trips through the backend converter, with
+        // content held as CSV either way.
+        if ext == "csv" || ext == "xlsx" {
+            let id = "local-" + sub
+            if docIndex(id) != nil {
+                activeDocID = id
+                editorVisible = true
+                return
+            }
+            guard let data = FileManager.default.contents(atPath: url.path) else {
+                loadError = "Open \(name): file could not be read"
+                return
+            }
+            if ext == "csv" {
+                var d = EditorDoc(id: id, title: name, language: "csv",
+                                  content: String(decoding: data, as: UTF8.self))
+                d.localPath = url.path
+                d.spreadsheet = true
+                openDocs.append(d)
+                activeDocID = id
+                editorVisible = true
+            } else {
+                Task {
+                    do {
+                        let csv = try await api.xlsxToCSV(data)
+                        guard docIndex(id) == nil else { activeDocID = id; editorVisible = true; return }
+                        var d = EditorDoc(id: id, title: name, language: "csv", content: csv)
+                        d.xlsxURL = url
+                        d.spreadsheet = true
+                        openDocs.append(d)
+                        activeDocID = id
+                        editorVisible = true
+                    } catch {
+                        loadError = "Open \(name): " + error.localizedDescription
+                    }
+                }
+            }
+            return
+        }
+        let binary = ["mp4", "mov", "zip", "pptx", "key", "numbers", "pages"].contains(ext)
         if ext == "pdf" {
             // PDFs live in the editor pane next to the chat, like docs
             let id = "pdf-" + sub

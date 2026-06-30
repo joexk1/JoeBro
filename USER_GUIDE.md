@@ -255,6 +255,38 @@ Paste text and get an estimate of how AI-written it reads, with the suspect sent
 
 ---
 
+## Message Bot (Telegram)
+
+Control JoeBro from your phone over Telegram. The bot is your orchestrator: it manages and drives all your chats and agents, and delegates the hands-on work to them.
+
+**What it can do:**
+- Search and read across every chat, and summarise what they concluded.
+- Create a new chat, bind it to a folder, and set its mode (chat or agent) and file-access level.
+- Send a message into any chat and report back its reply. This is how it gets work done, including reading or editing the files bound to that chat.
+- Use your email, calendar, memory, web search and deep research directly.
+
+It never writes code or edits files itself. For any coding or file task it picks or creates a chat, sets it up, and delegates.
+
+**Set it up** in Settings > Message Bot:
+1. In Telegram, open @BotFather, send `/newbot`, and copy the token it gives you.
+2. Paste the token into **Bot token** and turn on **Enable Message Bot**.
+3. Message your new bot once. If you are not yet on the allow list it replies with your numeric Telegram ID. Paste that into **Allowed Telegram IDs** (comma separated). Leaving it blank lets anyone who finds the bot talk to it, which is not recommended.
+4. Pick the **Model** the bot should use (grouped by endpoint, like the composer's picker). "Default model" uses your app default.
+
+**Options:**
+- **Ask before commands and edits:** when on, anything the bot delegates that needs Full Access (a command) or edits an open document asks you to approve it in Telegram. Reply `y` or `n`.
+- **Show in replies:** toggle whether each reply lists the skills, memories, tool calls and plugins it used.
+- **System prompt:** extra instructions appended to the bot's built-in orchestrator prompt. Leave blank for the default.
+
+**Commands:**
+- **/chats** lists all your chats.
+- **/compact** summarises and shrinks the bot conversation.
+- **/help** shows what the bot can do.
+
+Replies stream in live and render Markdown (bold, lists, code, links). The bot conversation never appears in your sidebar. Because the backend is bundled in the app, the bot works whenever JoeBro is running on your Mac.
+
+---
+
 ## Settings
 
 Open with the gear in the sidebar footer.
@@ -263,6 +295,7 @@ Open with the gear in the sidebar footer.
 - **Calendar:** connect macOS Calendar or a CalDAV account.
 - **Server:** the local backend URL (you should not need to change this).
 - **Documents:** "Ask before running commands" and "Require approval before applying the agent's document edits."
+- **Message Bot:** connect a Telegram bot to run JoeBro from your phone (see Message Bot above).
 - **Glass / Background / Wallpaper:** appearance (see Theming).
 
 ---

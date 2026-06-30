@@ -75,6 +75,16 @@ The agent calls API tools, memory, tasks, calendar, and plugins in one conversat
 
 ---
 
+## Message Bot (Telegram)
+
+Run JoeBro from your phone. Connect a Telegram bot and message it from anywhere to drive your whole workspace. It searches and reads across all your chats, creates new ones, binds them to folders, sets their mode and permissions, and delegates work to them, then reports back. It also uses your email, calendar, memory, web search and deep research directly. It is an orchestrator, not a coder: it never edits files itself, it hands that to a chat.
+
+Set it up in **Settings > Message Bot**: paste a bot token from Telegram's @BotFather, pick the model it should use, and add your numeric Telegram ID to the allow list (message the bot once and it tells you your ID). You choose what it shows in replies (skills, memories, tool calls, plugins) and whether it asks you to approve actions with a y/n reply. Commands: `/chats` lists your chats, `/compact` trims the conversation, `/help` shows what it can do.
+
+Replies stream in live and render Markdown. Because the backend is bundled in the app, the bot is reachable whenever JoeBro is running on your Mac. Full walkthrough in the **[User Guide](USER_GUIDE.md)**.
+
+---
+
 ## Local-first and private by design
 
 - **Your data stays on your Mac.** Chats, memory, notes, tasks and documents live in a local SQLite store in `~/Library/Application Support/JoeBro/`.

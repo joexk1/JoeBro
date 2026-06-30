@@ -242,6 +242,51 @@ class ChatMixin:
             )
         return system
 
+    def _orchestrator_system(self, f):
+        """System prompt for the Telegram Message Bot. It MANAGES chats and agents
+        and delegates all hands-on coding/file work — never doing it itself."""
+        now = datetime.now().astimezone()
+        system = (
+            "You are JoeBro's Message Bot — the user's orchestrator over ALL their chats and agents, "
+            "reachable from Telegram. You manage and coordinate work; you do not do hands-on coding or "
+            "file editing yourself.\n\n"
+            "WHAT YOU DO DIRECTLY (via the manage_chats tool):\n"
+            "- list: see every chat. search: find chats/messages by text. read: read a chat's history.\n"
+            "- create: start a new chat for a piece of work. bind_folder: bind a chat to a folder on disk.\n"
+            "- set_mode: switch a chat between chat/agent. set_permission: set a chat's file access "
+            "(sandbox = its bound folder only, readonly = read anywhere, full = read/write anywhere + terminal).\n"
+            "- send: post a message into a chat and get that chat's agent reply — this is how work gets done.\n"
+            "You also have the user's memory, email, calendar, web search and deep research directly. You have "
+            "full permission across all chats — use it responsibly.\n\n"
+            "WHAT YOU NEVER DO YOURSELF: write code, run shell/Python, or read/edit files. For ANY coding, "
+            "file, repo, or document task you MUST DELEGATE: pick or create a chat for it, bind the right "
+            "folder, set it to agent mode with a suitable permission level, then `send` the task and report the "
+            "result back. If you try to do it yourself you will fail — you have no file or terminal tools.\n\n"
+            "CONTEXT DISCIPLINE — keep threads straight. Answer the user's LATEST message on its own terms. A "
+            "short follow-up ('so it likely does happen?', 'why?', 'and the cost?', 'really?') continues the MOST "
+            "RECENT topic — re-read your previous answer to see what that was, and stay on it; never switch topic "
+            "on your own. Work you kicked off in the BACKGROUND (deep research especially) finishes "
+            "asynchronously: NEVER announce or summarize a background result unless the user EXPLICITLY asks for "
+            "it ('is the research done?', 'what did it find?'). A task finishing is not a reason to change the "
+            "subject — finish the current thread first.\n\n"
+            "If the user is confused, explain plainly what JoeBro and you (the bot) can do, and offer a concrete "
+            "next step. Keep replies concise and chat-friendly for Telegram.\n"
+            f"Today is {now.strftime('%A, %Y-%m-%d')} and the local time is {now.strftime('%H:%M')} "
+            f"({now.strftime('%z') or 'local'}). Resolve relative dates against this.\n"
+            "Only claim you did something if the matching tool actually ran and returned success."
+        )
+        focus = self.pref("bot_focus_" + (f.get("session") or ""))
+        if isinstance(focus, dict) and focus.get("id"):
+            system += (
+                f"\n\nThe chat you most recently worked with is \"{focus.get('name') or focus['id']}\" "
+                f"(id {focus['id']}). If the user's follow-up refers to 'them', 'that chat/agent', 'it', "
+                "or 'the same one', they mean THIS chat — actually relay it with manage_chats send (do not "
+                "answer on its behalf or claim you asked without the tool returning a reply).")
+        custom = (self.pref("bot_system_prompt") or "").strip()
+        if custom:
+            system += "\n\nAdditional instructions from the user:\n" + custom
+        return system
+
     def _chat_system(self, f):
         """System prompt for CHAT mode — pure conversation, NO tools. Spells out
         that the assistant cannot take actions so it stops claiming it edited the
@@ -427,8 +472,14 @@ class ChatMixin:
         # Chat mode is pure conversation (no tools); agent mode gets the full
         # tool-using prompt. Using the agent prompt in chat mode made weak models
         # claim they'd "edited the doc" or emit tool syntax that never ran.
-        agent = (f.get("mode") or "").lower() == "agent"
-        system = self._agent_system(f) if agent else self._chat_system(f)
+        orchestrator = str(f.get("orchestrator") or "").lower() in ("1", "true", "yes")
+        agent = orchestrator or (f.get("mode") or "").lower() == "agent"
+        if orchestrator:
+            system = self._orchestrator_system(f)
+        elif agent:
+            system = self._agent_system(f)
+        else:
+            system = self._chat_system(f)
         skills_ctx, skills_used = self._use_relevant_skills(f.get("message", ""))   # inject + bump confidence
         if skills_ctx:
             system += "\n\n" + skills_ctx
@@ -890,6 +941,51 @@ class ChatMixin:
             reply = reply + "\n\n" + "\n".join(e.get("output", "") for e in tool_results)
         self.add_message(sid, "assistant", reply, {"model": f.get("model") or "Local fallback"})
         return reply
+
+    def bot_run(self, f, emit=None):
+        """Run one agent turn OFF the HTTP/SSE path — for the Telegram bot and for
+        manage_chats `send` (delegating into another chat). Persists the user and
+        assistant messages and returns (reply, meta) where meta has the
+        skills/memories/plugins/tool rows the chat footer would show.
+
+        `emit(obj)` (optional) receives the same live events run_agent emits — the
+        bot uses it to forward permission_request prompts to Telegram."""
+        sid = f.get("session") or ""
+        message = f.get("message", "")
+        sess = self.store.one("select * from sessions where id=?", (sid,)) or {}
+        f.setdefault("model", sess.get("model") or "")
+        f.setdefault("endpoint_id", sess.get("endpoint_id") or "")
+        f.setdefault("endpoint_url", sess.get("endpoint_url") or "")
+        if message.strip():
+            self.add_message(sid, "user", message, {})
+        captured = {"memories_used": [], "plugins_used": [], "skills_used": []}
+        sink = emit or (lambda obj: None)
+
+        def _emit(obj):
+            t = obj.get("type")
+            if t == "memories_used":
+                captured["memories_used"] = obj.get("data") or []
+            elif t == "plugins_used":
+                captured["plugins_used"] = obj.get("data") or []
+            elif t == "skills_used":
+                captured["skills_used"] = obj.get("data") or []
+            sink(obj)
+
+        # Lets the doc-edit / command gates ask for approval mid-run (routed to
+        # Telegram by the bot's emit). Request-scoped on a fresh Handler per turn.
+        self._perm_emit = _emit
+        reply, _thinking, tool_events = self.run_agent(f, emit=_emit)
+        run_text_tools = (f.get("mode") or "").lower() == "agent"
+        reply, trailing = self.execute_ai_file_tools(sid, reply, f, run=run_text_tools)
+        tool_events = list(tool_events) + list(trailing)
+        metadata = {"model": f.get("model") or "Local fallback"}
+        if tool_events:
+            metadata["tool_events"] = [{k: v for k, v in e.items() if k != "doc"} for e in tool_events]
+        for k in ("memories_used", "plugins_used", "skills_used"):
+            if captured[k]:
+                metadata[k] = captured[k]
+        self.add_message(sid, "assistant", reply, metadata)
+        return reply, {**captured, "tool_events": tool_events}
 
     def add_message(self, sid, role, content, metadata):
         if not sid:

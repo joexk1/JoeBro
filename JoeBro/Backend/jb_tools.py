@@ -15,6 +15,14 @@ class ToolsMixin:
         actually run in the current context, or the model wastes a round calling
         them and then apologises (e.g. create_document in a plain chat with no
         bound folder)."""
+        # The Telegram orchestrator bot MANAGES chats/agents — it never codes or
+        # touches files itself (it delegates that to chats). So it gets the
+        # high-level tools only, with bash/python/file tools removed.
+        if str(f.get("orchestrator") or "").lower() in ("1", "true", "yes"):
+            drop = {"bash", "python", "list_files", "read_file", "read_pdf",
+                    "create_document", "edit_document", "update_document", "suggest_document"}
+            schemas = [t for t in FUNCTION_TOOL_SCHEMAS if t["function"]["name"] not in drop]
+            return schemas + self.custom_tool_schemas() + self.mcp_tool_schemas()
         # Chat mode is pure conversation — no tools at all. Tools (search, email,
         # files, research, …) are an AGENT-mode capability.
         if (f.get("mode") or "").lower() != "agent":
@@ -940,6 +948,127 @@ class ToolsMixin:
         rows = self.store.rows("select * from skills order by datetime(created_at) desc")
         return json.dumps([self.skill_json(r) for r in rows], ensure_ascii=False)
 
+    def _resolve_chat(self, ref):
+        """Find a session by id, then exact name, then name LIKE. None if no match."""
+        ref = (ref or "").strip()
+        if not ref:
+            return None
+        row = self.store.one("select * from sessions where id=?", (ref,))
+        if row:
+            return row
+        row = self.store.one("select * from sessions where name=? order by datetime(created_at) desc limit 1", (ref,))
+        if row:
+            return row
+        return self.store.one(
+            "select * from sessions where name like ? order by datetime(created_at) desc limit 1", (f"%{ref}%",))
+
+    def _remember_focus(self, form, chat_id, chat_name):
+        """Record the chat the bot just worked with, keyed by the bot's own
+        session, so a follow-up ('ask them…', 'tell that chat…') resolves to it.
+        Read back in _orchestrator_system."""
+        sid = (form or {}).get("session") or ""
+        if sid:
+            self.set_pref("bot_focus_" + sid, {"id": chat_id, "name": chat_name or ""})
+
+    def manage_chats_tool(self, body, form=None):
+        args = self.parse_tool_args(body)
+        action = (args.get("action") or "list").lower()
+        if action == "list":
+            rows = self.store.rows(
+                "select * from sessions where id not like 'bot\\_tg\\_%' escape '\\' order by datetime(created_at) desc limit 100")
+            out = []
+            for r in rows:
+                last = self.store.one(
+                    "select created_at from messages where session_id=? order by id desc limit 1", (r["id"],))
+                cnt = self.store.one("select count(*) c from messages where session_id=?", (r["id"],))
+                out.append({"id": r["id"], "name": r.get("name") or "Untitled",
+                            "folder": r.get("folder") or "", "mode": r.get("mode") or "chat",
+                            "permission": r.get("permission_mode") or "sandbox",
+                            "bound_folder": (r.get("workdir") or "").strip(),
+                            "messages": int((cnt or {}).get("c") or 0),
+                            "last_activity": (last or {}).get("created_at")})
+            return json.dumps(out, ensure_ascii=False)
+        if action == "search":
+            q = (args.get("query") or "").strip()
+            if not q:
+                raise ValueError("search requires query")
+            rows = self.store.rows(
+                """select m.session_id, s.name, m.role, m.content, m.created_at
+                   from messages m join sessions s on s.id=m.session_id
+                   where m.content like ? order by m.id desc limit 40""", (f"%{q}%",))
+            return json.dumps([{"chat_id": r["session_id"], "chat": r.get("name"),
+                                "role": r.get("role"), "when": r.get("created_at"),
+                                "snippet": (r.get("content") or "")[:300]} for r in rows], ensure_ascii=False)
+        if action == "create":
+            new_id = "s_" + os.urandom(8).hex()
+            name = (args.get("name") or "New chat").strip() or "New chat"
+            mode = (args.get("mode") or "agent").lower()
+            mode = mode if mode in ("chat", "agent") else "agent"
+            perm = (args.get("permission") or "sandbox").lower()
+            perm = perm if perm in ("sandbox", "readonly", "full") else "sandbox"
+            folder = (args.get("folder") or "").strip()
+            # Inherit a working model/endpoint so the new chat can actually run:
+            # the bot's configured model first, then the app default.
+            ep = self.pref("bot_endpoint_id") or self.pref("default_endpoint_id") or ""
+            model = self.pref("bot_model") or self.pref("default_model_id") or ""
+            self.store.exec(
+                "insert into sessions(id,name,model,endpoint_id,mode,permission_mode,workdir,created_at) values(?,?,?,?,?,?,?,?)",
+                (new_id, name, model, ep, mode, perm, folder, now_iso()))
+            self._remember_focus(form, new_id, name)
+            return json.dumps({"id": new_id, "name": name, "mode": mode,
+                               "permission": perm, "folder": folder}, ensure_ascii=False)
+        target = self._resolve_chat(args.get("chat"))
+        if not target:
+            raise ValueError(f"chat not found: {args.get('chat') or ''}")
+        if action == "bind_folder":
+            folder = (args.get("folder") or "").strip()
+            self.store.exec("update sessions set workdir=? where id=?", (folder, target["id"]))
+            return f"Bound chat '{target.get('name')}' to folder: {folder or '(none)'}"
+        if action == "set_permission":
+            perm = (args.get("permission") or "").lower()
+            if perm not in ("sandbox", "readonly", "full"):
+                raise ValueError("permission must be sandbox, readonly or full")
+            self.store.exec("update sessions set permission_mode=? where id=?", (perm, target["id"]))
+            return f"Set chat '{target.get('name')}' file access to {perm}"
+        if action == "read":
+            n = max(1, min(100, int(args.get("limit") or 20)))
+            rows = self.store.rows(
+                "select role,content,created_at from messages where session_id=? order by id desc limit ?",
+                (target["id"], n))
+            rows = list(reversed(rows))
+            return json.dumps({"chat": target.get("name"), "id": target["id"],
+                               "messages": [{"role": r["role"], "content": r.get("content") or "",
+                                             "when": r.get("created_at")} for r in rows]}, ensure_ascii=False)
+        if action == "set_mode":
+            mode = (args.get("mode") or "").lower()
+            if mode not in ("chat", "agent"):
+                raise ValueError("mode must be chat or agent")
+            self.store.exec("update sessions set mode=? where id=?", (mode, target["id"]))
+            return f"Set chat '{target.get('name')}' to {mode} mode"
+        if action == "send":
+            msg = (args.get("message") or "").strip()
+            if not msg:
+                raise ValueError("send requires message")
+            # Delegate: run a turn IN the target chat with ITS model, mode,
+            # bound folder and stored permission level. Full Access also enables
+            # the terminal for that chat. If the bot's "ask before commands &
+            # edits" is on, route the chat's approval prompts back to Telegram via
+            # the orchestrator's live emit (set on self during the bot's run).
+            perm = (target.get("permission_mode") or "sandbox").lower()
+            sub = {"session": target["id"], "message": msg,
+                   "model": target.get("model") or "", "endpoint_id": target.get("endpoint_id") or "",
+                   "endpoint_url": target.get("endpoint_url") or "",
+                   "mode": (target.get("mode") or "agent"), "permission_mode": perm}
+            if perm == "full":
+                sub["allow_bash"] = "true"
+            if bool(self.pref("bot_ask_permissions")):
+                sub["ask_permission"] = "true"
+                sub["ask_doc_edit"] = "true"
+            reply, _meta = self.bot_run(sub, emit=getattr(self, "_perm_emit", None))
+            self._remember_focus(form, target["id"], target.get("name"))
+            return json.dumps({"chat": target.get("name"), "reply": reply}, ensure_ascii=False)
+        raise ValueError(f"unknown manage_chats action: {action}")
+
     def trigger_research_tool(self, body, form=None):
         form = form or {}
         args = self.parse_tool_args(body)
@@ -1045,6 +1174,8 @@ class ToolsMixin:
             return self.manage_tasks_tool(body)
         if name == "manage_skills":
             return self.manage_skills_tool(body)
+        if name == "manage_chats":
+            return self.manage_chats_tool(body, form)
         if name == "trigger_research":
             return self.trigger_research_tool(body, form)
         if name == "manage_research":

@@ -577,6 +577,14 @@ final class APIClient {
         return try JSONDecoder().decode(HistoryResponse.self, from: data)
     }
 
+    /// Cheap freshness probe — the id of the latest message in a session. The
+    /// open-chat poller compares this to decide whether to reload full history.
+    func sessionTip(_ id: String) async throws -> Int {
+        let (data, resp) = try await session.data(for: request("api/session/\(id)/tip"))
+        try check(data, resp)
+        return (try? JSONDecoder().decode([String: Int].self, from: data))?["last_id"] ?? 0
+    }
+
     // MARK: Models
 
     func models() async throws -> [ModelChoice] {
@@ -1147,6 +1155,26 @@ final class APIClient {
 
     func createDocument(title: String, content: String, language: String) async throws {
         try await sendJSON("api/document", body: ["title": title, "content": content, "language": language])
+    }
+
+    // MARK: Spreadsheets (xlsx <-> CSV; conversion runs in the backend)
+
+    func xlsxToCSV(_ data: Data) async throws -> String {
+        var req = request("api/spreadsheet/to_csv", method: "POST")
+        req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        req.httpBody = data
+        let (out, resp) = try await session.data(for: req)
+        try check(out, resp)
+        return String(decoding: out, as: UTF8.self)
+    }
+
+    func csvToXLSX(_ csv: String) async throws -> Data {
+        var req = request("api/spreadsheet/to_xlsx", method: "POST")
+        req.setValue("text/csv", forHTTPHeaderField: "Content-Type")
+        req.httpBody = Data(csv.utf8)
+        let (out, resp) = try await session.data(for: req)
+        try check(out, resp)
+        return out
     }
 
     func exportDocumentPDF(id: String, title: String) async throws -> URL {

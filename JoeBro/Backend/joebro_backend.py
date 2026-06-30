@@ -9,6 +9,8 @@ from jb_calendar import CalendarMixin
 from jb_models import ModelsMixin
 from jb_assistant import AssistantMixin
 from jb_files import FilesMixin
+from jb_xlsx import xlsx_to_csv, csv_to_xlsx
+import gzip
 
 
 class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, ModelsMixin, AssistantMixin, FilesMixin, BaseHTTPRequestHandler):
@@ -43,16 +45,47 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
         parsed = urllib.parse.parse_qs(raw, keep_blank_values=True)
         return {k: v[-1] for k, v in parsed.items()}
 
-    def _send(self, status=200, ctype="application/json"):
+    def _send(self, status=200, ctype="application/json", encoding=None):
         self.send_response(status)
         self.send_header("Access-Control-Allow-Origin", "http://127.0.0.1")
         self.send_header("Access-Control-Allow-Credentials", "true")
         self.send_header("Content-Type", ctype)
+        if encoding:
+            self.send_header("Content-Encoding", encoding)
         self.end_headers()
 
     def json(self, obj, status=200):
-        self._send(status)
-        self.wfile.write(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        # gzip larger payloads — chat history over Tailscale was ~1MB/10s
+        # uncompressed; gzip cuts the transfer several-fold. URLSession sends
+        # Accept-Encoding: gzip and decompresses transparently.
+        if len(body) > 1400 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
+            body = gzip.compress(body, 6)
+            self._send(status, encoding="gzip")
+        else:
+            self._send(status)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+
+    @staticmethod
+    def _trim_for_history(meta):
+        """Shrink the bulky, collapsed secondary detail in a history reload —
+        tool outputs and thinking — to previews. The live run already showed them
+        in full; trimming keeps reopening a long chat fast over a slow link."""
+        if not isinstance(meta, dict):
+            return meta
+        think = meta.get("thinking")
+        if isinstance(think, str) and len(think) > 800:
+            meta["thinking"] = think[:800] + " … (truncated)"
+        evs = meta.get("tool_events")
+        if isinstance(evs, list):
+            for e in evs:
+                out = e.get("output")
+                if isinstance(out, str) and len(out) > 1500:
+                    e["output"] = out[:1500] + " … (truncated)"
+        return meta
 
     def not_found(self):
         self.json({"detail": "Not found"}, 404)
@@ -70,10 +103,18 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
         if path in ("/api/ping", "/api/health"):
             return self.json({"ok": True, "local": True})
         if path == "/api/sessions":
+            # bot_tg_* are the Telegram bot's own per-chat sessions — never shown
+            # in the app sidebar.
             rows = self.store.rows(
-                "select id,name,model,mode,archived,is_important,folder,sort_order,created_at from sessions order by coalesce(sort_order, -julianday(created_at)) asc"
+                "select id,name,model,mode,archived,is_important,folder,sort_order,created_at from sessions where id not like 'bot\\_tg\\_%' escape '\\' order by coalesce(sort_order, -julianday(created_at)) asc"
             )
             return self.json([self.session_json(r) for r in rows])
+        if path.startswith("/api/session/") and path.endswith("/tip"):
+            # Cheap freshness probe for the open chat — the app polls this and
+            # only reloads full history when last_id changes.
+            sid = path.split("/")[3]
+            row = self.store.one("select max(id) m from messages where session_id=?", (sid,))
+            return self.json({"last_id": int((row or {}).get("m") or 0)})
         if path.startswith("/api/history/"):
             sid = path.rsplit("/", 1)[-1]
             session = self.store.one("select * from sessions where id=?", (sid,))
@@ -82,7 +123,8 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
             )
             return self.json({
                 "history": [
-                    {"role": m["role"], "content": m["content"], "metadata": self.loads(m["metadata"]) | {"_db_id": m["id"]}}
+                    {"role": m["role"], "content": m["content"],
+                     "metadata": self._trim_for_history(self.loads(m["metadata"])) | {"_db_id": m["id"]}}
                     for m in msgs
                 ],
                 "model": (session or {}).get("model"),
@@ -210,6 +252,16 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
                     entry["decision"] = decision
                     entry["event"].set()
             return self.json({"ok": True})
+        if path == "/api/spreadsheet/to_csv":
+            # xlsx bytes in -> CSV text out (first sheet, values only).
+            self._send(200, "text/csv")
+            self.wfile.write(xlsx_to_csv(self._body_bytes()).encode("utf-8"))
+            return
+        if path == "/api/spreadsheet/to_xlsx":
+            # CSV text in -> xlsx bytes out.
+            self._send(200, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            self.wfile.write(csv_to_xlsx(self._body_bytes().decode("utf-8")))
+            return
         if path == "/api/chat_stream":
             return self.chat_stream()
         if path == "/api/chat":
@@ -546,6 +598,8 @@ def main():
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.store = Store(root)
     threading.Thread(target=_task_scheduler, args=(server,), daemon=True).start()
+    from jb_telegram import telegram_bot_loop
+    threading.Thread(target=telegram_bot_loop, args=(server,), daemon=True).start()
     # Boot the local searxng meta-search alongside the app (best-effort).
     def _boot_searxng():
         h = Handler.__new__(Handler); h.server = server

@@ -152,11 +152,15 @@ def app_support_dir():
 
 
 def atomic_write_text(path: Path, text: str):
+    atomic_write_bytes(path, text.encode("utf-8"))
+
+
+def atomic_write_bytes(path: Path, data: bytes):
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(text)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)
@@ -515,16 +519,22 @@ def text_to_docx(path: Path, text: str):
 
 
 def read_doc_text(path: Path) -> str:
-    """Document text for the AI — extracted plain text for .docx, raw otherwise."""
+    """Document text for the AI — plain text for .docx, CSV for .xlsx, raw otherwise."""
     if is_docx(path):
         return docx_to_text(path)
+    if str(path).lower().endswith(".xlsx"):
+        from jb_xlsx import xlsx_to_csv
+        return xlsx_to_csv(path.read_bytes())
     return path.read_text(encoding="utf-8", errors="replace")
 
 
 def write_doc_text(path: Path, text: str):
-    """Persist full content from the AI — plain-text .docx, atomic text write otherwise."""
+    """Persist full content from the AI — .docx, .xlsx (text is CSV), or atomic text write."""
     if is_docx(path):
         text_to_docx(path, text)
+    elif str(path).lower().endswith(".xlsx"):
+        from jb_xlsx import csv_to_xlsx
+        atomic_write_bytes(path, csv_to_xlsx(text))
     else:
         atomic_write_text(path, text)
 
@@ -565,13 +575,13 @@ PRODUCTION_AI_TOOLS = {
     "list_files", "read_file", "read_pdf",
     "create_document", "edit_document", "suggest_document",
     "trigger_research", "manage_research", "manage_memory", "manage_tasks", "manage_skills",
-    "create_event",
+    "manage_chats", "create_event",
 } | EMAIL_AI_TOOLS
 WRITE_SIDE_EFFECT_TOOLS = {
     "bash", "python",
     "create_document", "edit_document",
     "manage_memory", "manage_tasks", "manage_skills", "trigger_research", "manage_research",
-    "create_event",
+    "manage_chats", "create_event",
     "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read",
 }
 
@@ -634,6 +644,16 @@ FUNCTION_TOOL_SCHEMAS = [
          "start": {"type": "string", "description": "ISO-8601 start datetime, e.g. 2026-06-17T14:00:00"},
          "end": {"type": "string", "description": "ISO-8601 end datetime, e.g. 2026-06-17T17:00:00"},
          "all_day": {"type": "boolean", "description": "true for an all-day event (optional)"}}, ["summary", "start", "end"]),
+    _fn("manage_chats", "Manage and drive the user's chats — you are the orchestrator over all of them. action=list (every chat), search (find chats/messages containing text), read (recent history of one chat), create (start a new chat), bind_folder (bind a chat to a folder on disk), set_mode (chat/agent), set_permission (a chat's file access: sandbox/readonly/full), send (post a message into a chat and get that chat's agent reply — this is how you DELEGATE coding/file work). Identify a chat with `chat` = its id or name.",
+        {"action": {"type": "string", "enum": ["list", "search", "read", "create", "bind_folder", "set_mode", "set_permission", "send"]},
+         "chat": {"type": "string", "description": "target chat id or name (read/send/set_mode/set_permission/bind_folder)"},
+         "query": {"type": "string", "description": "text to search for across chats (search)"},
+         "message": {"type": "string", "description": "message to post into the chat (send)"},
+         "mode": {"type": "string", "enum": ["chat", "agent"], "description": "new mode (set_mode); also the starting mode for create"},
+         "permission": {"type": "string", "enum": ["sandbox", "readonly", "full"], "description": "file-access level (set_permission); also for create"},
+         "folder": {"type": "string", "description": "absolute folder path to bind (bind_folder); also for create"},
+         "name": {"type": "string", "description": "name for the new chat (create)"},
+         "limit": {"type": "integer"}}, ["action"]),
     _fn("bash", "Run a shell command (only with terminal access + Full Access). NOT for email or web.", {"command": {"type": "string"}}, ["command"]),
     _fn("python", "Run a Python snippet (only with terminal access + Full Access).", {"code": {"type": "string"}}, ["code"]),
 ]
@@ -1117,7 +1137,8 @@ class Store:
                          "alter table memory add column last_used text default ''",
                          "alter table tasks add column last_run text default ''",
                          "alter table tasks add column permission_mode text default 'sandbox'",
-                         "alter table tasks add column repeat_day integer default 0"):
+                         "alter table tasks add column repeat_day integer default 0",
+                         "alter table sessions add column permission_mode text default 'sandbox'"):
                 try:
                     db.execute(stmt)
                 except sqlite3.OperationalError:
@@ -1280,7 +1301,7 @@ __all__ = [
     "_xml_escape",
     "app_support_dir",
     "argparse",
-    "atomic_write_text",
+    "atomic_write_text", "atomic_write_bytes",
     "backup_existing",
     "base64",
     "datetime",

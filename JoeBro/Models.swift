@@ -429,6 +429,8 @@ struct EditorDoc: Identifiable {
     var docFooter: String?         // .docx footer text
     var docFootnotes: String?      // .docx footnotes text (display-only band)
     var reloadNonce = 0            // bumped to force the rich .docx editor to re-read from disk after an AI edit
+    var spreadsheet = false        // .csv/.xlsx — content is CSV, rendered as an editable grid
+    var xlsxURL: URL?              // .xlsx-backed: saves convert CSV->xlsx and write here
 }
 
 struct DocSuggestion: Identifiable, Hashable {

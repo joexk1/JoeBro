@@ -30,7 +30,9 @@ struct EditorPane: View {
             tabBar
             Divider().opacity(0.4)
             if let i = store.docIndex(store.activeDocID) {
-                if store.openDocs[i].richDoc, let url = store.openDocs[i].localFileURL {
+                if store.openDocs[i].spreadsheet {
+                    SpreadsheetEditor(index: i)
+                } else if store.openDocs[i].richDoc, let url = store.openDocs[i].localFileURL {
                     richDocEditor(index: i, url: url)
                 } else if let fileURL = store.openDocs[i].localFileURL {
                     if store.openDocs[i].language == "image" {
@@ -50,6 +52,7 @@ struct EditorPane: View {
                 }
             } else {
                 ContentUnavailableView("No document open", systemImage: "doc.text")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .joeGlassRect(18)

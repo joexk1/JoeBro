@@ -23,6 +23,8 @@ struct SettingsView: View {
                 .tabItem { Label("Models", systemImage: "cpu") }
             appearanceTab
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
+            MessageBotTab()
+                .tabItem { Label("Message Bot", systemImage: "paperplane") }
         }
         .frame(width: 560, height: 480)
     }
@@ -99,13 +101,7 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             Section("Documents") {
-                Toggle("Require approval for AI edits", isOn: Binding(
-                    get: { store.requireDocApproval },
-                    set: {
-                        store.requireDocApproval = $0
-                        UserDefaults.standard.set($0, forKey: "requireDocApproval")
-                    }
-                ))
+                Toggle("Require approval for AI edits", isOn: $store.requireDocApproval)
                 Text("When on, the AI's changes to an open document wait for your Apply/Reject — review them in the editor. When off, the AI edits the open document directly, whether you're editing it or just viewing it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -132,10 +128,7 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                Toggle("Ask before running commands", isOn: Binding(
-                    get: { store.askBeforeCommands },
-                    set: { store.askBeforeCommands = $0 }
-                ))
+                Toggle("Ask before running commands", isOn: $store.askBeforeCommands)
                 Text("In Full Access mode, the AI must get your approval (Allow / Always allow this session / Deny) before each terminal command.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -241,6 +234,10 @@ struct SettingsView: View {
             let _ = glass.backgroundPreset   // observe preset changes
             Section("Glass") {
                 Text("Glass opacity is tuned from the main window — the ◐ button next to the gear in the sidebar. (macOS renders glass differently while this Settings window has focus, so a slider here would lie to you.)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("Reduce glass effects", isOn: $glass.reduceGlass)
+                Text("Swaps live Liquid Glass for a lighter frosted look. Smoother when switching Spaces or on older Macs, since the system won't re-render the glass every time the window gains or loses focus. (Also on automatically if macOS \u{201C}Reduce transparency\u{201D} is enabled.)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
