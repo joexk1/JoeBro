@@ -3,12 +3,24 @@
     <channel>
         <title>JoeBro</title>
         <item>
+            <title>1.1.1</title>
+            <pubDate>Tue, 30 Jun 2026 15:55:55 +0100</pubDate>
+            <sparkle:version>3</sparkle:version>
+            <sparkle:shortVersionString>1.1.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.1.1/JoeBro-1.1.1.dmg" length="7822097" type="application/octet-stream" sparkle:edSignature="b+gMwHSkRGvoqrDaeg48pD/CAfa0FGClFAE4qu8poU1EHJ2qVht2Fqb+kwIfA1BnZo4lJoopgD+YM6dNUetjBA=="/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.1.1/JoeBro3-2.delta" sparkle:deltaFrom="2" length="1224650" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="1BZ1a0ZQ1IkbRCzfQd6/L0khyHsBwNLl+A65vVFFZ2nfL+H0kqXg4pFWuiIA5HvDtPFnABzLvKlJ6O748ejBAg=="/>
+                <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.1.1/JoeBro3-1.delta" sparkle:deltaFrom="1" length="1731774" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="2jF5SBYbEKmgJV8zI7rWSPKzTxp3yFKt9yw7wuUbuU9ZGFK0vzD6iMZXTXR8WdmFSp6d463VIIfVItobi7CkBA=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>1.1</title>
             <pubDate>Tue, 23 Jun 2026 13:06:47 +0200</pubDate>
             <sparkle:version>2</sparkle:version>
             <sparkle:shortVersionString>1.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.1/JoeBro-1.1.dmg" length="7596069" type="application/octet-stream" sparkle:edSignature="/skwft60iwkArb6RjjTVvIAX14uliOCyZ88gyjotGDYfVUQTdjyriR0nNJiskknSlB1WpMZqFHaYNIvnYDgJBg=="/>
+            <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.1.1/JoeBro-1.1.dmg" length="7596069" type="application/octet-stream" sparkle:edSignature="/skwft60iwkArb6RjjTVvIAX14uliOCyZ88gyjotGDYfVUQTdjyriR0nNJiskknSlB1WpMZqFHaYNIvnYDgJBg=="/>
             <sparkle:deltas>
                 <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.1/JoeBro2-1.delta" sparkle:deltaFrom="1" length="1453934" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="Z3IpFilwr+9qORXGmKGK3UYBkYiWg7vpkplSFDHmp+dGqcP+97gX8jpR14nSf4nE7GQ7Uk3CRlVrlN1Lyph0Cw=="/>
             </sparkle:deltas>
@@ -19,7 +31,7 @@
             <sparkle:version>1</sparkle:version>
             <sparkle:shortVersionString>1.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.0/JoeBro-1.0.dmg" length="7028792" type="application/octet-stream" sparkle:edSignature="f4AcFEcAFsqfgSSUZe1mdIgneVmLrzdO0IiWDvTNrQR1tmuKkZwTRoIFH7jfGEgynxw0q5t9XEdgLgdgZb6MDA=="/>
+            <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.1.1/JoeBro-1.0.dmg" length="7028792" type="application/octet-stream" sparkle:edSignature="f4AcFEcAFsqfgSSUZe1mdIgneVmLrzdO0IiWDvTNrQR1tmuKkZwTRoIFH7jfGEgynxw0q5t9XEdgLgdgZb6MDA=="/>
         </item>
     </channel>
 </rss>
