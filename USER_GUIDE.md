@@ -136,7 +136,23 @@ JoeBro's long-term memory about you, kept locally. Facts, preferences and projec
 - **Pin / Unpin**
 - **Delete**
 
-You can also select several and remove them together.
+You can also select several and remove them together (list view).
+
+### The brain map
+
+The Brain tab opens as an Obsidian-style graph of everything JoeBro knows — each memory is a node, related memories are joined by lines. The **list button** in the top bar switches to a flat list and back (your choice sticks, even across tabs and restarts).
+
+**How to read it:**
+- **Lines** connect memories that share meaningful topic words, or that fall in the same category. **Shorter, heavier lines mean a stronger conceptual link** — two memories about the same project sit close together; ones that merely share a category float further apart.
+- **Bigger dots are hubs** — the more connections a memory has, the larger it draws. The big nodes are the themes your Brain keeps coming back to. Pinned memories get a size bump and a stronger accent tint.
+- **Clusters are topics.** A tight knot of nodes is one area of your life or work; a lone node on the rim is something JoeBro heard once and hasn't connected to anything yet.
+
+**Working the map:**
+- **Hover** a node for the full memory, its category and age; its connections light up.
+- **Drag** a node and its neighbours pull along; everything relaxes back into place when you let go.
+- **Right-click** for the same Edit / Pin / Delete menu as the list.
+- **Pinch or use the − ⊙ + controls** to zoom (zoom in as far as you like); drag empty space to pan; ⊙ resets the view.
+- **Search** filters the map live, same as the list.
 
 ---
 

@@ -8,9 +8,18 @@ struct BrainPanel: View {
     @State private var searchOpen = false
     @State private var editing: MemoryEntry?
     @State private var selection: Set<String> = []
+    // AppStorage so map/list choice survives tab switches (the panel is recreated).
+    @AppStorage("brainMapMode") private var mapMode = true
 
     var body: some View {
         PanelChrome(title: "Brain", icon: "brain.head.profile") {
+            Button {
+                withAnimation(.spring(duration: 0.25)) { mapMode.toggle() }
+            } label: {
+                Image(systemName: mapMode ? "list.bullet" : "map")
+            }
+            .buttonStyle(.borderless)
+            .help(mapMode ? "List view" : "Map view")
             PanelSearchField(text: $search, open: $searchOpen, placeholder: "Search memories")
             Button {
                 Task { await load() }
@@ -32,6 +41,10 @@ struct BrainPanel: View {
                         let shown = filtered(list)
                         if shown.isEmpty {
                             ContentUnavailableView("No memories", systemImage: "brain")
+                        } else if mapMode {
+                            MemoryMapView(memories: shown,
+                                          onEdit: { editing = $0 },
+                                          reload: { await load() })
                         } else {
                             VStack(spacing: 0) {
                                 if !selection.isEmpty {
@@ -140,13 +153,11 @@ struct BrainPanel: View {
                     .font(.system(size: 13))
                     .textSelection(.enabled)
                 HStack(spacing: 8) {
-                    if let cat = m.category {
-                        Text(cat)
-                            .font(.system(size: 10, weight: .medium))
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 2)
-                            .background(.quaternary.opacity(0.6), in: Capsule())
-                    }
+                    Text(m.effectiveCategory)
+                        .font(.system(size: 10, weight: .medium))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(.quaternary.opacity(0.6), in: Capsule())
                     Text(relativeDate(m.createdAt))
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
@@ -163,6 +174,360 @@ struct BrainPanel: View {
             Button("Delete", role: .destructive) {
                 Task { try? await APIClient.shared.deleteMemory(id: m.id); await load() }
             }
+        }
+    }
+}
+
+// MARK: - Memory map (obsidian-style graph)
+
+@MainActor @Observable
+private final class MemoryGraph {
+    struct Node: Identifiable {
+        let memory: MemoryEntry
+        var pos: CGPoint
+        var vel = CGVector(dx: 0, dy: 0)
+        let id: String
+        let label: String
+        var degree = 0   // connection count — hubs draw bigger
+    }
+
+    var nodes: [Node] = []
+    // rest = spring rest length: shorter = conceptually closer.
+    var edges: [(a: Int, b: Int, rest: CGFloat)] = []
+    var draggingID: String?
+    private(set) var settled = false
+
+    /// Rebuild for a new memory list, keeping positions of surviving nodes so
+    /// search/reload doesn't scatter the layout.
+    func rebuild(_ mems: [MemoryEntry]) {
+        var old: [String: CGPoint] = [:]
+        for n in nodes { old[n.id] = n.pos }
+        nodes = mems.enumerated().map { i, m in
+            let angle = Double(i) / Double(max(mems.count, 1)) * 2 * .pi
+            let ring = 120.0 + Double(i % 5) * 30
+            let t = m.displayText
+            return Node(memory: m,
+                        pos: old[m.id] ?? CGPoint(x: cos(angle) * ring, y: sin(angle) * ring),
+                        id: m.id,
+                        label: t.count > 22 ? String(t.prefix(22)) + "…" : t)
+        }
+        // Same-category nodes chain together (O(n), not a clique); pairs sharing
+        // 2+ significant words connect by relevance. Boilerplate words the
+        // memory extractor uses everywhere ("user prefers…") don't count.
+        let stop: Set<Substring> = ["user", "users", "prefer", "prefers", "preferred",
+            "likes", "liked", "wants", "wanted", "with", "that", "this", "from",
+            "have", "uses", "used", "using", "avoid", "avoids", "them", "they",
+            "their", "when", "which", "would", "should", "about", "into", "more",
+            "also", "very", "then", "than", "over", "only", "some", "such", "does",
+            "doesn", "will", "being", "because"]
+        var e: [(a: Int, b: Int, rest: CGFloat)] = []
+        var lastOfCat: [String: Int] = [:]
+        let words: [Set<Substring>] = mems.map {
+            Set($0.displayText.lowercased()
+                .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+                .filter { $0.count > 3 && !stop.contains($0) })
+        }
+        // Category-only kinship is the loosest tie → longest line.
+        for (i, m) in mems.enumerated() {
+            let cat = m.effectiveCategory
+            if let prev = lastOfCat[cat] { e.append((a: prev, b: i, rest: 190)) }
+            lastOfCat[cat] = i
+        }
+        // More shared words = conceptually closer = shorter line.
+        outer: for i in mems.indices {
+            for j in (i + 1)..<mems.count {
+                let overlap = words[i].intersection(words[j]).count
+                if overlap >= 2 {
+                    e.append((a: i, b: j, rest: max(60, 200 - CGFloat(overlap) * 35)))
+                    if e.count > 600 { break outer }   // ponytail: edge cap; prune by weight if maps get huge
+                }
+            }
+        }
+        edges = e
+        for (a, b, _) in e {
+            nodes[a].degree += 1
+            nodes[b].degree += 1
+        }
+        settled = false
+    }
+
+    func poke() { settled = false }
+
+    /// Run the sim to rest in one go — the map is static between reloads/drags.
+    /// Declares settled even if the energy threshold was never hit: big graphs
+    /// can jitter forever, and "settled" also gates label drawing.
+    func settle(maxSteps: Int = 600) {
+        for _ in 0..<maxSteps where !settled { tick() }
+        settled = true
+    }
+
+    /// One force-directed step: pairwise repulsion, edge springs, gentle pull
+    /// to origin. ponytail: O(n²) repulsion — fine for a personal memory store.
+    func tick() {
+        guard !settled, !nodes.isEmpty else { return }
+        var force = [CGVector](repeating: CGVector(dx: 0, dy: 0), count: nodes.count)
+        for i in nodes.indices {
+            for j in (i + 1)..<nodes.count {
+                let dx = nodes[i].pos.x - nodes[j].pos.x
+                let dy = nodes[i].pos.y - nodes[j].pos.y
+                let d2 = max(dx * dx + dy * dy, 40)
+                let d = sqrt(d2)
+                let rep = 16000 / d2
+                force[i].dx += dx / d * rep; force[i].dy += dy / d * rep
+                force[j].dx -= dx / d * rep; force[j].dy -= dy / d * rep
+            }
+            force[i].dx -= nodes[i].pos.x * 0.015
+            force[i].dy -= nodes[i].pos.y * 0.015
+        }
+        for (a, b, rest) in edges {
+            let dx = nodes[b].pos.x - nodes[a].pos.x
+            let dy = nodes[b].pos.y - nodes[a].pos.y
+            let d = max(sqrt(dx * dx + dy * dy), 1)
+            let pull = (d - rest) * 0.015
+            force[a].dx += dx / d * pull; force[a].dy += dy / d * pull
+            force[b].dx -= dx / d * pull; force[b].dy -= dy / d * pull
+        }
+        var maxV = 0.0
+        for i in nodes.indices where nodes[i].id != draggingID {
+            nodes[i].vel.dx = (nodes[i].vel.dx + force[i].dx) * 0.66
+            nodes[i].vel.dy = (nodes[i].vel.dy + force[i].dy) * 0.66
+            nodes[i].pos.x += nodes[i].vel.dx
+            nodes[i].pos.y += nodes[i].vel.dy
+            maxV = max(maxV, abs(nodes[i].vel.dx) + abs(nodes[i].vel.dy))
+        }
+        if maxV < 0.08, draggingID == nil { settled = true }
+    }
+}
+
+private struct MemoryMapView: View {
+    let memories: [MemoryEntry]
+    let onEdit: (MemoryEntry) -> Void
+    let reload: () async -> Void
+
+    @State private var graph = MemoryGraph()
+    @State private var scale: CGFloat = 1
+    @State private var pan: CGSize = .zero
+    @State private var pinchScale: CGFloat = 1
+    @State private var panDrag: CGSize = .zero
+    @State private var hoveredID: String?
+    @State private var relax: Task<Void, Never>?
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var zoom: CGFloat { scale * pinchScale }
+
+    var body: some View {
+        GeometryReader { geo in
+            let center = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
+            ZStack {
+                // Everything visible draws in ONE canvas pass — per-node SwiftUI
+                // views (materials, shadows) made dragging laggy.
+                Canvas { ctx, _ in
+                    drawEdges(ctx, center: center)
+                    drawNodes(ctx, center: center)
+                }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture()
+                        .onChanged { panDrag = $0.translation }
+                        .onEnded { v in
+                            pan.width += v.translation.width
+                            pan.height += v.translation.height
+                            panDrag = .zero
+                        }
+                )
+                // Invisible, near-free hit targets for hover / right-click / drag.
+                ForEach(graph.nodes) { node in
+                    hitTarget(node, center: center)
+                }
+                // Labels are persistent views (never unmounted, just faded) so
+                // their glyph layout is cached — drawing them in the canvas
+                // re-laid-out every string on every frame.
+                ForEach(graph.nodes) { node in
+                    Text(node.label)
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                        .opacity(zoom > 0.55 || hoveredID == node.id ? 1 : 0)
+                        .position(labelPoint(node, center: center))
+                        .allowsHitTesting(false)
+                }
+            }
+            .coordinateSpace(name: "memMap")
+        }
+        .simultaneousGesture(
+            MagnifyGesture()
+                .onChanged { pinchScale = $0.magnification }
+                .onEnded { v in
+                    scale = max(scale * v.magnification, 0.1)   // zoom in is unlimited
+                    pinchScale = 1
+                }
+        )
+        .overlay(alignment: .bottomTrailing) { zoomControls }
+        .overlay(alignment: .bottomLeading) { hoverCard }
+        .clipped()
+        .task(id: memories.map(\.id)) {
+            graph.rebuild(memories)
+            graph.settle()
+        }
+        .onDisappear { relax?.cancel() }
+    }
+
+    private func drawEdges(_ ctx: GraphicsContext, center: CGPoint) {
+        for (a, b, rest) in graph.edges {
+            var path = Path()
+            path.move(to: screen(graph.nodes[a].pos, center: center))
+            path.addLine(to: screen(graph.nodes[b].pos, center: center))
+            let hot = hoveredID != nil &&
+                (graph.nodes[a].id == hoveredID || graph.nodes[b].id == hoveredID)
+            // Stronger tie (shorter rest) also draws heavier, so strength
+            // reads even when the layout can't hit ideal lengths.
+            let strength = (200 - rest) / 140   // 0 weak … 1 strong
+            ctx.stroke(path,
+                       with: .color(hot ? Color.accentColor
+                                        : Color.secondary.opacity(0.2 + 0.25 * strength)),
+                       lineWidth: hot ? 1.6 : 0.7 + strength)
+        }
+    }
+
+    private func drawNodes(_ ctx: GraphicsContext, center: CGPoint) {
+        let base = colorScheme == .dark ? Color.white.opacity(0.14) : Color.black.opacity(0.08)
+        for node in graph.nodes {
+            let m = node.memory
+            let hovered = hoveredID == m.id
+            let pinned = m.pinned == true
+            let p = screen(node.pos, center: center)
+            let r = radius(node, hovered: hovered)
+            let circle = Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2))
+            ctx.fill(circle, with: .color(base))
+            ctx.fill(circle, with: .color(Color.accentColor.opacity(pinned ? 0.4 : hovered ? 0.25 : 0.1)))
+            ctx.stroke(circle,
+                       with: .color(hovered ? Color.accentColor : Color.white.opacity(0.35)),
+                       lineWidth: hovered ? 1.6 : 0.8)
+        }
+    }
+
+    private func screen(_ p: CGPoint, center: CGPoint) -> CGPoint {
+        CGPoint(x: center.x + p.x * zoom + pan.width + panDrag.width,
+                y: center.y + p.y * zoom + pan.height + panDrag.height)
+    }
+
+    private func world(_ p: CGPoint, center: CGPoint) -> CGPoint {
+        CGPoint(x: (p.x - center.x - pan.width - panDrag.width) / zoom,
+                y: (p.y - center.y - pan.height - panDrag.height) / zoom)
+    }
+
+    /// Well-connected memories draw bigger, obsidian-style; pins add a bump.
+    private func radius(_ node: MemoryGraph.Node, hovered: Bool) -> CGFloat {
+        (5 + min(CGFloat(node.degree), 9) * 0.8 + (node.memory.pinned == true ? 2 : 0))
+            * (hovered ? 1.2 : 1)
+    }
+
+    private func labelPoint(_ node: MemoryGraph.Node, center: CGPoint) -> CGPoint {
+        let p = screen(node.pos, center: center)
+        return CGPoint(x: p.x, y: p.y + radius(node, hovered: hoveredID == node.id) + 9)
+    }
+
+    // Interactions attach BEFORE .position — a positioned view's frame fills
+    // the whole map, so hover/right-click after it would hit every node at once.
+    private func hitTarget(_ node: MemoryGraph.Node, center: CGPoint) -> some View {
+        let m = node.memory
+        return Color.clear
+            .frame(width: 28, height: 28)
+            .contentShape(Circle())
+            .onHover { h in
+                if h { hoveredID = m.id } else if hoveredID == m.id { hoveredID = nil }
+            }
+            .contextMenu {
+                Button("Edit…") { onEdit(m) }
+                Button(m.pinned == true ? "Unpin" : "Pin") {
+                    Task { await APIClient.shared.pinMemory(id: m.id); await reload() }
+                }
+                Button("Delete", role: .destructive) {
+                    Task { try? await APIClient.shared.deleteMemory(id: m.id); await reload() }
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .named("memMap"))
+                    .onChanged { v in
+                        relax?.cancel()
+                        graph.draggingID = m.id
+                        if let idx = graph.nodes.firstIndex(where: { $0.id == m.id }) {
+                            graph.nodes[idx].pos = world(v.location, center: center)
+                            graph.nodes[idx].vel = CGVector(dx: 0, dy: 0)
+                            graph.poke()
+                            graph.tick()   // neighbours pull along, one step per drag event
+                        }
+                    }
+                    .onEnded { _ in
+                        graph.draggingID = nil
+                        graph.poke()
+                        // Relax by ticking frames: nodes and edges move in lockstep.
+                        // 2 sim steps per 30fps frame — converges before the frame
+                        // budget runs out, so no trailing settle-jump.
+                        relax = Task {
+                            for _ in 0..<60 where !graph.settled && !Task.isCancelled {
+                                graph.tick()
+                                graph.tick()
+                                try? await Task.sleep(for: .milliseconds(33))
+                            }
+                            if !Task.isCancelled { graph.settle() }
+                        }
+                    }
+            )
+            .position(screen(node.pos, center: center))
+    }
+
+    private var zoomControls: some View {
+        HStack(spacing: 12) {
+            Button {
+                scale = max(scale / 1.25, 0.1)
+            } label: {
+                Image(systemName: "minus.magnifyingglass")
+            }
+            .help("Zoom out")
+            Button {
+                scale = 1; pan = .zero
+            } label: {
+                Image(systemName: "scope")
+            }
+            .help("Reset view")
+            Button {
+                scale *= 1.25
+            } label: {
+                Image(systemName: "plus.magnifyingglass")
+            }
+            .help("Zoom in")
+        }
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .joeGlassCapsule()
+        .padding(10)
+    }
+
+    @ViewBuilder
+    private var hoverCard: some View {
+        if let m = graph.nodes.first(where: { $0.id == hoveredID })?.memory {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(m.displayText)
+                    .font(.system(size: 12))
+                    .lineLimit(6)
+                HStack(spacing: 8) {
+                    Text(m.effectiveCategory)
+                        .font(.system(size: 10, weight: .medium))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(.quaternary.opacity(0.6), in: Capsule())
+                    Text(relativeDate(m.createdAt))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: 260, alignment: .leading)
+            .joeGlassRect(10)
+            .padding(10)
+            .allowsHitTesting(false)
+            .transition(.opacity)
         }
     }
 }

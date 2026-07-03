@@ -139,12 +139,12 @@ final class AppStore {
     /// Add an MCP server. The backend runs discovery (spawn → tools/list) before
     /// returning, which can be slow the first time (npx may download the package),
     /// so this is marked busy and any discovery error is surfaced to the UI.
-    func createMCPServer(name: String, command: String, args: String) async {
+    func createMCPServer(name: String, command: String, args: String, permission: String = "sandbox") async {
         mcpBusy = true
         mcpError = nil
         defer { mcpBusy = false }
         do {
-            let server = try await api.createMCPServer(name: name, command: command, args: args)
+            let server = try await api.createMCPServer(name: name, command: command, args: args, permission: permission)
             if let err = server?.error, !err.isEmpty { mcpError = err }
         } catch {
             mcpError = "Couldn't add the server."
@@ -174,7 +174,7 @@ final class AppStore {
 
     // Composer options
     var agentMode = false
-    var useWeb = false
+    var useWeb = true          // web search on by default; the composer toggle gates it
     var thinkingOn = true          // Think vs Fast
     var allowBash = false          // >_ terminal toggle
     var permissionMode = "sandbox" // lock menu: bound folder / readonly / full
@@ -252,19 +252,36 @@ final class AppStore {
     private var activeChatPoller: Task<Void, Never>?
     private var pollSid: String?
     private var pollTipID = 0
+    private var lastLocalControl = Date.distantPast   // user just changed mode/model — don't fight it
 
     private func startActiveChatPoller() {
         activeChatPoller?.cancel()
         activeChatPoller = Task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(4))
-                guard !Task.isCancelled, let sid = selectedSessionID, !isStreaming else { continue }
+                if Task.isCancelled { break }
+                // Keep the sidebar live: new/renamed chats (e.g. ones the Telegram
+                // bot creates) show up within a tick instead of on next launch.
+                await loadSessions()
+                guard let sid = selectedSessionID, !isStreaming else { continue }
                 guard let tip = try? await api.sessionTip(sid) else { continue }
                 guard selectedSessionID == sid, !isStreaming else { continue }
+                // Reflect mode/model changes made elsewhere (e.g. the Telegram
+                // bot) in the composer — unless the user just changed them here.
+                if Date().timeIntervalSince(lastLocalControl) > 6 {
+                    if !tip.mode.isEmpty, (tip.mode == "agent") != agentMode {
+                        agentMode = (tip.mode == "agent")
+                    }
+                    if !tip.model.isEmpty, tip.model != selectedModel?.modelID,
+                       let m = models.first(where: { $0.modelID == tip.model }) {
+                        selectedModel = m
+                        if let i = sessions.firstIndex(where: { $0.id == sid }) { sessions[i].model = tip.model }
+                    }
+                }
                 if sid != pollSid {
-                    pollSid = sid; pollTipID = tip   // first sight — baseline, don't reload
-                } else if tip != pollTipID {
-                    pollTipID = tip
+                    pollSid = sid; pollTipID = tip.lastID   // first sight — baseline, don't reload
+                } else if tip.lastID != pollTipID {
+                    pollTipID = tip.lastID
                     await loadHistory(for: sid)
                 }
             }
@@ -275,7 +292,7 @@ final class AppStore {
     /// doesn't redundantly reload the history we just streamed locally.
     private func resyncChatTip(_ sid: String) async {
         if let tip = try? await api.sessionTip(sid) {
-            pollSid = sid; pollTipID = tip
+            pollSid = sid; pollTipID = tip.lastID
         }
     }
 
@@ -342,7 +359,17 @@ final class AppStore {
             sessions = try await api.sessions().filter { $0.archived != true }
         } catch {
             if isCancellation(error) { return }
-            loadError = "Sessions: " + error.localizedDescription
+            // Sleep/wake and network re-handshakes kill in-flight refreshes with
+            // "timed out" — retry once, and only surface the failure when
+            // there's no list on screen (background refresh noise otherwise).
+            try? await Task.sleep(for: .seconds(2))
+            if let list = try? await api.sessions() {
+                sessions = list.filter { $0.archived != true }
+                return
+            }
+            if sessions.isEmpty {
+                loadError = "Sessions: " + error.localizedDescription
+            }
         }
     }
 
@@ -714,6 +741,7 @@ final class AppStore {
     /// Keep the server's idea of the session mode in sync with the
     /// composer switch, so the sidebar hammer is trustworthy.
     func persistChatMode() {
+        lastLocalControl = Date()   // your toggle wins over the live poller
         guard let sid = selectedSessionID else { return }
         let mode = agentMode ? "agent" : "chat"
         if let i = sessions.firstIndex(where: { $0.id == sid }) {
@@ -796,6 +824,7 @@ final class AppStore {
     }
 
     func pick(_ model: ModelChoice) {
+        lastLocalControl = Date()   // your pick wins over the live poller
         selectedModel = model
         UserDefaults.standard.set(model.id, forKey: "selectedModelID")
         // Mid-chat switches must update the SESSION, or the backend keeps
@@ -994,6 +1023,23 @@ final class AppStore {
         Task { await api.respondPermission(p.id, decision: decision) }
     }
 
+    /// A doc-edit permission prompt whose target is open NOW — the tab may have
+    /// been opened after the message was sent, so the backend's open_docs
+    /// snapshot missed it. Answer "allow" ourselves; the edit then lands as the
+    /// in-editor Apply/Reject banner. Returns true when handled.
+    private func autoApproveOpenDocEdit(id: String, tool: String, command: String) -> Bool {
+        guard tool.contains("document") else { return false }
+        var sub = command.hasPrefix("/") ? String(command.dropFirst()) : command
+        if sub.hasPrefix("./") { sub = String(sub.dropFirst(2)) }
+        let base = (sub as NSString).lastPathComponent
+        let lower = base.lowercased()
+        if lower.hasSuffix(".doc") || lower.hasSuffix(".docx") { return false }  // rich docs keep the popup
+        guard openDocs.contains(where: { $0.id != streamingDocID && !$0.richDoc &&
+            ($0.id == "local-" + sub || $0.title == base) }) else { return false }
+        Task { await api.respondPermission(id, decision: "allow") }
+        return true
+    }
+
     func send(_ text: String, forceAgent: Bool = false, permissionOverride: String? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !pendingAttachments.isEmpty, !isStreaming else { return }
@@ -1115,6 +1161,11 @@ final class AppStore {
                     // transient "_streaming_" placeholder (the backend can't
                     // resolve it).
                     activeDocID: (activeDocID != nil && activeDocID != streamingDocID) ? activeDocID : nil,
+                    // Open tabs (ids + titles) so the backend routes edits to
+                    // them through the editor's Apply/Reject banner instead of
+                    // the blocking permission prompt.
+                    openDocIDs: openDocs.filter { $0.id != streamingDocID }
+                        .flatMap { [$0.id, $0.title] },
                     model: selectedModel?.modelID,
                     endpointID: selectedModel?.endpointID,
                     endpointURL: selectedModel?.endpointURL,
@@ -1180,7 +1231,9 @@ final class AppStore {
                             await writeAgentCalendarEvent(fromToolOutput: output)
                         }
                     case .permissionRequest(let id, let tool, let command):
-                        pendingPermission = PendingPermission(id: id, tool: tool, command: command)
+                        if !autoApproveOpenDocEdit(id: id, tool: tool, command: command) {
+                            pendingPermission = PendingPermission(id: id, tool: tool, command: command)
+                        }
                     case .agentStep:
                         break
                     case .modelInfo(let m):
@@ -1427,8 +1480,8 @@ final class AppStore {
     }
 
     /// On returning to a chat, show the doc the AI edited while you were away.
-    /// The edit was already approved server-side before it was written (see
-    /// ask_doc_edit), so this just surfaces the result — it doesn't re-ask.
+    /// If the tab is still open, handleDocUpdate re-applies the approval rule —
+    /// with approval on it lands as the pending Apply/Reject diff banner.
     private func applyDeferredDocEdit(for session: String) {
         docAlertSessions.remove(session)
         guard let edit = deferredDocEdits.removeValue(forKey: session) else { return }
@@ -1578,10 +1631,14 @@ final class AppStore {
         autosaveTask = Task {
             try? await Task.sleep(for: .milliseconds(1200))
             guard !Task.isCancelled else { return }
-            if let i = docIndex(id), openDocs[i].dirty, !openDocs[i].aiWriting,
-               !isStreaming {
-                saveDoc(id)
+            guard let i = docIndex(id), openDocs[i].dirty else { return }
+            if openDocs[i].aiWriting || isStreaming {
+                // Busy (AI writing / turn streaming): retry rather than drop, or
+                // the doc stays dirty with "Saving…" stuck until the next keystroke.
+                scheduleAutosave(id)
+                return
             }
+            saveDoc(id)
         }
     }
 
@@ -1659,14 +1716,18 @@ final class AppStore {
             openDocs[i].id = id
             if openDocs[i].richDoc {
                 // The rich .doc/.docx editor reads from disk; the server already
-                // wrote the file, so force it to re-read and show the AI's edit.
+                // wrote the file (popup-gated when approval is on), so force it
+                // to re-read and show the AI's edit.
                 openDocs[i].reloadNonce += 1
+            } else if requireDocApproval, openDocs[i].content != content {
+                // Approval on: hold the AI's version as pending — the editor
+                // shows the Apply/Reject diff banner. Apply adopts the server's
+                // write; Reject saves your buffer back over it.
+                openDocs[i].pendingAIContent = content
             } else {
-                // Apply straight to the doc's content (re-renders in edit OR
-                // preview mode, so the agent can update a doc you're only
-                // viewing). Ask-before-editing is now enforced server-side BEFORE
-                // the write (see ask_doc_edit / _gate_doc_edit), so by the time an
-                // edit arrives here it was already approved — no second gate.
+                // Approval off (or no change): apply straight to the doc's
+                // content (re-renders in edit OR preview mode, so the agent can
+                // update a doc you're only viewing).
                 openDocs[i].content = content
                 openDocs[i].pendingAIContent = nil
                 openDocs[i].dirty = false

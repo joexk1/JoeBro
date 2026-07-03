@@ -557,9 +557,11 @@ struct MCPServer: Decodable, Identifiable, Hashable {
     var enabled: Bool
     var tools: [String]
     var error: String?
+    var permissionMode: String?
 
     enum CodingKeys: String, CodingKey {
         case id, name, command, args, enabled, tools, error
+        case permissionMode = "permission_mode"
     }
 }
 
@@ -723,6 +725,25 @@ struct MemoryEntry: Decodable, Identifiable {
     }
 
     var displayText: String { text ?? content ?? "" }
+
+    /// Stored category when meaningful; otherwise a keyword guess — the
+    /// auto-extractor files most memories under "auto"/"general".
+    /// ponytail: keyword buckets; swap for an LLM pass if these misfile too much
+    var effectiveCategory: String {
+        if let c = category?.lowercased(), !c.isEmpty, c != "auto", c != "general" { return c }
+        let t = " " + displayText.lowercased() + " "
+        if ["prefer", "likes ", "like ", "wants ", "style", "tone", "fan of", "avoid",
+            "favourite", "favorite", "informal", "emoji"].contains(where: t.contains) { return "preference" }
+        if ["build", "writing", "working on", "project", "essay", "site ", "app ",
+            "server", "designing", "creating", "developing"].contains(where: t.contains) { return "project" }
+        if ["friend", "mum ", "dad ", "brother", "sister", "wife", "girlfriend",
+            "boyfriend", "partner", "colleague", " name is"].contains(where: t.contains) { return "person" }
+        if ["meeting", "deadline", "appointment", "birthday", "event",
+            "tomorrow", "next week"].contains(where: t.contains) { return "event" }
+        if ["owns", "has a ", "has an ", "lives", "works at", "studies",
+            "student", "is a "].contains(where: t.contains) { return "about" }
+        return "fact"
+    }
 
     enum CodingKeys: String, CodingKey {
         case rawId = "id"

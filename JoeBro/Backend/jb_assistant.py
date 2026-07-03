@@ -41,7 +41,7 @@ class AssistantMixin:
         # mode only governs file access (default: the safe sandbox).
         pmode = (row.get("permission_mode") or "sandbox").strip() or "sandbox"
         f = {"session": tsid, "message": prompt, "endpoint_id": ep, "model": model,
-             "permission_mode": pmode, "max_tokens": "4000"}
+             "permission_mode": pmode, "max_tokens": "4000", "allow_web_search": "true"}
         f["mode"] = "agent"   # forced last — cannot be overridden
         reply, thinking, events = self.run_agent(f)
         meta = {"model": model}

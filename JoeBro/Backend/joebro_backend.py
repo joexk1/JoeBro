@@ -114,7 +114,9 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
             # only reloads full history when last_id changes.
             sid = path.split("/")[3]
             row = self.store.one("select max(id) m from messages where session_id=?", (sid,))
-            return self.json({"last_id": int((row or {}).get("m") or 0)})
+            sess = self.store.one("select mode, model from sessions where id=?", (sid,)) or {}
+            return self.json({"last_id": int((row or {}).get("m") or 0),
+                              "mode": sess.get("mode") or "chat", "model": sess.get("model") or ""})
         if path.startswith("/api/history/"):
             sid = path.rsplit("/", 1)[-1]
             session = self.store.one("select * from sessions where id=?", (sid,))

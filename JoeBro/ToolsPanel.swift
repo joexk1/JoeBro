@@ -12,6 +12,7 @@ struct ToolsPanel: View {
     @State private var showAddMCP = false
     @State private var editingPlugin: Plugin?
     @State private var editingMCP: MCPServer?
+    @State private var configuringComputerUse = false
 
     var body: some View {
         PanelChrome(title: "Tools", icon: "wrench.and.screwdriver") {
@@ -58,6 +59,9 @@ struct ToolsPanel: View {
         }
         .sheet(item: $editingMCP) { server in
             MCPServerSheet(server: server)
+        }
+        .sheet(isPresented: $configuringComputerUse) {
+            ComputerUseSettingsSheet()
         }
     }
 
@@ -145,7 +149,13 @@ struct ToolsPanel: View {
             .buttonStyle(.borderless)
             .help("Edit")
 
-            if plugin.source != "bundled" {
+            if plugin.id == "plugin_macos_use" {
+                Button { configuringComputerUse = true } label: {
+                    Image(systemName: "gearshape")
+                }
+                .buttonStyle(.borderless)
+                .help("Computer Use settings — permissions and blocked apps")
+            } else if plugin.source != "bundled" {
                 Button(role: .destructive) {
                     store.deletePlugin(id: plugin.id)
                 } label: {
@@ -501,6 +511,7 @@ struct MCPServerSheet: View {
     @State private var name = ""
     @State private var command = ""
     @State private var args = ""
+    @State private var permission = "sandbox"
     @State private var saving = false
 
     var body: some View {
@@ -539,15 +550,23 @@ struct MCPServerSheet: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
+                Picker("Agent access", selection: $permission) {
+                    Text("Bound folder").tag("sandbox")
+                    Text("Read-only").tag("readonly")
+                    Text("Full access").tag("full")
+                }
+                Text("The permission level the agent must be in to use this server's tools (e.g. phone or computer control should require Full access).")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
                 Text("JoeBro launches the server, discovers its tools, and offers them to the model in Agent mode. The first connection may take a moment.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
             .formStyle(.grouped)
         }
-        .frame(width: 460, height: 400)
+        .frame(width: 460, height: 460)
         .onAppear {
-            if let s = server { name = s.name; command = s.command; args = s.args }
+            if let s = server { name = s.name; command = s.command; args = s.args; permission = s.permissionMode ?? "sandbox" }
         }
     }
 
@@ -559,9 +578,9 @@ struct MCPServerSheet: View {
             let c = command.trimmingCharacters(in: .whitespaces)
             let a = args.trimmingCharacters(in: .whitespacesAndNewlines)
             if let s = server {
-                await store.updateMCPServer(id: s.id, fields: ["name": n, "command": c, "args": a])
+                await store.updateMCPServer(id: s.id, fields: ["name": n, "command": c, "args": a, "permission_mode": permission])
             } else {
-                await store.createMCPServer(name: n, command: c, args: a)
+                await store.createMCPServer(name: n, command: c, args: a, permission: permission)
             }
             dismiss()
         }
@@ -629,5 +648,75 @@ struct PluginEditSheet: View {
             "name": name, "kind": kind, "permission_mode": permission,
         ])
         dismiss()
+    }
+}
+
+/// Settings for the bundled Computer Use plugin: explains the access it has and
+/// lets the user bar apps it must never open, click, type into or read (e.g.
+/// banking apps). Blocked names persist in the `macos_blocked_apps` pref, which
+/// the backend enforces inside every AppleScript it runs.
+struct ComputerUseSettingsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var blocked = ""
+    @State private var loaded = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Label("Computer Use", systemImage: "cpu")
+                    .font(.system(size: 14, weight: .semibold))
+                Spacer()
+                Button("Done") { save(); dismiss() }
+                    .buttonStyle(.glassProminent)
+                    .tint(Color.accentColor)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(14)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("What it can do")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("In Agent mode (Full access), JoeBro can drive this Mac: read the frontmost app's windows, menus and buttons as text, open apps, click elements, type, press shortcuts and use menus. It reads the screen as text first and only takes a picture when it must, so it stays fast and cheap.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        Text("It needs Accessibility access (System Settings > Privacy & Security > Accessibility). Turn the plugin off above to revoke all of this at once.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+                    Divider()
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Blocked apps")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("One app name per line. JoeBro will refuse to open, click, type into or read any app whose name matches — even if you ask it to. Good for banking and other sensitive apps.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        TextEditor(text: $blocked)
+                            .font(.system(size: 13, design: .monospaced))
+                            .frame(minHeight: 120)
+                            .padding(6)
+                            .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+                .padding(14)
+            }
+        }
+        .frame(width: 440, height: 460)
+        .task {
+            guard !loaded else { return }
+            loaded = true
+            if let p = try? await APIClient.shared.getPrefs(),
+               let arr = p["macos_blocked_apps"]?.arrayValue {
+                blocked = arr.compactMap { $0.stringValue }.joined(separator: "\n")
+            }
+        }
+    }
+
+    private func save() {
+        let list = blocked.split(whereSeparator: { $0 == "\n" || $0 == "," })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        Task { await APIClient.shared.setPref("macos_blocked_apps", value: list) }
     }
 }

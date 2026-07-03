@@ -352,9 +352,9 @@ final class APIClient {
     /// Create an MCP server. The backend attempts discovery (with a hard timeout)
     /// and returns the server with its discovered tools (or an error string).
     @discardableResult
-    func createMCPServer(name: String, command: String, args: String) async throws -> MCPServer? {
+    func createMCPServer(name: String, command: String, args: String, permission: String = "sandbox") async throws -> MCPServer? {
         let raw = try await postForm("api/mcp", fields: [
-            "name": name, "command": command, "args": args,
+            "name": name, "command": command, "args": args, "permission_mode": permission,
         ])
         return decodeServer(raw)
     }
@@ -579,10 +579,12 @@ final class APIClient {
 
     /// Cheap freshness probe — the id of the latest message in a session. The
     /// open-chat poller compares this to decide whether to reload full history.
-    func sessionTip(_ id: String) async throws -> Int {
+    func sessionTip(_ id: String) async throws -> (lastID: Int, mode: String, model: String) {
         let (data, resp) = try await session.data(for: request("api/session/\(id)/tip"))
         try check(data, resp)
-        return (try? JSONDecoder().decode([String: Int].self, from: data))?["last_id"] ?? 0
+        let obj = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any]) ?? [:]
+        let lastID = (obj["last_id"] as? Int) ?? (obj["last_id"] as? NSNumber)?.intValue ?? 0
+        return (lastID, obj["mode"] as? String ?? "", obj["model"] as? String ?? "")
     }
 
     // MARK: Models
@@ -626,6 +628,7 @@ final class APIClient {
         askPermission: Bool = false,
         askDocEdit: Bool = false,
         activeDocID: String? = nil,
+        openDocIDs: [String] = [],
         model: String? = nil,
         endpointID: String? = nil,
         endpointURL: String? = nil,
@@ -645,6 +648,9 @@ final class APIClient {
         if askPermission { fields["ask_permission"] = "true" }
         if askDocEdit { fields["ask_doc_edit"] = "true" }
         if let activeDocID, !activeDocID.isEmpty { fields["active_doc_id"] = activeDocID }
+        // Open editor tabs (ids + titles): edits to these are approved via the
+        // in-editor diff banner, not the blocking permission prompt.
+        if !openDocIDs.isEmpty { fields["open_docs"] = openDocIDs.joined(separator: "\n") }
         if let model, !model.isEmpty { fields["model"] = model }
         if let endpointID, !endpointID.isEmpty { fields["endpoint_id"] = endpointID }
         if let endpointURL, !endpointURL.isEmpty { fields["endpoint_url"] = endpointURL }

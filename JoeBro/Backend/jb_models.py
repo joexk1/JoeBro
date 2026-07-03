@@ -265,6 +265,9 @@ class ModelsMixin:
         args = body.get("args")
         if args is None:
             args = (existing or {}).get("args") or ""
+        pmode = (body.get("permission_mode") or (existing or {}).get("permission_mode") or "sandbox").strip() or "sandbox"
+        if pmode not in ("sandbox", "readonly", "full"):
+            pmode = "sandbox"
         enabled_in = body.get("enabled")
         if enabled_in is None:
             enabled_in = body.get("is_enabled")
@@ -293,13 +296,13 @@ class ModelsMixin:
 
         if existing:
             self.store.exec(
-                "update mcp_servers set name=?,command=?,args=?,enabled=?,tools_json=?,error=?,updated_at=? where id=?",
-                (name, command, args, enabled, tools_json, error, now, sid))
+                "update mcp_servers set name=?,command=?,args=?,enabled=?,permission_mode=?,tools_json=?,error=?,updated_at=? where id=?",
+                (name, command, args, enabled, pmode, tools_json, error, now, sid))
         else:
             self.store.exec(
-                "insert into mcp_servers(id,name,command,args,enabled,tools_json,error,created_at,updated_at)"
-                " values(?,?,?,?,?,?,?,?,?)",
-                (sid, name, command, args, enabled, tools_json, error, now, now))
+                "insert into mcp_servers(id,name,command,args,enabled,permission_mode,tools_json,error,created_at,updated_at)"
+                " values(?,?,?,?,?,?,?,?,?,?)",
+                (sid, name, command, args, enabled, pmode, tools_json, error, now, now))
         return {"ok": True, "server": self.mcp_server_json(self.store.one("select * from mcp_servers where id=?", (sid,)))}
 
     @staticmethod
@@ -314,6 +317,7 @@ class ModelsMixin:
             "command": r.get("command") or "",
             "args": r.get("args") or "",
             "enabled": bool(r.get("enabled")),
+            "permission_mode": r.get("permission_mode") or "sandbox",
             "tools": [t.get("name") for t in tools if isinstance(t, dict) and t.get("name")],
             "error": r.get("error") or "",
             "created_at": r.get("created_at"),

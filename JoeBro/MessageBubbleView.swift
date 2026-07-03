@@ -388,8 +388,24 @@ private struct WorkspaceActionButtons: View {
 // MARK: - Tool row (collapsible, like the web agent thread)
 
 struct ToolRowView: View {
+    @Environment(AppStore.self) private var store
     let message: Message
     @State private var expanded = false
+
+    /// "Mirroir: Status" for MCP tools (resolve the server name from its id),
+    /// otherwise the normal pretty name.
+    private var toolLabel: String {
+        let raw = message.toolName ?? ""
+        if raw.hasPrefix("mcp_"), let sep = raw.range(of: "__") {
+            let serverID = String(raw[..<sep.lowerBound])
+            let tool = prettyToolName(String(raw[sep.upperBound...]))
+            if let s = store.mcpServers.first(where: { $0.id == serverID }) {
+                return "\(s.name): \(tool)"
+            }
+            return tool
+        }
+        return prettyToolName(raw)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -400,7 +416,7 @@ struct ToolRowView: View {
                     Image(systemName: toolIcon)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Color.accentColor)
-                    Text(prettyToolName(message.toolName).uppercased())
+                    Text(toolLabel.uppercased())
                         .font(.system(size: 10.5, weight: .bold, design: .rounded))
                         .tracking(0.6)
                     if message.toolDone {
@@ -645,6 +661,11 @@ func prettyToolName(_ raw: String?) -> String {
     ]
     let name = (raw ?? "tool").lowercased()
     if let nice = known[name] { return nice }
+    // MCP tools are "mcp_<serverid>__<tool>" — show the tool part, not the id.
+    if name.hasPrefix("mcp_"), let sep = name.range(of: "__") {
+        let tool = String(name[sep.upperBound...])
+        return tool.split(separator: "_").map { String($0).capitalized }.joined(separator: " ")
+    }
     return name.split(separator: "_").map { String($0).capitalized }.joined(separator: " ")
 }
 

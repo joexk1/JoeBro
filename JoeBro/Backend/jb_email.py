@@ -194,36 +194,10 @@ class EmailMixin:
         return self.json({"emails": out, "total": total_matched, "configured": bool(sources), "error": "; ".join(errors) if errors and not out else None})
 
     def email_read(self, uid):
-        account, msg_uid = self.split_mail_uid(uid)
-        if not account:
-            return self.json({"error": "No mailbox connected"}, 400)
-        folder = self._query().get("folder") or "INBOX"
         try:
-            conn = self.imap_connect(account)
-            conn.select(folder)
-            status, rows = conn.uid("fetch", msg_uid, "(RFC822)")
-            if status != "OK":
-                raise RuntimeError("Message fetch failed")
-            raw = b"".join(item[1] for item in rows if isinstance(item, tuple))
-            conn.uid("STORE", msg_uid, "+FLAGS", "\\Seen")
-            msg = email.message_from_bytes(raw, policy=email.policy.default)
-            from_name, from_addr = self.message_addresses(msg.get("From", ""))
-            body, body_html, attachments = self.extract_email_body(msg)
-            conn.logout()
-            return self.json({
-                "uid": self.composite_mail_uid(account, msg_uid),
-                "message_id": msg.get("Message-ID", ""),
-                "subject": self.decode_header_value(msg.get("Subject", "")) or "(No subject)",
-                "from_name": from_name,
-                "from_address": from_addr,
-                "to": msg.get("To", ""),
-                "cc": msg.get("Cc", ""),
-                "date": msg.get("Date", ""),
-                "references": msg.get("References", ""),
-                "body": body,
-                "body_html": body_html,
-                "attachments": attachments,
-            })
+            return self.json(self.email_read_data(uid, self._query().get("folder") or "INBOX"))
+        except ValueError as exc:
+            return self.json({"error": str(exc)}, 400)
         except Exception as exc:
             return self.json({"error": str(exc)}, 500)
 
@@ -258,86 +232,26 @@ class EmailMixin:
         return self.email_store_flag(uid, "\\Seen", add=read)
 
     def email_archive(self, uid):
-        account, msg_uid = self.split_mail_uid(uid)
-        if not account:
-            return self.json({"success": False, "error": "No mailbox connected"}, 400)
-        folder = self._query().get("folder") or "INBOX"
-        try:
-            conn = self.imap_connect(account)
-            conn.select(folder)
-            typ, _ = conn.create("Archive")
-            conn.uid("COPY", msg_uid, "Archive")
-            conn.uid("STORE", msg_uid, "+FLAGS", "\\Deleted")
-            conn.expunge()
-            conn.logout()
-            return self.json({"success": True})
-        except Exception as exc:
-            return self.json({"success": False, "error": str(exc)}, 500)
+        return self.email_store_flag(uid, "", archive=True)
 
     def email_delete(self, uid):
         return self.email_store_flag(uid, "\\Deleted", add=True, expunge=True)
 
-    def email_store_flag(self, uid, flag, add=True, expunge=False):
-        account, msg_uid = self.split_mail_uid(uid)
-        if not account:
-            return self.json({"success": False, "error": "No mailbox connected"}, 400)
-        folder = self._query().get("folder") or "INBOX"
+    def email_store_flag(self, uid, flag, add=True, expunge=False, archive=False):
         try:
-            conn = self.imap_connect(account)
-            conn.select(folder)
-            conn.uid("STORE", msg_uid, "+FLAGS" if add else "-FLAGS", flag)
-            if expunge:
-                conn.expunge()
-            conn.logout()
+            self.email_flag_payload(uid, flag, add=add, expunge=expunge, archive=archive,
+                                    folder=self._query().get("folder") or "INBOX")
             return self.json({"success": True})
+        except ValueError as exc:
+            return self.json({"success": False, "error": str(exc)}, 400)
         except Exception as exc:
             return self.json({"success": False, "error": str(exc)}, 500)
 
     def email_send(self, body):
-        sources = self.email_sources()
-        if not sources:
-            return self.json({"success": False, "error": "No mailbox connected"}, 400)
-        account = sources[0]
         try:
-            if account.get("type") in ("bridge", "hydroxide"):
-                err = self.ensure_hydroxide_bridge()
-                if err:
-                    raise RuntimeError(err)
-            msg = MIMEMultipart()
-            msg["From"] = account.get("smtp_user") or account.get("imap_user") or account.get("display")
-            msg["To"] = body.get("to") or ""
-            if body.get("cc"):
-                msg["Cc"] = body.get("cc")
-            msg["Subject"] = body.get("subject") or ""
-            if body.get("in_reply_to"):
-                msg["In-Reply-To"] = body.get("in_reply_to")
-            if body.get("references"):
-                msg["References"] = body.get("references")
-            msg.attach(MIMEText(body.get("body") or "", "plain", "utf-8"))
-            host = account.get("smtp_host") or account.get("imap_host")
-            port = int(account.get("smtp_port") or 465)
-            use_ssl = bool(int(account.get("smtp_ssl") or 0))
-            if use_ssl:
-                smtp = smtplib.SMTP_SSL(host, port, timeout=30)
-            else:
-                # Plain connection upgraded via STARTTLS before AUTH (covers
-                # submission port 587 and the local hydroxide bridge on :1025).
-                smtp = smtplib.SMTP(host, port, timeout=30)
-                smtp.ehlo()
-                if smtp.has_extn("starttls"):
-                    smtp.starttls()
-                    smtp.ehlo()
-            user = account.get("smtp_user") or account.get("imap_user") or ""
-            password = account.get("smtp_password") or account.get("imap_password") or ""
-            if user or password:
-                smtp.login(user, password)
-            addr_fields = [v for v in (msg.get("To", ""), msg.get("Cc", "")) if v]
-            recipients = [a for _, a in email.utils.getaddresses(addr_fields) if a]
-            refused = smtp.sendmail(msg["From"], recipients, msg.as_string())
-            smtp.quit()
-            if refused:
-                raise RuntimeError("SMTP refused recipients: " + json.dumps(refused))
-            return self.json({"success": True})
+            return self.json(json.loads(self.email_send_payload(body)))
+        except ValueError as exc:
+            return self.json({"success": False, "error": str(exc)}, 400)
         except Exception as exc:
             return self.json({"success": False, "error": str(exc)}, 500)
 
@@ -442,6 +356,10 @@ class EmailMixin:
         if body.get("bcc"):
             msg["Bcc"] = body.get("bcc")
         msg["Subject"] = body.get("subject") or ""
+        if body.get("in_reply_to"):
+            msg["In-Reply-To"] = body.get("in_reply_to")
+        if body.get("references"):
+            msg["References"] = body.get("references")
         msg.attach(MIMEText(body.get("body") or "", "plain", "utf-8"))
         host = account.get("smtp_host") or account.get("imap_host")
         port = int(account.get("smtp_port") or 465)

@@ -48,7 +48,7 @@ It's one window, not ten apps:
 **Workspace tools**, all local, self-improving, and manually manageable.
 - **Email** over IMAP: read, compose, reply, forward, triage. All on your machine.
 - **Calendar**: your events, add, edit and delete, all from within the app.
-- **Brain**: long-term memory that persists across sessions and improves the more you use it. Add, edit, search, or delete memories manually anytime.
+- **Brain**: long-term memory that persists across sessions and improves the more you use it. Add, edit, search, or delete memories manually anytime. Opens as an interactive **brain map** — a live graph where lines join memories that share topics (shorter and heavier = more closely related), and the biggest nodes are the hubs the rest of your memories link back to. Drag nodes around, zoom in as deep as you like, or flip to a plain list.
 
 ![The Brain tab, your AI's persistent memory](README_assets/memory.png)
 
@@ -65,23 +65,32 @@ The Tools tab has three tiers, all surfaced to the model in Agent mode as callab
 
 ![The Tools tab: API tools, MCP servers and plugins](README_assets/tools.png)
 
-**API Tools** give any JSON endpoint straight to the model. You give it a URL, a name, a description, and optionally an API key and a method. Put `{query}` anywhere in the URL and the model's input gets dropped in right there. The description tells the model when to call it. A weather API gets called when someone asks about the weather. A HackerNews search when the topic is tech. It just works. Point it at any public database right in chat. LinkedIn, Crunchbase, GitHub, you name it. No curated list, anything with a URL works.
+- **API Tools** give any JSON endpoint straight to the model. Give it a URL, a name, a description, and optionally an API key and a method. Put `{query}` anywhere in the URL and the model's input gets dropped in right there. The description tells the model when to call it: a weather API when someone asks about the weather, a HackerNews search when the topic is tech. Point it at any public database right in chat (LinkedIn, Crunchbase, GitHub, you name it). No curated list, anything with a URL works.
+- **MCP Servers** are the Model Context Protocol over stdio. The app launches the server, discovers its tools, and offers them to the model. The connection is stateless: spawn, initialize, call, kill. No long-running processes, no zombie children, and a hard wall-clock timeout on every interaction so a broken server never hangs a turn. The git MCP server returns real diffs: the model calls it, the server spawns, it runs, it dies, the diff comes back.
+- **Plugins** are folders on disk that ship their own tools, memory, and agent logic. They can be foreground (active tools the model can invoke) or background (guardrails that shape every turn). The bundled one is the macOS Use plugin: dependency free, it drives the Mac through `osascript` and `screencapture`, calling System Events directly to open apps, click buttons, and take screenshots.
 
-**MCP Servers** are the Model Context Protocol over stdio. The app launches the server, discovers its tools, and offers them to the model. The connection is stateless. Spawn, initialize, call, kill. No long-running processes. No zombie children. There is a hard wall clock timeout on every interaction so a broken server never hangs a turn. The git MCP server returns real diffs. The model calls it, the server spawns, it runs, it dies, the diff comes back.
-
-**Plugins** are the third tier. They are folders on disk that can ship their own tools, memory, and agent logic. They can be foreground (active tools the model can invoke) or background (guardrails that shape every turn). The bundled one is the macOS Use plugin. Dependency free. It controls the Mac through `osascript` and `screencapture`. No node module, no Python package, no Docker image. It calls System Events directly and the model can use it to open apps, click buttons, and take screenshots.
-
-The agent calls API tools, memory, tasks, calendar, and plugins in one conversation. It looks like any other chat.
+The agent calls API tools, MCP servers, memory, tasks, calendar, and plugins in one conversation. It looks like any other chat.
 
 ---
 
 ## Message Bot (Telegram)
 
-Run JoeBro from your phone. Connect a Telegram bot and message it from anywhere to drive your whole workspace. It searches and reads across all your chats, creates new ones, binds them to folders, sets their mode and permissions, and delegates work to them, then reports back. It also uses your email, calendar, memory, web search and deep research directly. It is an orchestrator, not a coder: it never edits files itself, it hands that to a chat.
+Run JoeBro from your phone. Connect a Telegram bot and message it from anywhere to drive your whole workspace. It is an orchestrator, not a coder: it manages your chats and agents and delegates the hands-on work to them, then reports back.
 
-Set it up in **Settings > Message Bot**: paste a bot token from Telegram's @BotFather, pick the model it should use, and add your numeric Telegram ID to the allow list (message the bot once and it tells you your ID). You choose what it shows in replies (skills, memories, tool calls, plugins) and whether it asks you to approve actions with a y/n reply. Commands: `/chats` lists your chats, `/compact` trims the conversation, `/help` shows what it can do.
+**What it can do:**
+- **Search and read** across all your chats, and summarise what they concluded.
+- **Create** new chats, **bind** them to folders, and set their **mode** (chat/agent), **file-access level**, and **model**.
+- **Delegate**: post a message into any chat and report back its agent's reply. This is how it gets work done, including reading and editing the files bound to that chat.
+- Use your **email, calendar, memory, web search and deep research** directly.
+- Never edits files or runs code itself. It hands coding and file tasks to a chat.
 
-Replies stream in live and render Markdown. Because the backend is bundled in the app, the bot is reachable whenever JoeBro is running on your Mac. Full walkthrough in the **[User Guide](USER_GUIDE.md)**.
+**Setup and use:**
+- Configure in **Settings > Message Bot**: paste a bot token from Telegram's @BotFather, pick the model, and add your numeric Telegram ID to the allow list (message the bot once and it tells you your ID).
+- Choose what each reply shows (skills, memories, tool calls, plugins), and whether it asks you to approve actions with a **y/n** reply.
+- Commands: **/chats** lists your chats, **/compact** trims the conversation, **/help** shows what it can do.
+- Replies **stream in live** and render **Markdown**. The bot conversation never appears in your sidebar.
+
+Because the backend is bundled in the app, the bot is reachable whenever JoeBro is running on your Mac. Full walkthrough in the **[User Guide](USER_GUIDE.md)**.
 
 ---
 

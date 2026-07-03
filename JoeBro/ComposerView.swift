@@ -140,7 +140,6 @@ struct ComposerView: View {
         .onChange(of: store.agentMode) {
             if !store.agentMode {
                 store.allowBash = false
-                store.useWeb = false
             }
             store.persistChatMode()
         }

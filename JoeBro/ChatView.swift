@@ -395,13 +395,17 @@ struct CommandPermissionPrompt: View {
     let prompt: PendingPermission
     let respond: (String) -> Void   // "allow" | "deny" | "always"
 
+    // Doc-write tools reach this gate only for files NOT open in the editor
+    // (open ones are approved via the in-editor diff banner instead).
+    private var isDocEdit: Bool { prompt.tool.contains("document") }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 7) {
-                Image(systemName: "terminal.fill")
+                Image(systemName: isDocEdit ? "pencil.line" : "terminal.fill")
                     .font(.system(size: 12))
                     .foregroundStyle(Color.orange)
-                Text("Run \(prompt.tool) command?")
+                Text(isDocEdit ? "Let the AI edit this file?" : "Run \(prompt.tool) command?")
                     .font(.system(size: 13, weight: .semibold))
             }
             Text(prompt.command)

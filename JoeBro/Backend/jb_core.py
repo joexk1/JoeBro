@@ -65,10 +65,11 @@ _MACOS_MODS = {"cmd": "command down", "command": "command down", "ctrl": "contro
 
 MACOS_USE_TOOL = {"type": "function", "function": {
     "name": "macos_use",
-    "description": ("Control this Mac (computer use). FIRST call action 'snapshot' to see the "
-                   "frontmost app and its windows, menus and buttons, then act. Actions: snapshot "
-                   "(see the screen), open_app, click (a button/element by name), type (text), key "
-                   "(e.g. 'cmd+s', 'return', 'tab'), menu (menu_path like 'File>Save'), screenshot."),
+    "description": ("Control this Mac (computer use). Call 'snapshot' first and after every action "
+                   "to read the frontmost app's windows, menus, buttons and fields as TEXT - vastly "
+                   "cheaper than a screenshot, which is a last resort. Actions: snapshot, open_app, "
+                   "click (element by name), type, key (e.g. 'cmd+s', 'return'), menu (menu_path "
+                   "'File>Save' or 'File>Export>PDF…'), screenshot."),
     "parameters": {"type": "object", "properties": {
         "action": {"type": "string", "enum": ["snapshot", "open_app", "click", "type", "key", "menu", "screenshot"]},
         "app": {"type": "string", "description": "app name for open_app"},
@@ -79,28 +80,64 @@ MACOS_USE_TOOL = {"type": "function", "function": {
         "required": ["action"]}}}
 
 
-def macos_use_argv(action, params):
+def _macos_guard(blocked):
+    """AppleScript prologue: resolve the frontmost app (fa) and refuse to touch
+    it if it matches the user's blocked-apps list (substring, case-insensitive -
+    AppleScript string compares ignore case by default)."""
+    scr = 'set fa to name of first application process whose frontmost is true\n'
+    if blocked:
+        lst = ", ".join(_applescript_str(b) for b in blocked)
+        scr += ('repeat with b in {' + lst + '}\n'
+                'if fa contains b then return "Blocked: " & fa & " is on your blocked apps list."\n'
+                'end repeat\n')
+    return scr
+
+
+def macos_use_argv(action, params, blocked=()):
     """Build the dependency-free computer-use command (argv) for an action.
-    Returns an argv list, or raises ValueError for a bad/unknown action."""
+    Returns an argv list, or raises ValueError for a bad/unknown action.
+    Every System Events script starts with _macos_guard so a blocked app can't
+    be clicked, typed into, or read - not just not opened."""
     action = (action or "").strip().lower()
     params = params or {}
+    guard = _macos_guard(blocked)
     if action == "snapshot":
-        scr = ('tell application "System Events"\n'
-               'set fa to name of first application process whose frontmost is true\n'
-               'set out to "Frontmost app: " & fa & linefeed\n'
+        # Text accessibility snapshot: one try-wrapped line per element class so
+        # a class an app doesn't expose never kills the rest. Toolbar and sheet
+        # (dialog) buttons are where System Events hides half of every app.
+        classes = [("Buttons", "name of buttons of front window"),
+                   ("Toolbar", "name of buttons of toolbar 1 of front window"),
+                   ("Sheet", "name of UI elements of sheet 1 of front window"),
+                   ("Fields", "name of text fields of front window"),
+                   ("Checkboxes", "name of checkboxes of front window"),
+                   ("Popups", "name of pop up buttons of front window"),
+                   ("Radio", "name of radio buttons of front window"),
+                   ("Links", "name of links of front window"),
+                   ("Tabs", "name of radio buttons of tab group 1 of front window"),
+                   ("Text", "name of static texts of front window")]
+        lines = "".join('try\nset out to out & "%s: " & (%s as string) & linefeed\nend try\n' % c
+                        for c in classes)
+        scr = ('set AppleScript\'s text item delimiters to ", "\n'
+               'tell application "System Events"\n' + guard +
+               'set out to "App: " & fa & linefeed\n'
                'tell process fa\n'
                'try\nset out to out & "Windows: " & (name of windows as string) & linefeed\nend try\n'
                'try\nset out to out & "Menus: " & (name of menu bar items of menu bar 1 as string) & linefeed\nend try\n'
-               'try\nset out to out & "Buttons: " & (name of buttons of front window as string) & linefeed\nend try\n'
+               + lines +
                'end tell\nreturn out\nend tell')
         return ["osascript", "-e", scr]
     if action == "open_app":
         app = (params.get("app") or params.get("target") or "").strip()
         if not app:
             raise ValueError("open_app needs an 'app' name")
+        low = app.lower()
+        if any(b.lower() in low or low in b.lower() for b in blocked):
+            raise ValueError(app + " is on your blocked apps list.")
         return ["osascript", "-e", "tell application " + _applescript_str(app) + " to activate"]
     if action == "type":
-        return ["osascript", "-e", 'tell application "System Events" to keystroke ' + _applescript_str(params.get("text") or "")]
+        scr = ('tell application "System Events"\n' + guard +
+               'keystroke ' + _applescript_str(params.get("text") or "") + '\nend tell')
+        return ["osascript", "-e", scr]
     if action == "key":
         combo = (params.get("key") or "").strip().lower()
         parts = [p for p in re.split(r"[+\-\s]+", combo) if p]
@@ -113,15 +150,29 @@ def macos_use_argv(action, params):
             tail = "key code " + str(_MACOS_KEY_CODES[keyname]) + using
         else:
             tail = "keystroke " + _applescript_str(keyname) + using
-        return ["osascript", "-e", 'tell application "System Events" to ' + tail]
+        scr = 'tell application "System Events"\n' + guard + tail + '\nend tell'
+        return ["osascript", "-e", scr]
     if action == "click":
         el = (params.get("element") or params.get("target") or "").strip()
         if not el:
             raise ValueError("click needs an 'element' name")
-        scr = ('tell application "System Events"\n'
-               'set fa to name of first application process whose frontmost is true\n'
+        q = _applescript_str(el)
+        # Top-level match first; on failure walk entire contents, because
+        # System Events only sees direct children with a `whose` filter and
+        # most real buttons live nested in groups/toolbars.
+        scr = ('tell application "System Events"\n' + guard +
                'tell process fa\n'
-               'click (first UI element of front window whose name is ' + _applescript_str(el) + ')\n'
+               'try\n'
+               'click (first UI element of front window whose name is ' + q + ' or description is ' + q + ')\n'
+               'return "clicked " & ' + q + '\n'
+               'on error\n'
+               'repeat with el in (entire contents of front window)\n'
+               'try\n'
+               'if (name of el is ' + q + ') or (description of el is ' + q + ') then\n'
+               'click el\nreturn "clicked " & ' + q + '\n'
+               'end if\nend try\nend repeat\n'
+               'return "No element " & ' + q + ' & " found - run snapshot to list elements"\n'
+               'end try\n'
                'end tell\nend tell')
         return ["osascript", "-e", scr]
     if action == "menu":
@@ -129,13 +180,15 @@ def macos_use_argv(action, params):
         items = [p.strip() for p in re.split(r"[>/]", path) if p.strip()]
         if len(items) < 2:
             raise ValueError("menu needs a path like 'File>Save'")
-        top, sub = items[0], items[1]
-        scr = ('tell application "System Events"\n'
-               'set fa to name of first application process whose frontmost is true\n'
+        top = _applescript_str(items[0])
+        target = 'menu ' + top + ' of menu bar item ' + top + ' of menu bar 1'
+        for sub in items[1:-1]:   # submenus, e.g. File>Export>PDF
+            s = _applescript_str(sub)
+            target = 'menu ' + s + ' of menu item ' + s + ' of ' + target
+        scr = ('tell application "System Events"\n' + guard +
                'tell process fa\n'
-               'click menu item ' + _applescript_str(sub) + ' of menu ' + _applescript_str(top) +
-               ' of menu bar item ' + _applescript_str(top) + ' of menu bar 1\n'
-               'end tell\nend tell')
+               'click menu item ' + _applescript_str(items[-1]) + ' of ' + target +
+               '\nend tell\nend tell')
         return ["osascript", "-e", scr]
     if action == "screenshot":
         return ["screencapture", "-x", "/tmp/joebro_screenshot_" + str(int(time.time())) + ".png"]
@@ -644,13 +697,14 @@ FUNCTION_TOOL_SCHEMAS = [
          "start": {"type": "string", "description": "ISO-8601 start datetime, e.g. 2026-06-17T14:00:00"},
          "end": {"type": "string", "description": "ISO-8601 end datetime, e.g. 2026-06-17T17:00:00"},
          "all_day": {"type": "boolean", "description": "true for an all-day event (optional)"}}, ["summary", "start", "end"]),
-    _fn("manage_chats", "Manage and drive the user's chats — you are the orchestrator over all of them. action=list (every chat), search (find chats/messages containing text), read (recent history of one chat), create (start a new chat), bind_folder (bind a chat to a folder on disk), set_mode (chat/agent), set_permission (a chat's file access: sandbox/readonly/full), send (post a message into a chat and get that chat's agent reply — this is how you DELEGATE coding/file work). Identify a chat with `chat` = its id or name.",
-        {"action": {"type": "string", "enum": ["list", "search", "read", "create", "bind_folder", "set_mode", "set_permission", "send"]},
-         "chat": {"type": "string", "description": "target chat id or name (read/send/set_mode/set_permission/bind_folder)"},
+    _fn("manage_chats", "Manage and drive the user's chats — you are the orchestrator over all of them. action=list (every chat, with its mode/permission/model), search (find chats/messages containing text), read (recent history + current mode/permission/model of one chat), create (start a new chat), bind_folder (bind a chat to a folder on disk), set_mode (chat/agent), set_permission (a chat's file access: sandbox/readonly/full), set_model (change the model a chat uses), models (list the model names available to choose from), send (post a message into a chat and get that chat's agent reply — this is how you DELEGATE coding/file work). Identify a chat with `chat` = its id or name.",
+        {"action": {"type": "string", "enum": ["list", "search", "read", "create", "bind_folder", "set_mode", "set_permission", "set_model", "models", "send"]},
+         "chat": {"type": "string", "description": "target chat id or name (read/send/set_mode/set_permission/set_model/bind_folder)"},
          "query": {"type": "string", "description": "text to search for across chats (search)"},
          "message": {"type": "string", "description": "message to post into the chat (send)"},
          "mode": {"type": "string", "enum": ["chat", "agent"], "description": "new mode (set_mode); also the starting mode for create"},
          "permission": {"type": "string", "enum": ["sandbox", "readonly", "full"], "description": "file-access level (set_permission); also for create"},
+         "model": {"type": "string", "description": "model name to switch the chat to (set_model) — use the `models` action first to see valid names"},
          "folder": {"type": "string", "description": "absolute folder path to bind (bind_folder); also for create"},
          "name": {"type": "string", "description": "name for the new chat (create)"},
          "limit": {"type": "integer"}}, ["action"]),
@@ -1138,7 +1192,8 @@ class Store:
                          "alter table tasks add column last_run text default ''",
                          "alter table tasks add column permission_mode text default 'sandbox'",
                          "alter table tasks add column repeat_day integer default 0",
-                         "alter table sessions add column permission_mode text default 'sandbox'"):
+                         "alter table sessions add column permission_mode text default 'sandbox'",
+                         "alter table mcp_servers add column permission_mode text default 'sandbox'"):
                 try:
                     db.execute(stmt)
                 except sqlite3.OperationalError:

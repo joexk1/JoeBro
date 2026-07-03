@@ -7,6 +7,11 @@ from jb_core import *  # noqa: F401,F403
 # back while JoeBro is in the background or you're on another chat.
 DOC_WRITE_TOOLS = {"create_document", "edit_document", "update_document"}
 
+# Agent-access levels, ranked. An MCP server tagged with a level is only offered
+# to (and callable by) a session whose permission_mode is at least that level —
+# so e.g. an iPhone-control server can require Full access.
+_PERM_RANK = {"sandbox": 0, "readonly": 1, "full": 2}
+
 
 class ToolsMixin:
 
@@ -22,7 +27,7 @@ class ToolsMixin:
             drop = {"bash", "python", "list_files", "read_file", "read_pdf",
                     "create_document", "edit_document", "update_document", "suggest_document"}
             schemas = [t for t in FUNCTION_TOOL_SCHEMAS if t["function"]["name"] not in drop]
-            return schemas + self.custom_tool_schemas() + self.mcp_tool_schemas()
+            return schemas + self.custom_tool_schemas() + self.mcp_tool_schemas(f)
         # Chat mode is pure conversation — no tools at all. Tools (search, email,
         # files, research, …) are an AGENT-mode capability.
         if (f.get("mode") or "").lower() != "agent":
@@ -40,12 +45,16 @@ class ToolsMixin:
             # Never advertise the shell when the terminal toggle is off — the
             # model would call it, get refused, then lie that it "ran" the command.
             drop |= {"bash", "python"}
+        if str(f.get("allow_web_search") or "").lower() not in ("1", "true", "yes"):
+            # The composer's search toggle gates web_search — off means the agent
+            # can't reach the web (it would otherwise always be available).
+            drop |= {"web_search"}
         schemas = [t for t in FUNCTION_TOOL_SCHEMAS if t["function"]["name"] not in drop]
         # Enabled custom API tools are offered alongside the built-ins (agent mode
         # only — we already returned [] for chat above). Their description is the
         # schema; the model infers the single `query` string from it.
         schemas += self.custom_tool_schemas()
-        schemas += self.mcp_tool_schemas()
+        schemas += self.mcp_tool_schemas(f)
         if self._macos_use_enabled():
             schemas.append(MACOS_USE_TOOL)
         return schemas
@@ -140,15 +149,19 @@ class ToolsMixin:
         safe = re.sub(r"[^a-zA-Z0-9_]", "_", str(tool_name or "")).strip("_").lower() or "tool"
         return f"{server_id}__{safe}".lower()
 
-    def mcp_tool_schemas(self):
+    def mcp_tool_schemas(self, f=None):
         """OpenAI-style schemas for every tool of every ENABLED MCP server, read
-        from the cached tools_json (no subprocess spawn here). Never raises."""
+        from the cached tools_json (no subprocess spawn here). Servers whose
+        required agent-access level is above the session's are skipped. Never raises."""
         out = []
+        sess_rank = _PERM_RANK.get((f or {}).get("permission_mode") or "sandbox", 0)
         try:
             rows = self.store.rows("select * from mcp_servers where enabled=1 order by created_at")
         except Exception:
             return out
         for r in rows:
+            if _PERM_RANK.get(r.get("permission_mode") or "sandbox", 0) > sess_rank:
+                continue   # needs a higher agent-access level than this session has
             try:
                 tools = json.loads(r.get("tools_json") or "[]")
             except Exception:
@@ -231,23 +244,24 @@ class ToolsMixin:
                                            real_tool, arguments)
             return {"tool": name, "command": label,
                     "output": (text or "")[:60000], "exit_code": 1 if is_error else 0}
-        except _MCPError as exc:
-            return {"tool": name, "command": label,
-                    "output": f"MCP error from {row.get('name') or name}: {exc}"[:4000], "exit_code": 1}
         except Exception as exc:
             return {"tool": name, "command": label,
                     "output": f"MCP error from {row.get('name') or name}: {exc}"[:4000], "exit_code": 1}
+
+    def _tool_ctx(self, sid, form):
+        """(root, readonly, allow_outside) for one session's tool run."""
+        session = self.store.one("select workdir from sessions where id=?", (sid,))
+        root_text = ((session or {}).get("workdir") or "").strip()
+        root = Path(root_text).expanduser().resolve() if root_text else None
+        mode = form.get("permission_mode") or ""
+        return root, mode == "readonly", mode == "full"
 
     def execute_ai_file_tools(self, sid, reply, form=None, run=True, max_calls=None):
         if not sid or not reply:
             return reply, []
         form = form or {}
         reply = self.normalize_xml_tools(reply)
-        readonly = (form.get("permission_mode") or "") == "readonly"
-        session = self.store.one("select workdir from sessions where id=?", (sid,))
-        root_text = ((session or {}).get("workdir") or "").strip()
-        root = Path(root_text).expanduser().resolve() if root_text else None
-        allow_outside = (form.get("permission_mode") or "") == "full"
+        root, readonly, allow_outside = self._tool_ctx(sid, form)
         events = []
         # Strip every recognized tool block from the displayed text — executed
         # tools are shown as tool rows, not raw markup. (The Pi does the same.)
@@ -274,11 +288,7 @@ class ToolsMixin:
         if not sid or not blocks:
             return []
         form = form or {}
-        readonly = (form.get("permission_mode") or "") == "readonly"
-        session = self.store.one("select workdir from sessions where id=?", (sid,))
-        root_text = ((session or {}).get("workdir") or "").strip()
-        root = Path(root_text).expanduser().resolve() if root_text else None
-        allow_outside = (form.get("permission_mode") or "") == "full"
+        root, readonly, allow_outside = self._tool_ctx(sid, form)
         events = []
         for name, body in blocks:
             event = self._run_one_tool(root, name, body, form, allow_outside, readonly)
@@ -290,11 +300,19 @@ class ToolsMixin:
         row = self.store.one("select is_enabled from plugins where id='plugin_macos_use'")
         return bool(row and row.get("is_enabled"))
 
+    def _macos_blocked_apps(self):
+        """User's blocked-apps list (macos_blocked_apps pref) - names the plugin
+        must never open, click, type into or read."""
+        raw = self.pref("macos_blocked_apps") or []
+        if isinstance(raw, str):
+            raw = re.split(r"[,\n]", raw)
+        return [s.strip() for s in raw if isinstance(s, str) and s.strip()]
+
     def run_macos_use(self, f, params):
         """Execute a JoeBro macOS Use action locally (this backend runs on the Mac)."""
         action = (params or {}).get("action") or ""
         try:
-            argv = macos_use_argv(action, params)
+            argv = macos_use_argv(action, params, blocked=self._macos_blocked_apps())
         except ValueError as exc:
             return {"tool": "macos_use", "command": "macos_use " + str(action), "output": str(exc), "exit_code": 1}
         try:
@@ -322,6 +340,10 @@ class ToolsMixin:
             # params); parse it back so we pass the real arguments to tools/call.
             mrow, real_tool = self.mcp_server_for_func(name)
             if mrow:
+                if _PERM_RANK.get(mrow.get("permission_mode") or "sandbox", 0) > \
+                   _PERM_RANK.get((form or {}).get("permission_mode") or "sandbox", 0):
+                    return {"tool": name, "command": real_tool or name, "exit_code": 1,
+                            "output": f"'{mrow.get('name') or 'This MCP server'}' requires a higher agent access level — switch the chat's access to use it."}
                 try:
                     args = json.loads(body) if body else {}
                     if not isinstance(args, dict):
@@ -366,23 +388,30 @@ class ToolsMixin:
                     "output": str(exc), "exit_code": 1}
 
     def _gate_doc_edit(self, name, body, form):
-        """Block an AI document write until the user approves it, when the app
-        has 'ask before editing' on (it sends ask_doc_edit). Reuses the command-
-        permission prompt machinery so the file is NOT written behind your back —
-        independent of window focus or which chat is open. Returns a denied event
-        to skip the write, or None to allow it. No-ops unless the app opted in and
-        a live stream is attached, so approval-off / task runs are unchanged."""
+        """Approval gate for AI document writes when the app sends ask_doc_edit.
+        An edit to a doc that's OPEN in the editor passes straight through: the
+        app holds it as a pending Apply/Reject diff in the editor, so there's no
+        blocking prompt and no timeout. Anything else needs the permission prompt
+        BEFORE the file is touched; if there's no live prompt channel the write
+        is refused rather than silently applied. Returns a denied event to skip
+        the write, or None to allow it."""
         if name not in DOC_WRITE_TOOLS:
             return None
-        emit = getattr(self, "_perm_emit", None)
         f = form or {}
-        if not emit or str(f.get("ask_doc_edit") or "").lower() not in ("1", "true", "yes"):
+        if str(f.get("ask_doc_edit") or "").lower() not in ("1", "true", "yes"):
             return None
         sid = f.get("session") or ""
         with _PERMISSION_GUARD:
             if "doc_edit" in _SESSION_ALLOW.get(sid, set()):
                 return None
+        if self._doc_edit_is_open(body, f):
+            return None
         command = self.tool_command_summary(name, body)
+        emit = getattr(self, "_perm_emit", None)
+        if not emit:
+            return {"tool": name, "command": command,
+                    "output": "Edit not applied — approval is required but there's no open editor tab or live chat to ask in.",
+                    "exit_code": 1}
         decision = self._await_permission(emit, name, command)
         if decision == "always":
             with _PERMISSION_GUARD:
@@ -392,6 +421,24 @@ class ToolsMixin:
             return None
         return {"tool": name, "command": command,
                 "output": "Edit not applied — you declined it.", "exit_code": 1}
+
+    def _doc_edit_is_open(self, body, f):
+        """True when the write targets a doc that's open in the app's editor
+        (the app sends open tab ids/titles as open_docs). Matches the same
+        local-<relpath> / basename scheme the editor uses. Rich .doc/.docx tabs
+        render from disk, so they can't show a pending diff — never 'open'."""
+        raw = f.get("open_docs") or ""
+        if not raw:
+            return False
+        fields = self.parse_tool_fields(body)
+        rel = (fields.get("path") or fields.get("title") or "").strip()
+        if not rel or rel.lower().endswith((".doc", ".docx")):
+            return False
+        entries = {s.strip() for s in raw.split("\n") if s.strip()}
+        sub = rel.lstrip("/")
+        if sub.startswith("./"):
+            sub = sub[2:]
+        return ("local-" + sub) in entries or sub.rsplit("/", 1)[-1] in entries
 
     def _doc_event_payload(self, root, name, body, allow_outside):
         """The {doc_id,title,language,content} for a document the AI just wrote,
@@ -962,6 +1009,17 @@ class ToolsMixin:
         return self.store.one(
             "select * from sessions where name like ? order by datetime(created_at) desc limit 1", (f"%{ref}%",))
 
+    def _resolve_model_endpoint(self, model):
+        """The endpoint_id that serves `model`, or None — so set_model points a
+        chat at a model and the endpoint that can actually run it."""
+        try:
+            for it in self.model_items():
+                if model in (it.get("models") or []):
+                    return it.get("endpoint_id")
+        except Exception:
+            pass
+        return None
+
     def _remember_focus(self, form, chat_id, chat_name):
         """Record the chat the bot just worked with, keyed by the bot's own
         session, so a follow-up ('ask them…', 'tell that chat…') resolves to it.
@@ -984,10 +1042,18 @@ class ToolsMixin:
                 out.append({"id": r["id"], "name": r.get("name") or "Untitled",
                             "folder": r.get("folder") or "", "mode": r.get("mode") or "chat",
                             "permission": r.get("permission_mode") or "sandbox",
+                            "model": r.get("model") or "",
                             "bound_folder": (r.get("workdir") or "").strip(),
                             "messages": int((cnt or {}).get("c") or 0),
                             "last_activity": (last or {}).get("created_at")})
             return json.dumps(out, ensure_ascii=False)
+        if action == "models":
+            try:
+                items = self.model_items()
+            except Exception:
+                items = []
+            return json.dumps([{"endpoint": it.get("endpoint_name"), "models": it.get("models") or []}
+                               for it in items], ensure_ascii=False)
         if action == "search":
             q = (args.get("query") or "").strip()
             if not q:
@@ -1030,6 +1096,15 @@ class ToolsMixin:
                 raise ValueError("permission must be sandbox, readonly or full")
             self.store.exec("update sessions set permission_mode=? where id=?", (perm, target["id"]))
             return f"Set chat '{target.get('name')}' file access to {perm}"
+        if action == "set_model":
+            model = (args.get("model") or "").strip()
+            if not model:
+                raise ValueError("set_model requires model")
+            # Resolve which endpoint serves this model so the chat can actually
+            # run it; keep the chat's existing endpoint if it's not found.
+            ep = self._resolve_model_endpoint(model) or target.get("endpoint_id") or ""
+            self.store.exec("update sessions set model=?, endpoint_id=? where id=?", (model, ep, target["id"]))
+            return f"Set chat '{target.get('name')}' model to {model}"
         if action == "read":
             n = max(1, min(100, int(args.get("limit") or 20)))
             rows = self.store.rows(
@@ -1037,6 +1112,9 @@ class ToolsMixin:
                 (target["id"], n))
             rows = list(reversed(rows))
             return json.dumps({"chat": target.get("name"), "id": target["id"],
+                               "mode": target.get("mode") or "chat",
+                               "permission": target.get("permission_mode") or "sandbox",
+                               "model": target.get("model") or "",
                                "messages": [{"role": r["role"], "content": r.get("content") or "",
                                              "when": r.get("created_at")} for r in rows]}, ensure_ascii=False)
         if action == "set_mode":
@@ -1058,7 +1136,8 @@ class ToolsMixin:
             sub = {"session": target["id"], "message": msg,
                    "model": target.get("model") or "", "endpoint_id": target.get("endpoint_id") or "",
                    "endpoint_url": target.get("endpoint_url") or "",
-                   "mode": (target.get("mode") or "agent"), "permission_mode": perm}
+                   "mode": (target.get("mode") or "agent"), "permission_mode": perm,
+                   "allow_web_search": "true"}
             if perm == "full":
                 sub["allow_bash"] = "true"
             if bool(self.pref("bot_ask_permissions")):

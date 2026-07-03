@@ -315,46 +315,57 @@ class ChatMixin:
             )
         return system
 
-    def _post_chat(self, f, messages, tools=None):
-        """One raw chat-completions call with tool schemas. Returns the model's
-        message dict, or an error string."""
+    def _endpoint_request(self, f, payload):
+        """Build the chat-completions request for the session's endpoint (None if
+        no endpoint is configured)."""
         ep = self.store.one("select * from endpoints where id=?", (f.get("endpoint_id") or "",))
         if not ep:
             return None
         base = ep["base_url"].rstrip("/")
         url = base if base.endswith("/chat/completions") else base + "/chat/completions"
-        schemas = tools if tools is not None else FUNCTION_TOOL_SCHEMAS
-        payload = {"model": f.get("model") or "", "messages": messages,
-                   "stream": False, "max_tokens": int(f.get("max_tokens") or 8192)}
-        if schemas:   # omit entirely in chat mode — an empty `tools: []` upsets some APIs
-            payload["tools"] = schemas
-            payload["tool_choice"] = "auto"
         req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), method="POST")
         req.add_header("Content-Type", "application/json")
         # Groq/Cerebras sit behind Cloudflare, which 403s requests that have no
-        # browser User-Agent (the model-list probe already does this; the chat
-        # call did not, so those providers' models silently failed).
+        # browser User-Agent.
         req.add_header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15")
         req.add_header("HTTP-Referer", "https://joebro.app")   # OpenRouter app attribution
         req.add_header("X-Title", "JoeBro")
         if ep.get("api_key"):
             req.add_header("Authorization", "Bearer " + ep["api_key"])
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-            return data.get("choices", [{}])[0].get("message", {}) or {}
-        except urllib.error.HTTPError as exc:
-            # urllib's str() is just "HTTP Error 403: Forbidden"; the provider
-            # puts the real reason (rate limit, bad model, data policy) in the body.
-            detail = ""
+        return req
+
+    @staticmethod
+    def _endpoint_error(exc):
+        """Readable message for a failed endpoint call. urllib's str() is just
+        "HTTP Error 403: Forbidden"; the provider puts the real reason (rate
+        limit, bad model, data policy) in the body."""
+        if isinstance(exc, urllib.error.HTTPError):
             try:
                 body = json.loads(exc.read().decode("utf-8", errors="replace"))
                 detail = (body.get("error") or {}).get("message") if isinstance(body.get("error"), dict) else (body.get("error") or body.get("detail"))
             except Exception:
                 detail = ""
             return f"Endpoint error: HTTP {exc.code} {exc.reason}" + (f" — {detail}" if detail else "")
+        return f"Endpoint error: {exc}"
+
+    def _post_chat(self, f, messages, tools=None):
+        """One raw chat-completions call with tool schemas. Returns the model's
+        message dict, or an error string."""
+        schemas = tools if tools is not None else FUNCTION_TOOL_SCHEMAS
+        payload = {"model": f.get("model") or "", "messages": messages,
+                   "stream": False, "max_tokens": int(f.get("max_tokens") or 8192)}
+        if schemas:   # omit entirely in chat mode — an empty `tools: []` upsets some APIs
+            payload["tools"] = schemas
+            payload["tool_choice"] = "auto"
+        req = self._endpoint_request(f, payload)
+        if req is None:
+            return None
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            return data.get("choices", [{}])[0].get("message", {}) or {}
         except Exception as exc:
-            return f"Endpoint error: {exc}"
+            return self._endpoint_error(exc)
 
     def _stream_chat(self, f, messages, tools, on_delta):
         """Like _post_chat but STREAMS. Calls on_delta({"delta": text}) for
@@ -362,23 +373,14 @@ class ChatMixin:
         tokens arrive, so the final answer (and its thinking) shows live instead
         of appearing all at once after the round finishes. Returns the assembled
         message dict {content, reasoning_content, tool_calls}, or an error string."""
-        ep = self.store.one("select * from endpoints where id=?", (f.get("endpoint_id") or "",))
-        if not ep:
-            return None
-        base = ep["base_url"].rstrip("/")
-        url = base if base.endswith("/chat/completions") else base + "/chat/completions"
         payload = {"model": f.get("model") or "", "messages": messages,
                    "stream": True, "max_tokens": int(f.get("max_tokens") or 8192)}
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
-        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), method="POST")
-        req.add_header("Content-Type", "application/json")
-        req.add_header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15")
-        req.add_header("HTTP-Referer", "https://joebro.app")
-        req.add_header("X-Title", "JoeBro")
-        if ep.get("api_key"):
-            req.add_header("Authorization", "Bearer " + ep["api_key"])
+        req = self._endpoint_request(f, payload)
+        if req is None:
+            return None
         content, reasoning, calls = [], [], {}
         try:
             with urllib.request.urlopen(req, timeout=300) as resp:
@@ -407,16 +409,8 @@ class ChatMixin:
                         fn = tc.get("function") or {}
                         if fn.get("name"): slot["function"]["name"] += fn["name"]
                         if fn.get("arguments"): slot["function"]["arguments"] += fn["arguments"]
-        except urllib.error.HTTPError as exc:
-            detail = ""
-            try:
-                body = json.loads(exc.read().decode("utf-8", errors="replace"))
-                detail = (body.get("error") or {}).get("message") if isinstance(body.get("error"), dict) else (body.get("error") or body.get("detail"))
-            except Exception:
-                detail = ""
-            return f"Endpoint error: HTTP {exc.code} {exc.reason}" + (f" — {detail}" if detail else "")
         except Exception as exc:
-            return f"Endpoint error: {exc}"
+            return self._endpoint_error(exc)
         msg = {"role": "assistant", "content": "".join(content)}
         if reasoning:
             msg["reasoning_content"] = "".join(reasoning)
@@ -1035,18 +1029,11 @@ class ChatMixin:
     def _complete(self, endpoint_id, model, system, user, max_tokens=1500):
         """One-shot text completion against an endpoint (no tools). Used for
         background work like research synthesis."""
-        ep = self.store.one("select * from endpoints where id=?", (endpoint_id,))
-        if not ep:
-            return None
-        base = ep["base_url"].rstrip("/")
-        url = base if base.endswith("/chat/completions") else base + "/chat/completions"
         payload = {"model": model or "", "stream": False, "max_tokens": max_tokens,
                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
-        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), method="POST")
-        req.add_header("Content-Type", "application/json")
-        req.add_header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15")
-        if ep.get("api_key"):
-            req.add_header("Authorization", "Bearer " + ep["api_key"])
+        req = self._endpoint_request({"endpoint_id": endpoint_id}, payload)
+        if req is None:
+            return None
         try:
             with urllib.request.urlopen(req, timeout=180) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
