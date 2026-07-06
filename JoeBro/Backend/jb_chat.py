@@ -130,6 +130,15 @@ class ChatMixin:
             if doc and ev.get("exit_code") == 0:
                 emit({"_doc": doc, "_tool": ev.get("tool")})
         tool_events.extend(tool_results)
+        # Text-format tools ran AFTER the model finished, so it never saw their
+        # results — and a reply that was pure tool markup strips to nothing.
+        # Close the loop with one tools-off follow-up so the turn always ends
+        # in an actual answer (the per-turn cap is already spent; a completion
+        # without tools can't overrun it).
+        if run_text_tools and tool_results:
+            reply = self._text_tools_followup(f, reply, tool_results, emit) or reply
+        if run_text_tools and tool_events and not reply.strip():
+            reply = "I used my tool budget before writing an answer — the results are in the tool rows above; say continue for the summary."
         saved_reply = reply
 
         # Stream the visible reply tokens — UNLESS run_agent already streamed the
@@ -521,15 +530,13 @@ class ChatMixin:
         # Optional hard cap on tool calls per turn (Settings). 0 = unlimited.
         max_tool_calls = max(0, int(f.get("max_tool_calls") or 0))
         tool_calls_made = 0
-        rounds, call_sigs, stuck = 0, {}, False
+        call_sigs, stuck = {}, False
         while True:
-            rounds += 1
-            # No artificial low cap, but never hang forever: if the model repeats
-            # the SAME tool call (a read/list/edit loop), hits the user's tool-use
-            # limit, or blows past a generous backstop, drop tools so it MUST give
-            # a final answer this round.
+            # NO hardcoded cap — the user's Settings tool-use limit (0 = unlimited)
+            # and the repeated-identical-call detector are the only stops. If either
+            # trips, drop tools so the model MUST give a final answer this round.
             hit_limit = max_tool_calls and tool_calls_made >= max_tool_calls
-            use_tools = None if (stuck or hit_limit or rounds > 60) else tools
+            use_tools = None if (stuck or hit_limit) else tools
             # Stream every round: content + reasoning deltas reach the client
             # live (the final answer no longer appears all at once after a wait).
             msg = self._stream_chat(f, messages, use_tools, emit)
@@ -549,7 +556,9 @@ class ChatMixin:
             if not raw_calls or use_tools is None:
                 final_text = msg.get("content") or ""   # already streamed live
                 if not final_text and use_tools is None:
-                    final_text = "I started repeating myself there, so I stopped. Tell me how you'd like to proceed."
+                    final_text = ("I've hit the tool-use limit for this turn — say continue and I'll pick up from here."
+                                  if hit_limit else
+                                  "I started repeating myself there, so I stopped. Tell me how you'd like to proceed.")
                 break
             messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": raw_calls})
             pending_vis = []   # image vision messages, appended AFTER all tool replies
@@ -793,13 +802,34 @@ class ChatMixin:
                           "ai_words": ai_words, "total_words": total_words, "chunks": len(chunks),
                           "flagged_sentences": flagged, "provider": "zerogpt"})
 
+
+    def _text_tools_followup(self, f, reply, tool_results, emit):
+        """One tools-off completion feeding back the outputs of tool markup that
+        was executed after the model finished. Returns combined text, or ''."""
+        note = "\n\n".join(
+            f"[{e.get('tool', 'tool')}] {e.get('command', '')}\n" + (e.get("output") or "")[:4000]
+            for e in tool_results)
+        messages = self._history_messages(f)
+        messages.append({"role": "assistant", "content": reply or "(tool calls)"})
+        messages.append({"role": "user", "content":
+            "[Automatic] Results of the tool calls you just made:\n\n" + note +
+            "\n\nGive your final answer now, using these results. Do not call any more tools."})
+        msg = self._stream_chat(f, messages, None, emit)
+        if isinstance(msg, dict):
+            extra = (msg.get("content") or "").strip()
+            if extra:
+                return ((reply + "\n\n") if reply.strip() else "") + extra
+        return ""
+
     def _history_messages(self, f):
         """The session's conversation as OpenAI messages, so the model has
         memory of prior turns. The current user turn is already the last stored
-        row. Older turns are compacted into a summary when the history grows."""
+        row. Older turns are compacted into a summary when the history grows.
+        Assistant turns carry a compact note of the tool calls they made, so
+        the model remembers what it already ran instead of re-running it."""
         sid = f.get("session") or ""
         rows = self.store.rows(
-            "select role, content from messages where session_id=? order by id", (sid,)) if sid else []
+            "select role, content, metadata from messages where session_id=? order by id", (sid,)) if sid else []
         msgs = []
         prefix = []   # a manually-compacted summary, carried verbatim into context
         for r in rows:
@@ -808,6 +838,10 @@ class ChatMixin:
             if role == "system" and content.startswith("[Conversation summary"):
                 prefix = [{"role": "system", "content": content}]
                 continue
+            if role == "assistant":
+                note = self._history_tool_note(r.get("metadata"))
+                if note:
+                    content = (content + "\n\n" if content else "") + note
             if role not in ("user", "assistant") or not content:
                 continue
             msgs.append({"role": role, "content": content})
@@ -825,6 +859,25 @@ class ChatMixin:
             return prefix + [{"role": "system",
                      "content": "[Conversation summary — earlier turns were compacted]\n" + summary}] + recent
         return prefix + msgs[-30:]   # summary unavailable — fall back to naive trim
+
+
+    @staticmethod
+    def _history_tool_note(raw):
+        """One compact line per tool call from a past turn (command + truncated
+        result) — enough for the model to know what it already ran and what
+        came back, at a fraction of the original output's tokens."""
+        try:
+            events = (json.loads(raw or "{}") or {}).get("tool_events") or []
+        except Exception:
+            return ""
+        lines = []
+        for e in events:
+            out = re.sub(r"\s+", " ", (e.get("output") or "")).strip()
+            status = " (failed)" if e.get("exit_code") else ""
+            lines.append(f"- {e.get('tool', 'tool')} {(e.get('command') or '')[:120]}{status}: {out[:200]}")
+        if not lines:
+            return ""
+        return "[Tools I ran during this turn — results summarized:\n" + "\n".join(lines) + "]"
 
     def _compact_history(self, f, sid, older):
         """Summarize `older` turns into one dense note via the session's own

@@ -7,11 +7,13 @@ class AssistantMixin:
     def _task_endpoint(self):
         """Pick an endpoint/model to run a scheduled task: the saved default,
         else the most recent chat's, else any configured endpoint."""
-        ep, model = self.pref("default_endpoint_id") or "", self.pref("default_model_id") or ""
-        if not ep:
+        ep, model = self.pref("default_endpoint_id") or "", self.pref("default_model") or ""
+        if not ep or not model:
+            # Fill the gaps independently — a saved endpoint with no saved model
+            # used to fall through as model "" and 404 at the endpoint.
             s = self.store.one("select endpoint_id, model from sessions where endpoint_id != '' order by datetime(created_at) desc limit 1")
             if s:
-                ep, model = s.get("endpoint_id") or "", s.get("model") or ""
+                ep, model = ep or s.get("endpoint_id") or "", model or s.get("model") or ""
         if not ep:
             e = self.store.one("select id from endpoints order by datetime(created_at) limit 1")
             ep = e["id"] if e else ""

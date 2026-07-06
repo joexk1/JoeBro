@@ -139,7 +139,7 @@ def _cfg(h):
         "enabled": pb("bot_enabled"),
         "token": (h.pref("bot_token") or "").strip(),
         "allowed": _parse_ids(h.pref("bot_allowed_ids") or ""),
-        "model": h.pref("bot_model") or h.pref("default_model_id") or "",
+        "model": h.pref("bot_model") or h.pref("default_model") or "",
         "endpoint_id": h.pref("bot_endpoint_id") or h.pref("default_endpoint_id") or "",
         "ask_permissions": pb("bot_ask_permissions"),
         "show_skills": pb("bot_show_skills"),

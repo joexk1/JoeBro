@@ -35,7 +35,11 @@ class ToolsMixin:
         readonly = (f.get("permission_mode") or "") == "readonly"
         full = (f.get("permission_mode") or "") == "full"
         terminal_on = str(f.get("allow_bash") or "").lower() in ("1", "true", "yes") and full
-        drop = set()
+        # manage_chats belongs to the Telegram orchestrator ONLY (early-returned
+        # above). Offered to a normal chat, the model starts playing message bot:
+        # reading other chats, flipping their modes/permissions, and delegating
+        # its own work into them instead of doing it.
+        drop = {"manage_chats"}
         if readonly:
             drop |= WRITE_SIDE_EFFECT_TOOLS            # read-only: no side effects at all
         if not has_folder and not full:
@@ -1076,7 +1080,7 @@ class ToolsMixin:
             # Inherit a working model/endpoint so the new chat can actually run:
             # the bot's configured model first, then the app default.
             ep = self.pref("bot_endpoint_id") or self.pref("default_endpoint_id") or ""
-            model = self.pref("bot_model") or self.pref("default_model_id") or ""
+            model = self.pref("bot_model") or self.pref("default_model") or ""
             self.store.exec(
                 "insert into sessions(id,name,model,endpoint_id,mode,permission_mode,workdir,created_at) values(?,?,?,?,?,?,?,?)",
                 (new_id, name, model, ep, mode, perm, folder, now_iso()))
