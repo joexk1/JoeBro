@@ -38,6 +38,7 @@ It's one window, not ten apps:
 - **Agent mode** that uses tools. It reads files, edits documents, runs the terminal, searches the web, calls your own APIs, and manages your calendar and email.
 - **Deep Research** that reads many sources and writes a cited report.
 - **Documents** opened right beside the conversation, including real Word `.doc` and `.docx` files, edited in place.
+- **Flashcards**: ask for a study deck and it lands in your folder as a real Anki `.apkg`. Flick through it card by card in the workspace — learned or still learning — or import it straight into Anki.
 
 ![Co-editing a document alongside the chat](README_assets/co_editing.png)
 
@@ -48,11 +49,11 @@ It's one window, not ten apps:
 **Workspace tools**, all local, self-improving, and manually manageable.
 - **Email** over IMAP: read, compose, reply, forward, triage. All on your machine.
 - **Calendar**: your events, add, edit and delete, all from within the app.
-- **Brain**: long-term memory that persists across sessions and improves the more you use it. Add, edit, search, or delete memories manually anytime. Opens as an interactive **brain map** — a live graph where lines join memories that share topics (shorter and heavier = more closely related), and the biggest nodes are the hubs the rest of your memories link back to. Drag nodes around, zoom in as deep as you like, or flip to a plain list.
+- **Brain**: long-term memory that persists across sessions and improves the more you use it. Every memory is one self-contained fact — a lasting world fact, an experience, or an opinion you've expressed — filed on a topic page. Repeats merge into the page instead of piling up, and only what's relevant to the message at hand (plus anything you pin) ever reaches the model. Add, edit, search, or delete memories manually anytime. Opens as an interactive **brain map** — a live graph where lines join memories that share topics (shorter and heavier = more closely related), and the biggest nodes are the hubs the rest of your memories link back to. Drag nodes around, zoom in as deep as you like, or flip to a plain list.
 
 ![The Brain tab, your AI's persistent memory](README_assets/memory.png)
 
-- **Skills**: JoeBro teaches itself the things you do often. Review, edit, or prune them by hand whenever you like.
+- **Skills**: JoeBro teaches itself the things you do often. Review, edit, or prune them by hand whenever you like. Or point **Learn from sources** at a folder of past papers, analyses or templates and it studies them into a skill it can apply from scratch.
 - **AI Check**: paste text to see how AI-written it reads, with the suspect sentences flagged.
 
 For a full walkthrough of every tab, control and right-click menu, see the **[User Guide](USER_GUIDE.md)**. To go from zero to your first message in under a minute, start with **[Getting Started](GETTING_STARTED.md)**.
@@ -100,6 +101,7 @@ Because the backend is bundled in the app, the bot is reachable whenever JoeBro 
 - **Bring your own models.** Run local models with Ollama (or anything OpenAI-compatible) over your network, or paste an API key for DeepSeek, OpenAI, Anthropic, Groq, Gemini, OpenRouter and friends. You choose per message, and you can switch model mid-conversation without losing the thread.
 - **No telemetry, no middleman.** The app talks to its own local backend and to whichever model endpoints you set up. Nothing else is in the loop.
 - **You hold the keys.** API keys are stored locally. When the agent touches files or runs commands, you decide how much access it gets.
+- **Cloak Mode.** On by default: API keys, passwords, emails, card, passport and account numbers are swapped for placeholders like `[API KEY]` before any request leaves the backend — every model endpoint, local ones included. The model sees the shape of your data, never the values. One switch in Settings.
 
 ---
 

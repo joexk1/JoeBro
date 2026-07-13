@@ -431,6 +431,8 @@ struct EditorDoc: Identifiable {
     var reloadNonce = 0            // bumped to force the rich .docx editor to re-read from disk after an AI edit
     var spreadsheet = false        // .csv/.xlsx — content is CSV, rendered as an editable grid
     var xlsxURL: URL?              // .xlsx-backed: saves convert CSV->xlsx and write here
+    var flashcards = false         // .apkg — content is Q/A text, rendered as a deck
+    var apkgURL: URL?              // .apkg-backed: saves convert text->apkg and write here
 }
 
 struct DocSuggestion: Identifiable, Hashable {
@@ -705,6 +707,13 @@ func parseISO(_ s: String) -> Date? {
 }
 
 // MARK: - Memory (Brain)
+
+struct LearnSkillsStatus: Decodable {
+    var status: String
+    var detail: String?
+    var error: String?
+    var skills: [String]?
+}
 
 struct MemoryResponse: Decodable {
     var memory: [MemoryEntry]

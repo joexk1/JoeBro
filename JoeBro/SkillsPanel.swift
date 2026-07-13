@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -9,6 +10,7 @@ struct SkillsPanel: View {
     @State private var editing: SkillDraft?
     @State private var showNew = false
     @State private var showGenerate = false
+    @State private var showLearn = false
     @State private var showImporter = false
     @State private var busyID: String?
     @State private var selection: Set<String> = []
@@ -41,6 +43,11 @@ struct SkillsPanel: View {
                     showGenerate = true
                 } label: {
                     Label("Generate with AI…", systemImage: "sparkles")
+                }
+                Button {
+                    showLearn = true
+                } label: {
+                    Label("Learn from sources…", systemImage: "books.vertical")
                 }
             } label: {
                 Image(systemName: "plus")
@@ -94,6 +101,9 @@ struct SkillsPanel: View {
         }
         .sheet(isPresented: $showGenerate) {
             GenerateSkillSheet(initialPrompt: generatePrefill) { await load() }
+        }
+        .sheet(isPresented: $showLearn) {
+            LearnSkillsSheet { await load() }
         }
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: [.plainText, UTType(filenameExtension: "md") ?? .plainText]) { result in
@@ -510,5 +520,107 @@ struct SkillRowShell<Content: View>: View {
 private extension JSONValue {
     var skillRowID: String {
         self["id"]?.stringValue ?? self["name"]?.stringValue ?? ""
+    }
+}
+
+
+/// Point the default model at a folder of source material (past papers,
+/// analyses, templates…) — it studies the documents and saves skill(s) that
+/// teach it to produce the same kind of work.
+struct LearnSkillsSheet: View {
+    let onSaved: () async -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var folder: URL?
+    @State private var running = false
+    @State private var detail = ""
+    @State private var made: [String] = []
+    @State private var error: String?
+    private let sourceDevice = ""
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Label("Learn from Sources", systemImage: "books.vertical")
+                    .font(.system(size: 14, weight: .semibold))
+                Spacer()
+                Button(made.isEmpty ? "Cancel" : "Done") { dismiss() }.keyboardShortcut(.cancelAction)
+                if made.isEmpty {
+                    Button {
+                        start()
+                    } label: {
+                        if running { ProgressView().controlSize(.small) } else { Text("Learn") }
+                    }
+                    .buttonStyle(.glassProminent)
+                    .tint(Color.accentColor)
+                    .disabled(folder == nil || running)
+                }
+            }
+            .padding(14)
+            Divider()
+            Form {
+                HStack {
+                    Text(folder?.path ?? "No folder selected")
+                        .lineLimit(1).truncationMode(.middle)
+                        .foregroundStyle(folder == nil ? .secondary : .primary)
+                    Spacer()
+                    Button("Choose folder…") { pick() }.disabled(running)
+                }
+                Text("Your default model studies the folder's documents — exercises, analyses, structures — and saves skill(s) that teach it to do the same kind of work.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if running {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text(detail.isEmpty ? "Working…" : detail).font(.caption)
+                    }
+                }
+                if !made.isEmpty {
+                    Label("Learned: " + made.joined(separator: ", "), systemImage: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                }
+                if let error {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                }
+            }
+            .formStyle(.grouped)
+        }
+        .frame(width: 500, height: 320)
+    }
+
+    private func pick() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK { folder = panel.url }
+    }
+
+    private func start() {
+        guard let folder else { return }
+        error = nil
+        running = true
+        Task {
+            defer { running = false }
+            do {
+                let job = try await APIClient.shared.learnSkills(path: folder.path, device: sourceDevice)
+                while true {
+                    try await Task.sleep(for: .seconds(2))
+                    let s = try await APIClient.shared.learnSkillsStatus(job: job)
+                    detail = s.detail ?? ""
+                    if s.status == "done" {
+                        made = s.skills ?? []
+                        await onSaved()
+                        return
+                    }
+                    if s.status == "error" {
+                        self.error = s.error ?? "Learning failed."
+                        return
+                    }
+                }
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
     }
 }

@@ -5,6 +5,20 @@ from jb_core import *  # noqa: F401,F403
 # on it sends ask_doc_edit and these are gated behind explicit approval BEFORE
 # the file is touched (see _gate_doc_edit) — so an edit can't land behind your
 # back while JoeBro is in the background or you're on another chat.
+
+# Models (deepseek especially) invent parameter names — map the common ones
+# onto ours instead of silently dropping them and failing with "requires path".
+_DOC_PARAM_ALIASES = {
+    "file": "path", "file_path": "path", "filepath": "path", "filename": "path",
+    "file_name": "path", "document": "path", "doc": "path", "target": "path",
+    "text": "content", "body": "content", "new_content": "content",
+    "full_content": "content", "markdown": "content",
+    "old_text": "find", "old_string": "find", "old_str": "find",
+    "search": "find", "find_text": "find",
+    "new_text": "replace", "new_string": "replace", "new_str": "replace",
+    "replacement": "replace", "replace_text": "replace",
+}
+
 DOC_WRITE_TOOLS = {"create_document", "edit_document", "update_document"}
 
 # Agent-access levels, ranked. An MCP server tagged with a level is only offered
@@ -59,8 +73,10 @@ class ToolsMixin:
         # schema; the model infers the single `query` string from it.
         schemas += self.custom_tool_schemas()
         schemas += self.mcp_tool_schemas(f)
-        if self._macos_use_enabled():
+        if self._plugin_allowed("plugin_macos_use", f):
             schemas.append(MACOS_USE_TOOL)
+        if self._plugin_allowed("plugin_advisor", f) and (self.pref("advisor_model") or ""):
+            schemas.append(advisor_tool_schema(self.pref("advisor_description") or ""))
         return schemas
 
     def custom_tool_schemas(self):
@@ -300,9 +316,18 @@ class ToolsMixin:
                 events.append(event)
         return events
 
-    def _macos_use_enabled(self):
-        row = self.store.one("select is_enabled from plugins where id='plugin_macos_use'")
-        return bool(row and row.get("is_enabled"))
+    def _plugin_allowed(self, plugin_id, f=None):
+        """Bundled-plugin gate, checked BOTH when offering schemas and when
+        executing a call: the plugin's toggle must be ON and the session's
+        agent-access level at or above the plugin's configured one. The
+        execution-time check matters — a model can emit a plugin call it
+        learned from chat history even when the tool was never advertised
+        this turn, and 'switched off' has to mean off."""
+        row = self.store.one("select is_enabled, permission_mode from plugins where id=?", (plugin_id,))
+        if not row or not row.get("is_enabled"):
+            return False
+        return _PERM_RANK.get(row.get("permission_mode") or "sandbox", 0) <= \
+            _PERM_RANK.get((f or {}).get("permission_mode") or "sandbox", 0)
 
     def _macos_blocked_apps(self):
         """User's blocked-apps list (macos_blocked_apps pref) - names the plugin
@@ -329,6 +354,33 @@ class ToolsMixin:
             return {"tool": "macos_use", "command": "macos_use " + action, "output": out, "exit_code": proc.returncode}
         except Exception as exc:
             return {"tool": "macos_use", "command": "macos_use " + action, "output": "macOS Use error: " + str(exc), "exit_code": 1}
+
+    def run_advisor(self, f, params):
+        """Foreground plugin: one-shot consult of the user's chosen stronger
+        model. The advisor sees ONLY the question — no chat history, no tools —
+        so the calling model must pack all context into it."""
+        q = ((params or {}).get("question") or (params or {}).get("query") or "").strip()
+        if not q:
+            return {"tool": "advisor", "command": "advisor", "output": "Pass a `question` for the advisor.", "exit_code": 1}
+        label = "advisor: " + q[:120] + ("…" if len(q) > 120 else "")
+        model, ep = self.pref("advisor_model") or "", self.pref("advisor_endpoint_id") or ""
+        if not model or not ep:
+            return {"tool": "advisor", "command": label, "exit_code": 1,
+                    "output": "No advisor model is set — pick one in Tools > Plugins > Advisor (gear)."}
+        msg = self._post_chat(
+            {"model": model, "endpoint_id": ep, "max_tokens": "4000"},
+            [{"role": "system", "content":
+              "You are the Advisor: a stronger model that the user's everyday assistant consults "
+              "when it needs help. Answer the question directly with expert, actionable advice. "
+              "You have no tools and cannot see their conversation — work from the question alone."},
+             {"role": "user", "content": q}], tools=[])
+        if msg is None:
+            return {"tool": "advisor", "command": label, "exit_code": 1,
+                    "output": "The advisor's endpoint is gone — re-pick the advisor model in its settings."}
+        if isinstance(msg, str):
+            return {"tool": "advisor", "command": label, "output": msg, "exit_code": 1}
+        out = (msg.get("content") or "").strip() or "(the advisor returned nothing)"
+        return {"tool": "advisor", "command": label, "output": "Advisor (" + model + "):\n" + out, "exit_code": 0}
 
     def _run_one_tool(self, root, name, body, form, allow_outside, readonly):
         """Execute a single tool (name, body) and return its event, or None if
@@ -357,6 +409,9 @@ class ToolsMixin:
                 return self.run_mcp_tool(mrow, real_tool, args)
             # Unknown/disabled MCP name — fall through (returns None below).
         if name == "macos_use":
+            if not self._plugin_allowed("plugin_macos_use", form):
+                return {"tool": "macos_use", "command": "macos_use", "exit_code": 1,
+                        "output": "The Computer Use plugin is switched off (or needs a higher agent access level) — tell the user; do not retry."}
             try:
                 args = json.loads(body) if body else {}
                 if not isinstance(args, dict):
@@ -364,6 +419,11 @@ class ToolsMixin:
             except Exception:
                 args = {}
             return self.run_macos_use(form, args)
+        if name == "advisor":
+            if not self._plugin_allowed("plugin_advisor", form):
+                return {"tool": "advisor", "command": "advisor", "exit_code": 1,
+                        "output": "The Advisor plugin is switched off — tell the user; do not retry."}
+            return self.run_advisor(form, self.parse_tool_args(body))
         if name not in PRODUCTION_AI_TOOLS:
             # Custom API tools live in the api_tools table, not PRODUCTION_AI_TOOLS;
             # route them to the HTTP executor (their body is a JSON {"query": ...}).
@@ -392,7 +452,12 @@ class ToolsMixin:
                     "output": str(exc), "exit_code": 1}
 
     def _gate_doc_edit(self, name, body, form):
-        """Approval gate for AI document writes when the app sends ask_doc_edit.
+        """Approval gate for AI document writes when the caller sends ask_doc_edit.
+        ONLY the Telegram bot sends it now ("Ask before commands & edits") — it has
+        no editor to show a banner in, so approval goes over the prompt channel.
+        The app NEVER sends it: "Require approval for AI edits" is the editor's
+        client-side Apply/Reject banner, and "Ask before running commands" is the
+        only thing that raises blocking popups (bash/python).
         An edit to a doc that's OPEN in the editor passes straight through: the
         app holds it as a pending Apply/Reject diff in the editor, so there's no
         blocking prompt and no timeout. Anything else needs the permission prompt
@@ -527,7 +592,7 @@ class ToolsMixin:
             raise ValueError("Could not extract text from PDF" + (": " + "; ".join(errors) if errors else ""))
         return text   # no char cap — compaction handles context if it grows
 
-    def execute_file_tool(self, root, name, body, allow_outside=False):
+    def execute_file_tool(self, root, name, body, allow_outside=False, form=None):
         root = Path(root).expanduser().resolve()
         if not root.exists() or not root.is_dir():
             raise ValueError("session workdir is not available")
@@ -605,7 +670,10 @@ class ToolsMixin:
             fields = self.parse_tool_fields(body)
             rel = (fields.get("path") or fields.get("title") or "").strip()
             if not rel:
-                raise ValueError("edit_document requires path")
+                # The model often means "the doc" — the one open in the editor.
+                rel = ((self.open_doc_context(form or {}) or {}).get("path") or "").strip()
+            if not rel:
+                raise ValueError("edit_document requires path — pass the file's path from the bound folder (see list_files)")
             target = self.resolve_tool_path(root, rel, allow_outside)
             region = (fields.get("region") or "body").strip().lower()
             # Lock the whole read-modify-write so a concurrent edit can't be lost.
@@ -707,6 +775,8 @@ class ToolsMixin:
         return "\n".join(rows) if rows else "No results found."
 
     def search_web(self, query, count=5):
+        if self.pref("cloak_mode") is not False:
+            query = cloak_text(query)
         self.ensure_searxng()   # prefer the local searxng (better results) ...
         for base in self.searxng_urls():
             try:
@@ -927,43 +997,6 @@ class ToolsMixin:
             }],
             "count": 1 if find or replace else 0,
         }, ensure_ascii=False)
-
-    def manage_memory_tool(self, body):
-        args = self.parse_tool_args(body)
-        action = (args.get("action") or "list").lower()
-        if action == "add":
-            mid = "mem_" + os.urandom(6).hex()
-            self.store.exec(
-                "insert into memory(id,text,category,created_at) values(?,?,?,?)",
-                (mid, args.get("text") or "", args.get("category") or "general", now_iso()),
-            )
-            return f"Added memory {mid}"
-        if action == "edit":
-            mid = args.get("id") or args.get("memory_id")
-            if not mid:
-                raise ValueError("memory id required")
-            self.store.exec("update memory set text=?, category=? where id=?", (args.get("text") or "", args.get("category") or "general", mid))
-            return f"Edited memory {mid}"
-        if action == "delete":
-            mid = args.get("id") or args.get("memory_id")
-            if not mid:
-                raise ValueError("memory id required")
-            self.store.exec("delete from memory where id=?", (mid,))
-            return f"Deleted memory {mid}"
-        rows = self.store.rows("select * from memory order by pinned desc, datetime(created_at) desc")
-        if action == "search" and args.get("text"):
-            q = args["text"].lower()
-            # Match on any significant word, not the whole phrase as a substring,
-            # so "mode preference" still recalls "I prefer dark mode".
-            words = [w for w in re.findall(r"[a-z0-9]+", q) if len(w) > 2]
-            if words:
-                rows = [r for r in rows
-                        if q in (r.get("text") or "").lower()
-                        or any(w in (r.get("text") or "").lower() for w in words)]
-            for r in rows:   # recalled = used
-                self.store.exec("update memory set use_count=?, last_used=? where id=?",
-                                ((r.get("use_count") or 0) + 1, now_iso(), r["id"]))
-        return json.dumps([self.memory_json(r) for r in rows], ensure_ascii=False)
 
     def manage_tasks_tool(self, body):
         args = self.parse_tool_args(body)
@@ -1241,10 +1274,10 @@ class ToolsMixin:
                 root = (app_support_dir() / "workspace")
                 root.mkdir(parents=True, exist_ok=True)
             if name in ("list_files", "read_file", "read_pdf"):
-                return self.execute_file_tool(root, name, body, allow_outside=allow_outside)
+                return self.execute_file_tool(root, name, body, allow_outside=allow_outside, form=form)
             if name == "suggest_document":
                 return self.suggest_document_tool(root, body, allow_outside=allow_outside)
-            return self.execute_file_tool(root, name, body, allow_outside=allow_outside)
+            return self.execute_file_tool(root, name, body, allow_outside=allow_outside, form=form)
         if name == "bash":
             return self.bash_tool(root, body, form, allow_outside=allow_outside)
         if name == "python":
@@ -1301,6 +1334,23 @@ class ToolsMixin:
         return json.dumps({"ok": True, "uid": result.get("uid", ""), "event": event}, ensure_ascii=False)
 
     @staticmethod
+    def _tool_call_params(fn):
+        """A native tool_call's arguments as a dict — tolerant of endpoints that
+        return a parsed object instead of a JSON string, and of models that wrap
+        the JSON in a markdown fence. Never raises; worst case is {}."""
+        raw = (fn or {}).get("arguments")
+        if isinstance(raw, dict):
+            return raw
+        text = str(raw or "").strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text).strip()
+        try:
+            parsed = json.loads(text or "{}")
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+
+    @staticmethod
     def _tool_body_from_params(name, params, fallback=""):
         """Serialize a {param: value} dict into the body text each executor
         expects. Mirrors the Pi's function_call_to_tool_block shaping."""
@@ -1311,11 +1361,15 @@ class ToolsMixin:
         if name == "web_search":
             return params.get("query") or params.get("q") or fallback
         if name in ("list_files", "read_file", "read_pdf", "create_document", "edit_document", "update_document", "suggest_document"):
+            params = {str(k).strip().lower(): v for k, v in (params or {}).items()}
+            for alias, canon in _DOC_PARAM_ALIASES.items():
+                if canon not in params and alias in params:
+                    params[canon] = params[alias]
             # `key: value` inline (even multi-line) — parse_tool_fields re-splits
             # the body, so an inline first line avoids a spurious leading newline.
             keys = ("path",) if name in ("list_files", "read_file", "read_pdf") else (
                 "path", "title", "language", "region", "find", "replace", "reason", "content")
-            lines = [f"{key}: {(params[key] or '').strip(chr(10))}"
+            lines = [f"{key}: {str(params[key] if params[key] is not None else '').strip(chr(10))}"
                      for key in keys
                      if key in params]
             return "\n".join(lines) if lines else fallback

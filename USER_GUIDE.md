@@ -78,7 +78,7 @@ Agent runs show their tool steps inline (reading a file, creating an event, runn
 JoeBro can work inside a real folder on your Mac.
 
 - **Bind to a folder:** click it in the sidebar and choose a project folder. Its files appear as a tree.
-- **Open a file:** click it. Text and Markdown open in the editor; PDFs and images open in a viewer; Word `.doc` and `.docx` open in the rich editor.
+- **Open a file:** click it. Text and Markdown open in the editor; PDFs and images open in a viewer; Word `.doc` and `.docx` open in the rich editor; `.apkg` flashcard decks open as a deck.
 - **Right-click a file in the tree:** **Delete**.
 
 **The editor** sits beside the chat (or pop it out with the window button in its top bar):
@@ -88,6 +88,12 @@ JoeBro can work inside a real folder on your Mac.
 - Your edits autosave. When the agent edits a document, you can require approval before its version is applied (see Settings).
 
 When a chat is bound to a folder, the agent can read and write files there, and you will see those edits stream into the editor live.
+
+**Flashcards (`.apkg`).** Ask the agent for a study deck ("make me flashcards on chapter 3") and it saves a real Anki deck to the bound folder. Open it like any file:
+
+- **Edit mode** is the whole deck as a scrollable list — reword cards, add, delete, or flip a card's learned badge.
+- **Preview mode** (the eye) is study mode: click or press Space to flip a card, then **Still learning** (`1`) to see it again a few cards later, or **Learned** (`2`) to bank it. When the queue runs dry you can keep drilling what's left or start the whole deck again.
+- Progress saves into the file itself, and the deck imports into Anki as-is.
 
 ---
 
@@ -126,7 +132,7 @@ The agent can create and manage events too, which is how "add the flight from th
 
 ## Brain (memory)
 
-JoeBro's long-term memory about you, kept locally. Facts, preferences and project context that make the answers fit you.
+JoeBro's long-term memory about you, kept locally. Every memory is one self-contained fact, typed by what it is — a lasting **world** fact, an **experience** (what happened, where a project stands), or an **opinion** you've expressed — and filed on a topic page. New facts that repeat an old one **merge into it** instead of piling up, and a turn only ever injects the memories relevant to what you just asked (plus anything you've pinned), so a big memory never clogs a small question.
 
 - Add a memory with the quick-add box, or let the agent remember things for you as you chat.
 - Search and pin the ones that matter.
@@ -164,7 +170,7 @@ Scheduled automations that run on their own, like a morning email summary or a w
 - Set the task's **Agent access** (Bound folder / Read-only / Full access). Tasks run as an agent on their own, so this sets how much of your files they can touch when they fire. Both the new-task and edit-task sheets have it.
 - Tasks can be **active** or **paused**.
 
-Two built-in housekeeping tasks ship by default: a weekly **skill audit** (prunes low-confidence skills) and a **memory audit** (clears stale memories). They're normal tasks, so you can view or adjust them here like any other.
+Two built-in housekeeping tasks ship by default: a weekly **skill audit** (prunes low-confidence skills) and a **memory audit** (merges duplicate memories, rewrites vague ones, prunes what's gone stale — pins are never touched). They're normal tasks, so you can view or adjust them here like any other.
 
 **Right-click a task:**
 - **Run now:** fire it immediately.
@@ -183,17 +189,18 @@ JoeBro gets sharper the more you use it. When you do something often, it can tur
 - Browse the skills it has learned, each with its description and a confidence percentage.
 - Edit, enable or remove them.
 
-**Add a skill yourself.** The **+** menu at the top of the tab gives you three ways:
+**Add a skill yourself.** The **+** menu at the top of the tab gives you four ways:
 - **Write manually:** the editor opens with every field (name, description, category, *when to use*, and the procedure in Markdown). It's the same editor whether you're making a new skill or changing an existing one, so nothing is missing either way.
 - **Upload markdown:** pick a `.md` file. Its first heading becomes the description and the body becomes the procedure.
 - **Generate with AI:** describe the skill in a sentence and your default model drafts the whole thing. The quick-add box at the top of the tab does the same.
+- **Learn from sources:** pick a folder — past papers, worked analyses, templates, anything — and your default model studies the documents and writes the skill(s) that let it produce the same kind of work from scratch. It reads text, Markdown, PDF, Word, spreadsheets, even flashcard decks; huge scans are skipped. Progress shows in the sheet and the finished skills land in the library.
 
 **Right-click a skill:**
 - **Edit…**
 - **Activate / Disable**
 - **Delete**
 
-A built-in weekly **skill audit** prunes low-confidence skills automatically, and a **memory audit** clears out stale memories. Both are normal tasks you can see and adjust in the Tasks tab.
+A built-in weekly **skill audit** prunes low-confidence skills automatically, and a **memory audit** consolidates memory. Both are normal tasks you can see and adjust in the Tasks tab.
 
 ---
 
@@ -307,6 +314,7 @@ Replies stream in live and render Markdown (bold, lists, code, links). The bot c
 
 Open with the gear in the sidebar footer.
 
+- **Privacy:** **Cloak Mode**, on by default — see "Cloak Mode" below.
 - **Email:** connect a mailbox with IMAP and SMTP (use an app-specific password for Gmail or iCloud), and choose how many messages to load.
 - **Calendar:** connect macOS Calendar or a CalDAV account.
 - **Server:** the local backend URL (you should not need to change this).
@@ -339,6 +347,16 @@ Two extra safety nets in Settings:
 - **Require approval before applying document edits:** the agent's changes to an open document wait for you to accept them.
 
 The terminal toggle in the composer must also be on before the agent can run shell commands at all, and that only applies in Agent mode.
+
+---
+
+## Cloak Mode
+
+The top switch in Settings → General. On by default.
+
+Before anything is sent to a model or a search engine — any endpoint, **local ones included** — JoeBro scrubs it for secrets and personal data and swaps them for placeholders: API keys and tokens become `[API KEY]`, passwords `[PASSWORD]`, emails `[EMAIL]`, card numbers `[CREDIT CARD NO.]`, passport/NI/IBAN and the rest likewise. It's pattern-based (branded key formats, labelled credentials, checksum-validated card numbers), so ordinary prose, code and long numbers pass through untouched.
+
+The model sees the shape of your data, never the values. Flip it off for a message where the agent genuinely needs the real thing — sending an email to a specific address, say — then flip it back.
 
 ---
 

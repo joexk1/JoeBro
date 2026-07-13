@@ -7,7 +7,11 @@ struct ModelMenuItems: View {
     let selectedID: String?
     let onPick: (ModelChoice) -> Void
 
-    private var grouped: [(endpoint: String, models: [ModelChoice])] {
+    private var grouped: [(endpoint: String, models: [ModelChoice])] { Self.grouped(models) }
+
+    /// Endpoint-grouped, local machines first — shared by the menu flavour
+    /// (composer) and the native-Picker flavour (every settings-style picker).
+    static func grouped(_ models: [ModelChoice]) -> [(endpoint: String, models: [ModelChoice])] {
         var order: [String] = []
         var buckets: [String: [ModelChoice]] = [:]
         for m in models {
@@ -78,5 +82,21 @@ struct ModelPickerMenu: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
+    }
+}
+/// Endpoint-grouped items for a native Picker — the standard pop-up look used
+/// by every settings-style model picker (Message Bot, Advisor, default model,
+/// research). The composer keeps its richer ModelPickerMenu.
+struct ModelPickerItems: View {
+    let models: [ModelChoice]
+
+    var body: some View {
+        ForEach(ModelMenuItems.grouped(models), id: \.endpoint) { group in
+            Section(group.endpoint) {
+                ForEach(group.models) { m in
+                    Text(m.displayWithTag).tag(m.id)
+                }
+            }
+        }
     }
 }

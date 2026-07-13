@@ -30,7 +30,9 @@ struct EditorPane: View {
             tabBar
             Divider().opacity(0.4)
             if let i = store.docIndex(store.activeDocID) {
-                if store.openDocs[i].spreadsheet {
+                if store.openDocs[i].flashcards {
+                    FlashcardsEditor(index: i, study: previewMode)
+                } else if store.openDocs[i].spreadsheet {
                     SpreadsheetEditor(index: i)
                 } else if store.openDocs[i].richDoc, let url = store.openDocs[i].localFileURL {
                     richDocEditor(index: i, url: url)

@@ -1154,7 +1154,6 @@ final class AppStore {
                     allowBash: allowBash,
                     permissionMode: effPermission,
                     askPermission: askBeforeCommands,
-                    askDocEdit: requireDocApproval,
                     // Send the open doc's id whenever one is genuinely open — even
                     // if the editor pane is collapsed — so the agent edits it in
                     // place instead of asking "which document?". Never send the
@@ -1563,6 +1562,20 @@ final class AppStore {
         // Rich .doc/.docx tabs persist themselves from the NSTextView (preserving
         // formatting); the String content path would clobber that.
         if doc.richDoc { return }
+        if let apkgURL = doc.apkgURL {
+            // .apkg-backed deck: content is Q/A text — convert and write the deck.
+            Task {
+                do {
+                    let name = (doc.title as NSString).deletingPathExtension
+                    let data = try await api.textToAPKG(doc.content, deckName: name)
+                    try data.write(to: apkgURL)
+                    if let j = docIndex(id) { openDocs[j].dirty = false }
+                } catch {
+                    loadError = "Save \(doc.title): " + error.localizedDescription
+                }
+            }
+            return
+        }
         if let xlsxURL = doc.xlsxURL {
             // .xlsx-backed grid: content is CSV — convert and write the workbook.
             Task {
@@ -1707,6 +1720,11 @@ final class AppStore {
             openDocs[i].id = id
             if !title.isEmpty { openDocs[i].title = title }
             if let language { openDocs[i].language = language }
+            // The streaming placeholder was a plain text tab — adopt the real
+            // file type or an AI-created deck/sheet renders as raw text.
+            let lower = openDocs[i].title.lowercased()
+            openDocs[i].flashcards = lower.hasSuffix(".apkg")
+            openDocs[i].spreadsheet = lower.hasSuffix(".csv") || lower.hasSuffix(".xlsx")
             openDocs[i].content = content
             openDocs[i].version = version ?? openDocs[i].version
             openDocs[i].aiWriting = false
@@ -1741,6 +1759,7 @@ final class AppStore {
                 version: version ?? 1)
             let lower = d.title.lowercased()
             d.spreadsheet = lower.hasSuffix(".csv") || lower.hasSuffix(".xlsx")
+            d.flashcards = lower.hasSuffix(".apkg")
             openDocs.append(d)
         }
         activeDocID = id
@@ -1915,6 +1934,35 @@ final class AppStore {
                     } catch {
                         loadError = "Open \(name): " + error.localizedDescription
                     }
+                }
+            }
+            return
+        }
+        if ext == "apkg" {
+            // Flashcard decks round-trip through the backend converter, with
+            // content held as Q/A text.
+            let id = "local-" + sub
+            if docIndex(id) != nil {
+                activeDocID = id
+                editorVisible = true
+                return
+            }
+            guard let data = FileManager.default.contents(atPath: url.path) else {
+                loadError = "Open \(name): file could not be read"
+                return
+            }
+            Task {
+                do {
+                    let text = try await api.apkgToText(data)
+                    guard docIndex(id) == nil else { activeDocID = id; editorVisible = true; return }
+                    var d = EditorDoc(id: id, title: name, language: "flashcards", content: text)
+                    d.apkgURL = url
+                    d.flashcards = true
+                    openDocs.append(d)
+                    activeDocID = id
+                    editorVisible = true
+                } catch {
+                    loadError = "Open \(name): " + error.localizedDescription
                 }
             }
             return

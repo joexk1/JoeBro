@@ -626,7 +626,6 @@ final class APIClient {
         allowBash: Bool = false,
         permissionMode: String = "sandbox",
         askPermission: Bool = false,
-        askDocEdit: Bool = false,
         activeDocID: String? = nil,
         openDocIDs: [String] = [],
         model: String? = nil,
@@ -646,7 +645,6 @@ final class APIClient {
         fields.merge(memoryRetrievalFields(for: message)) { _, new in new }
         if allowBash { fields["allow_bash"] = "true" }
         if askPermission { fields["ask_permission"] = "true" }
-        if askDocEdit { fields["ask_doc_edit"] = "true" }
         if let activeDocID, !activeDocID.isEmpty { fields["active_doc_id"] = activeDocID }
         // Open editor tabs (ids + titles): edits to these are approved via the
         // in-editor diff banner, not the blocking permission prompt.
@@ -1181,6 +1179,37 @@ final class APIClient {
         let (out, resp) = try await session.data(for: req)
         try check(out, resp)
         return out
+    }
+
+    func apkgToText(_ data: Data) async throws -> String {
+        var req = request("api/flashcards/to_text", method: "POST")
+        req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        req.httpBody = data
+        let (out, resp) = try await session.data(for: req)
+        try check(out, resp)
+        return String(decoding: out, as: UTF8.self)
+    }
+
+    func textToAPKG(_ text: String, deckName: String) async throws -> Data {
+        let q = deckName.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "Flashcards"
+        var req = request("api/flashcards/to_apkg?name=" + q, method: "POST")
+        req.setValue("text/plain", forHTTPHeaderField: "Content-Type")
+        req.httpBody = Data(text.utf8)
+        let (out, resp) = try await session.data(for: req)
+        try check(out, resp)
+        return out
+    }
+
+    func learnSkills(path: String, device: String) async throws -> String {
+        let r = try await sendJSON("api/skills/learn", body: ["path": path, "device": device])
+        guard let job = r["job"] as? String, !job.isEmpty else {
+            throw APIError.badResponse
+        }
+        return job
+    }
+
+    func learnSkillsStatus(job: String) async throws -> LearnSkillsStatus {
+        try await getJSON("api/skills/learn-status", query: ["job": job])
     }
 
     func exportDocumentPDF(id: String, title: String) async throws -> URL {

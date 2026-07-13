@@ -36,7 +36,7 @@ struct ResearchPanel: View {
                             .frame(width: 300)
                             .joeGlassRect(16)
                         readerColumn
-                            .frame(maxWidth: .infinity)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .joeGlassRect(16)
                     }
                 } else {
@@ -71,32 +71,17 @@ struct ResearchPanel: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .onSubmit(start)
-            Menu {
-                ModelMenuItems(models: store.models,
-                               selectedID: (researchModel ?? store.selectedModel)?.id,
-                               onPick: { researchModel = $0 })
-            } label: {
-                HStack(spacing: 4) {
-                    if let m = researchModel ?? store.selectedModel {
-                        ProviderLogoView(model: m.modelID, size: 10)
-                            .foregroundStyle(.secondary)
-                        Text(m.display)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    } else {
-                        Text("Model")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 7, weight: .bold))
-                        .foregroundStyle(.tertiary)
+            Picker("", selection: Binding(
+                get: { (researchModel ?? store.selectedModel)?.id ?? "" },
+                set: { id in researchModel = store.models.first { $0.id == id } }
+            )) {
+                if researchModel == nil && store.selectedModel == nil {
+                    Text("Model").tag("")
                 }
+                ModelPickerItems(models: store.models)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
+            .labelsHidden()
+            .frame(width: 190)
             Button(action: start) {
                 Label("Research", systemImage: "bolt.horizontal")
                     .font(.system(size: 12, weight: .semibold))
@@ -361,6 +346,7 @@ struct ResearchPanel: View {
             }
         } else {
             ContentUnavailableView("Select a report", systemImage: "doc.text.magnifyingglass")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }

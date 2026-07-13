@@ -8,12 +8,13 @@ from jb_docs import DocsMixin
 from jb_calendar import CalendarMixin
 from jb_models import ModelsMixin
 from jb_assistant import AssistantMixin
+from jb_memory import MemoryMixin
 from jb_files import FilesMixin
 from jb_xlsx import xlsx_to_csv, csv_to_xlsx
 import gzip
 
 
-class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, ModelsMixin, AssistantMixin, FilesMixin, BaseHTTPRequestHandler):
+class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, ModelsMixin, AssistantMixin, MemoryMixin, FilesMixin, BaseHTTPRequestHandler):
     server_version = "JoeBroLocal/1.0"
 
     @property
@@ -218,6 +219,8 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
         if path == "/api/tasks":
             rows = self.store.rows("select * from tasks order by datetime(created_at) desc")
             return self.json({"tasks": [self.task_json(r) for r in rows]})
+        if path == "/api/skills/learn-status":
+            return self.json(self.learn_skills_status(q.get("job") or ""))
         if path == "/api/skills":
             rows = self.store.rows("select * from skills order by datetime(created_at) desc")
             return self.json({"skills": [self.skill_json(r) for r in rows]})
@@ -254,6 +257,20 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
                     entry["decision"] = decision
                     entry["event"].set()
             return self.json({"ok": True})
+        if path.startswith("/api/flashcards/to_text"):
+            # apkg bytes in -> Q/A text out.
+            from jb_apkg import apkg_to_text
+            self._send(200, "text/plain")
+            self.wfile.write(apkg_to_text(self._body_bytes()).encode("utf-8"))
+            return
+        if path.startswith("/api/flashcards/to_apkg"):
+            # Q/A text in -> apkg bytes out (?name= names the deck).
+            from urllib.parse import parse_qs
+            from jb_apkg import text_to_apkg
+            name = (parse_qs(self._path().query).get("name") or ["Flashcards"])[0]
+            self._send(200, "application/octet-stream")
+            self.wfile.write(text_to_apkg(self._body_bytes().decode("utf-8"), name))
+            return
         if path == "/api/spreadsheet/to_csv":
             # xlsx bytes in -> CSV text out (first sheet, values only).
             self._send(200, "text/csv")
@@ -373,13 +390,7 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
             self.set_pref("calendar_connection", {})
             return self.json({"ok": True, "configured": False})
         if path == "/api/memory/add":
-            body = self._json_body()
-            mid = "mem_" + os.urandom(6).hex()
-            self.store.exec(
-                "insert into memory(id,text,category,created_at) values(?,?,?,?)",
-                (mid, body.get("text") or "", body.get("category") or "general", now_iso()),
-            )
-            return self.json({"ok": True, "id": mid})
+            return self.json(self.upsert_memory(self._json_body()))
         if path == "/api/document":
             return self.create_document(self._json_body())
         if path.endswith("/pin") and path.startswith("/api/memory/"):
@@ -437,6 +448,10 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
             return self.json({"ok": True, "result": result or "Couldn't run — add a model endpoint in Settings first."})
         if path == "/api/tasks" or path == "/api/tasks/add":
             return self.json(self.upsert_task(self._json_body()))
+        if path == "/api/skills/learn":
+            b = self._json_body()
+            job = self.learn_skills_start(b.get("path") or "", b.get("device") or "")
+            return self.json({"ok": True, "job": job})
         if path == "/api/skills" or path == "/api/skills/add":
             return self.json(self.upsert_skill(self._json_body()))
         if path == "/api/tools":
@@ -470,10 +485,7 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
             self.store.exec("insert or replace into prefs(key,value) values(?,?)", (key, json.dumps(val)))
             return self.json({"ok": True})
         if path.startswith("/api/memory/"):
-            mid = path.rsplit("/", 1)[-1]
-            f = self._form_body()
-            self.store.exec("update memory set text=?, category=? where id=?", (f.get("text", ""), f.get("category", "general"), mid))
-            return self.json({"ok": True})
+            return self.json(self.upsert_memory(self._form_body(), path.rsplit("/", 1)[-1]))
         if path.startswith("/api/tasks/"):
             return self.json(self.upsert_task(self._json_body(), path.rsplit("/", 1)[-1]))
         if path.startswith("/api/skills/"):
@@ -548,26 +560,6 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
     _AICHECK_CHUNK = 9000   # ZeroGPT truncates around ~10k; stay under
     _AICHECK_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
                    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-
-    # Generic filler that creates false memory matches — conversational glue and
-    # doc-editing verbs that say nothing about WHICH memory is relevant.
-    _MEMORY_STOPWORDS = frozenset({
-        "want", "wants", "need", "needs", "like", "just", "make", "made", "also",
-        "this", "that", "with", "from", "into", "your", "you", "have", "here",
-        "there", "what", "when", "then", "them", "they", "some", "something",
-        "anything", "added", "adding", "always", "about", "okay", "please",
-        "could", "would", "should", "really", "thing", "things", "stuff", "write",
-        "writing", "develop", "section", "document", "file", "files", "title",
-        "page", "ideas", "idea", "good", "going", "gonna", "gonen", "teh", "adn",
-        "give", "show", "tell", "help", "user", "down", "bottom", "more", "very",
-        # generic conversational filler — never tells us WHICH memory is relevant
-        "people", "place", "point", "using", "based", "sure", "able", "actually",
-        "basically", "probably", "usually", "maybe", "perhaps", "instead", "rather",
-        "quite", "pretty", "still", "even", "once", "while", "around", "across",
-        "along", "than", "kind", "lots", "much", "many", "most", "such", "each",
-        "both", "other", "another", "everything", "nothing", "anyone", "someone",
-        "everyone", "never", "often", "sometimes", "thanks", "really",
-    })
 
     # Compaction tuning. We don't have a real tokenizer in the stdlib, so we
     # budget by characters (~4 chars/token). When history exceeds the budget we

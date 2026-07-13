@@ -99,7 +99,7 @@ class FilesMixin:
         if not self._inside(root, target):
             return self.json({"detail": "Path escapes workdir"}, 400)
         if path.endswith("/open-file") and target.exists() and target.is_file():
-            data = target.read_text(errors="replace")
+            data = read_doc_text(target)
             return self.json({"id": "file_" + os.urandom(6).hex(), "title": target.name, "language": target.suffix[1:] or "text", "current_content": data, "version_count": 1})
         if path.endswith("/docx-extra") and is_docx(target):
             with lock_for_path(target):

@@ -1,5 +1,9 @@
 """Chat, agent loop, streaming, compaction, history, AI-detection."""
 from jb_core import *  # noqa: F401,F403
+import traceback
+
+_ACTIVE_TURNS = set()              # session ids with a turn live in THIS process
+_ACTIVE_TURNS_LOCK = threading.Lock()
 
 
 class ChatMixin:
@@ -22,27 +26,64 @@ class ChatMixin:
                     sid,
                 ),
             )
-        # Duplicate-submission guard: if the last message in this session is an
-        # identical user message with no assistant reply yet, the previous turn
-        # is still running (e.g. a slow edit and the user pressed send again).
-        # Starting a second run here double-persists the message and races the
-        # first run on the same files — which corrupts edits and shows the turn
-        # twice. Acknowledge and stop instead of running it twice.
+        # Duplicate-submission guard: if the last stored message is an identical
+        # user message with no assistant reply AND that turn is still running in
+        # this process, a second run would double-persist and race the first on
+        # the same files. Acknowledge visibly and stop. If no turn is live, the
+        # previous one DIED without a reply (crash/restart/kill) — re-run it
+        # instead of bouncing the chat forever (the old behaviour wedged the
+        # session: every identical resend returned bare [DONE] with no reply).
+        rerun_dead_turn = False
         if message.strip():
             last = self.store.one(
                 "select role, content from messages where session_id=? order by id desc limit 1",
                 (sid or "",))
             if last and last.get("role") == "user" and (last.get("content") or "") == message:
-                self._send(200, "text/event-stream")
-                try:
-                    self.wfile.write(b"data: [DONE]\n\n"); self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError, OSError):
-                    pass
-                return
-        self.add_message(sid, "user", message, {})
+                with _ACTIVE_TURNS_LOCK:
+                    still_running = sid in _ACTIVE_TURNS
+                if still_running:
+                    self._send(200, "text/event-stream")
+                    try:
+                        note = {"delta": "Still working on that message — it's running now, hold on."}
+                        self.wfile.write(f"data: {json.dumps(note)}\n\n".encode("utf-8"))
+                        self.wfile.write(b"data: [DONE]\n\n"); self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError, OSError):
+                        pass
+                    return
+                rerun_dead_turn = True   # row already stored — don't duplicate it
+        if not rerun_dead_turn:
+            self.add_message(sid, "user", message, {})
         # Open the SSE stream BEFORE running the agent so tool rows and reasoning
         # arrive at the client AS THEY HAPPEN, not after the whole loop finishes.
         self._send(200, "text/event-stream")
+        # A wedged (open but unread) client socket must not block the turn
+        # forever: bound writes; sse() treats a timeout as client-gone and the
+        # reply still computes and persists.
+        try:
+            self.connection.settimeout(30)
+        except Exception:
+            pass
+        with _ACTIVE_TURNS_LOCK:
+            _ACTIVE_TURNS.add(sid)
+        try:
+            self._chat_stream_turn(f, sid, message)
+        except Exception as exc:
+            # A turn must NEVER die silently: the user sees the failure, the
+            # journal gets the traceback, and the persisted assistant row keeps
+            # the duplicate guard from wedging the chat.
+            traceback.print_exc()
+            err = f"That turn crashed server-side: {exc}"
+            try:
+                self.wfile.write(f"data: {json.dumps({'delta': err})}\n\n".encode("utf-8"))
+                self.wfile.write(b"data: [DONE]\n\n"); self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            self.add_message(sid, "assistant", err, {"model": f.get("model") or ""})
+        finally:
+            with _ACTIVE_TURNS_LOCK:
+                _ACTIVE_TURNS.discard(sid)
+
+    def _chat_stream_turn(self, f, sid, message):
         started = time.time()
 
         # If the user switches chats / closes the tab mid-run, the client drops
@@ -223,6 +264,13 @@ class ChatMixin:
             "to inspect bound-folder files, including local PDFs; to add to / change a file "
             "call edit_document (find/replace for a small change, or pass `content` with the COMPLETE new "
             "text to rewrite it; create_document only for a new file). "
+            "FLASHCARDS: to make a study deck, call create_document with a path ending in .apkg. "
+            "Write the content as plain Q/A blocks — a `Q:` line, an `A:` line, a blank line between "
+            "cards (optionally `S: learned` on cards already mastered). Make cards ATOMIC: one fact "
+            "per card, a specific question with one short checkable answer — never 'list everything "
+            "about X'. Prefer many small cards over few big ones; both directions for vocab. The file "
+            "opens as clickable flashcards in the app and imports into Anki. Edit decks with "
+            "edit_document on the same Q/A text. "
             "To add a calendar event call create_event with ISO-8601 start/end datetimes that YOU resolve "
             "from the user's words. Never put tool syntax or raw file contents in your text reply.\n"
             f"Today is {now.strftime('%A, %Y-%m-%d')} and the current local time is {now.strftime('%H:%M')} "
@@ -332,6 +380,10 @@ class ChatMixin:
             return None
         base = ep["base_url"].rstrip("/")
         url = base if base.endswith("/chat/completions") else base + "/chat/completions"
+        if self.pref("cloak_mode") is not False and payload.get("messages"):
+            # Cloak Mode (default ON): secrets/PII never leave this process —
+            # every endpoint, local ones included.
+            payload = dict(payload, messages=cloak_messages(payload["messages"]))
         req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), method="POST")
         req.add_header("Content-Type", "application/json")
         # Groq/Cerebras sit behind Cloudflare, which 403s requests that have no
@@ -354,7 +406,16 @@ class ChatMixin:
                 detail = (body.get("error") or {}).get("message") if isinstance(body.get("error"), dict) else (body.get("error") or body.get("detail"))
             except Exception:
                 detail = ""
-            return f"Endpoint error: HTTP {exc.code} {exc.reason}" + (f" — {detail}" if detail else "")
+            msg = f"Endpoint error: HTTP {exc.code} {exc.reason}" + (f" — {detail}" if detail else "")
+            if "credit balance is too low" in msg:
+                # Anthropic pre-checks a request's WORST-CASE cost (full prompt +
+                # max_tokens) against the remaining balance — a long chat can
+                # bounce even with credits in the account.
+                msg += ("\n\nNote: Anthropic rejects a request if its worst-case cost (this chat's "
+                        "whole context + the reply budget) exceeds your remaining balance — so a long "
+                        "chat can bounce even though you have credits. Top up a bit more or start a "
+                        "fresh chat for this topic, then resend.")
+            return msg
         return f"Endpoint error: {exc}"
 
     def _post_chat(self, f, messages, tools=None):
@@ -444,10 +505,7 @@ class ChatMixin:
             name = (fn.get("name") or "").strip().lower()
             if name not in PRODUCTION_AI_TOOLS:
                 continue
-            try:
-                params = json.loads(fn.get("arguments") or "{}")
-            except Exception:
-                params = {}
+            params = self._tool_call_params(fn)
             tool_calls.append((name, self._tool_body_from_params(name, params)))
         return msg.get("content") or "", reasoning, tool_calls
 
@@ -488,7 +546,7 @@ class ChatMixin:
             system += "\n\n" + skills_ctx
         if skills_used:
             emit({"type": "skills_used", "data": skills_used})
-        mem_ctx, mem_used = self._use_relevant_memories(f.get("message", ""))   # inject + bump use_count
+        mem_ctx, mem_used = self.recall_memories(f.get("message", ""))   # pinned + top relevant, or nothing
         if mem_ctx:
             system += "\n\n" + mem_ctx
         if mem_used:
@@ -574,10 +632,7 @@ class ChatMixin:
                     messages.append({"role": "tool", "tool_call_id": tc.get("id") or name,
                                      "content": "Tool-use limit for this turn reached; not executed."})
                     continue
-                try:
-                    params = json.loads(fn.get("arguments") or "{}")
-                except Exception:
-                    params = {}
+                params = self._tool_call_params(fn)
                 body = self._tool_body_from_params(name, params)
                 sig = name + "|" + (body or "")[:300]
                 call_sigs[sig] = call_sigs.get(sig, 0) + 1

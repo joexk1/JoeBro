@@ -1,6 +1,8 @@
 """Memory, skills, tasks, deep research, JSON serializers."""
 from jb_core import *  # noqa: F401,F403
 
+_LEARN_JOBS = {}   # learn-from-sources jobs: id -> {status, detail, skills, error}
+
 
 class AssistantMixin:
 
@@ -58,52 +60,6 @@ class AssistantMixin:
     def _active_background_plugins(self):
         """Enabled background (guardrail) plugins applied to every turn."""
         return self.store.rows("select * from plugins where kind='background' and is_enabled=1 order by name")
-
-    def _content_words(self, text):
-        """Lowercased set of meaningful words (len>3, filler removed) for matching."""
-        return {w for w in re.findall(r"[a-z0-9]+", (text or "").lower())
-                if len(w) > 3 and w not in self._MEMORY_STOPWORDS}
-
-    def _use_relevant_memories(self, message):
-        """Inject memories relevant to this request into the agent's context and
-        bump their use_count/last_used. Returns (context_string, matched_texts)
-        so the caller can report which memories were used (message footer)."""
-        rows = self.store.rows("select * from memory")
-        if not rows:
-            return "", []
-        qwords = self._content_words(message)
-        if not qwords:
-            return "", []
-        # Match on EXACT shared content words (not substring — "art" must not
-        # match "started"), filler removed. Strict, because loose matching kept
-        # pulling in unrelated memories:
-        #   1. A word that recurs across many memories is generic, not a topic,
-        #      so filter it by document frequency — it can't anchor a match.
-        #   2. Keep a memory only on a real signal: two distinctive shared words,
-        #      or one long (>=8-char) specific keyword. One coincidental medium
-        #      word ("create", "content", "project") is not enough.
-        mem_words = [(r, self._content_words(r.get("text") or "")) for r in rows]
-        df = {}
-        for _, w in mem_words:
-            for x in w:
-                df[x] = df.get(x, 0) + 1
-        generic_cap = max(3, len(rows) // 4)
-        scored = []
-        for r, w in mem_words:
-            shared = {x for x in (qwords & w) if df[x] <= generic_cap}
-            if not shared:
-                continue
-            if len(shared) >= 2 or any(len(x) >= 8 for x in shared):
-                scored.append((len(shared), sum(len(x) for x in shared), r))
-        if not scored:
-            return "", []
-        scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
-        matched = [r for _, __, r in scored[:3]]
-        for r in matched:
-            self.store.exec("update memory set use_count=?, last_used=? where id=?",
-                            ((r.get("use_count") or 0) + 1, now_iso(), r["id"]))
-        lines = "\n".join(f"- {r.get('text')}" for r in matched)
-        return "What you know about the user (memory):\n" + lines, [r.get("text") or "" for r in matched]
 
     # Words too generic to make a skill "relevant" on their own — they show up in
     # lots of skill descriptions and used to drag UI/design skills into plain chat.
@@ -184,15 +140,22 @@ class AssistantMixin:
         if not endpoint_id or len((user_msg or "").strip()) < 25:
             return
         try:
+            topics = ", ".join(self.memory_topics()) or "(none yet)"
             out = self._complete(
                 endpoint_id, model,
                 "You extract durable learnings from one chat turn. Respond with ONLY JSON: "
-                '{"memory": <one stable fact about the USER worth remembering long-term, or null>, '
+                '{"memories": [up to 3 items, each {"kind": "world"|"experience"|"opinion", '
+                '"topic": <short-kebab-page-name>, "text": <ONE self-contained fact under 200 chars>, '
+                '"entities": [named people/places/projects/tools]}], '
                 '"skill": {"name": <short imperative title>, '
                 '"description": <one-line summary of what the skill does>, '
                 '"when_to_use": <the trigger: what kind of request should invoke this>, '
                 '"content": <a reusable procedure as 3-6 concise numbered markdown steps>} or null}. '
-                "Memory = lasting preferences/identity/recurring context, never one-off task details. "
+                "world = a lasting fact about the user or their world; experience = what happened or the "
+                "current state of an ongoing project; opinion = a judgement or preference the user expressed. "
+                f"File each fact on an existing topic page when one fits — pages so far: {topics}. "
+                "Never store one-off task chatter, secrets, or things the assistant (not the user) said; "
+                "an empty memories list is the normal case. "
                 "Skill = a repeatable workflow the user will likely want again, captured well enough to "
                 "follow later WITHOUT this conversation: a real description, a clear trigger, and concrete "
                 "steps — never a single vague sentence. If you can't write all three fields properly, return null. "
@@ -202,12 +165,13 @@ class AssistantMixin:
                 return
             m = re.search(r"\{.*\}", out, re.DOTALL)
             data = json.loads(m.group(0)) if m else {}
-            mem = data.get("memory")
-            if isinstance(mem, str) and mem.strip().lower() not in ("", "null", "none"):
-                existing = [(e.get("text") or "").lower() for e in self.store.rows("select text from memory")]
-                if mem.strip().lower() not in existing:
-                    self.store.exec("insert into memory(id,text,category,created_at) values(?,?,?,?)",
-                                    ("mem_" + os.urandom(6).hex(), mem.strip(), "auto", now_iso()))
+            mems = data.get("memories")
+            if not isinstance(mems, list):   # older extractor shape: {"memory": <str>}
+                legacy = data.get("memory")
+                mems = [{"text": legacy}] if isinstance(legacy, str) else []
+            for item in mems[:3]:
+                if isinstance(item, dict) and str(item.get("text") or "").strip().lower() not in ("", "null", "none"):
+                    self.retain_memory(item)   # merges near-dups on the topic page
             sk = data.get("skill")
             if isinstance(sk, dict) and (sk.get("name") or "").strip():
                 content = sk.get("content") or sk.get("procedure") or ""
@@ -290,6 +254,87 @@ class AssistantMixin:
                 (sid, name, description, content, when_to_use, status, conf, now, now),
             )
         return {"ok": True, "skill": self.skill_json(self.store.one("select * from skills where id=?", (sid,)))}
+
+
+    # ---- learn skills from a folder of sources -------------------------------
+
+    _SOURCE_EXTS = (".md", ".txt", ".pdf", ".docx", ".doc", ".csv", ".xlsx",
+                    ".apkg", ".html", ".htm", ".json", ".tex", ".py", ".ipynb")
+
+    _LEARN_SKILL_SYSTEM = (
+        "You are studying a folder of source material to teach yourself a reusable skill. "
+        "Work out what craft the sources embody — the exercise types and how they are solved, the "
+        "analysis methods, the document structures and templates, the notation and conventions — and "
+        "write the skill(s) that would let you produce the same kind of work from scratch WITHOUT the "
+        "sources. Respond with ONLY a JSON array: "
+        '[{"name": <short imperative title>, "description": <one line>, '
+        '"when_to_use": <what kind of request should invoke this>, '
+        '"content": <the complete method as 5-12 numbered markdown steps, with the key formulas, '
+        "patterns, worked micro-examples and templates inline>}]. "
+        "Prefer ONE thorough skill; use up to 3 only when the folder contains genuinely distinct crafts.")
+
+    def learn_skills_start(self, path, device=""):
+        """Kick off a background learn-from-sources job; poll learn_skills_status."""
+        if not (path or "").strip():
+            raise ValueError("pass the folder to learn from")
+        job = "learn_" + os.urandom(5).hex()
+        _LEARN_JOBS[job] = {"status": "running", "detail": "Reading the sources…", "skills": []}
+        threading.Thread(target=self._learn_skills_job, args=(job, path, device), daemon=True).start()
+        return job
+
+    def learn_skills_status(self, job):
+        return _LEARN_JOBS.get(job or "", {"status": "error", "error": "unknown job"})
+
+    def _learn_skills_job(self, job, path, device):
+        st = _LEARN_JOBS[job]
+        try:
+            docs = self._gather_sources(path, device)
+            if not docs:
+                raise ValueError("no readable documents in that folder")
+            ep, model = self._task_endpoint()
+            if not ep or not model:
+                raise ValueError("no default model configured — pick one in Settings")
+            st["detail"] = f"Studying {len(docs)} documents with {model}…"
+            corpus = "\n\n".join(f"=== {n} ===\n{t[:8000]}" for n, t in docs)[:60000]
+            out = self._complete(ep, model, self._LEARN_SKILL_SYSTEM, corpus, max_tokens=3000)
+            m = re.search(r"\[.*\]", out or "", re.DOTALL)
+            made = []
+            for sk in (json.loads(m.group(0)) if m else [])[:3]:
+                if isinstance(sk, dict) and (sk.get("name") or "").strip() and len(str(sk.get("content") or "")) >= 40:
+                    self.upsert_skill(sk)
+                    made.append(sk["name"].strip())
+            if not made:
+                raise ValueError("the model produced no usable skill — try a folder with more substantive material")
+            st.update(status="done", detail="", skills=made)
+        except Exception as exc:
+            st.update(status="error", error=str(exc))
+
+    def _gather_sources(self, path, device=""):
+        """(filename, text) for every readable document in the folder, one
+        sublevel deep. ponytail: 24 files / 8k chars each is plenty to learn a
+        craft from; image-only scans need OCR we don't do."""
+        import time as _time
+        root = Path(path).expanduser()
+        if not root.is_dir():
+            raise ValueError(f"not a folder: {path}")
+        docs = []
+        deadline = _time.time() + 120   # a folder of huge scans must not stall the job
+        for p in sorted(root.rglob("*")):
+            if len(docs) >= 24 or _time.time() > deadline:
+                break
+            if not p.is_file() or p.name.startswith(".") or len(p.relative_to(root).parts) > 2:
+                continue
+            if p.suffix.lower() not in self._SOURCE_EXTS:
+                continue
+            try:
+                if p.stat().st_size > 8_000_000:
+                    continue   # scanned/image-heavy — no text worth the extraction cost
+                text = self.read_pdf_text(p) if p.suffix.lower() == ".pdf" else read_doc_text(p)
+            except Exception:
+                continue
+            if (text or "").strip():
+                docs.append((p.name, text.strip()))
+        return docs
 
     def create_research(self, query, endpoint_id=None, model=None):
         rid = "research_" + os.urandom(6).hex()
@@ -439,18 +484,6 @@ class AssistantMixin:
             "is_important": bool(r.get("is_important")),
             "folder": r.get("folder") or None,
             "sort_order": r.get("sort_order"),
-            "created_at": r.get("created_at"),
-        }
-
-    @staticmethod
-    def memory_json(r):
-        return {
-            "id": r["id"],
-            "text": r["text"],
-            "category": r.get("category") or "general",
-            "pinned": bool(r.get("pinned")),
-            "use_count": r.get("use_count") or 0,
-            "last_used": r.get("last_used") or "",
             "created_at": r.get("created_at"),
         }
 

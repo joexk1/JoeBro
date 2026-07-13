@@ -14,6 +14,7 @@ struct SettingsView: View {
     @State private var calendarStatus: IntegrationStatus?
     @State private var integrationError: String?
     @State private var requestingCalendar = false
+    @State private var cloakMode = true
 
     var body: some View {
         TabView {
@@ -32,6 +33,15 @@ struct SettingsView: View {
     private var generalTab: some View {
         @Bindable var store = store
         return Form {
+            Section("Privacy") {
+                Toggle("Cloak Mode", isOn: $cloakMode)
+                    .onChange(of: cloakMode) { _, v in
+                        Task { await APIClient.shared.setPref("cloak_mode", value: v) }
+                    }
+                Text("Scrubs secrets and personal data — API keys, passwords, emails, card, passport and account numbers — from everything sent to a model or search engine, swapping them for placeholders like [API KEY] before the request leaves the backend. Applies to every endpoint, local ones included.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Section("Email") {
                 if let sources = emailStatus?.sources, !sources.isEmpty {
                     ForEach(sources) { source in
@@ -152,7 +162,12 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .task { await loadIntegrationStatus() }
+        .task {
+            await loadIntegrationStatus()
+            if let p = try? await APIClient.shared.getPrefs() {
+                cloakMode = p["cloak_mode"]?.boolValue ?? true
+            }
+        }
         .sheet(isPresented: $showEmailSheet) {
             EmailConnectionSheet {
                 await loadIntegrationStatus()
@@ -317,31 +332,22 @@ struct ModelsSettingsTab: View {
         Form {
             Section {
                 LabeledContent("Default model") {
-                    Menu {
-                        ModelMenuItems(models: store.models,
-                                       selectedID: defaultModelID,
-                                       onPick: { setDefault($0.id) })
-                        Divider()
-                        Button("None") { setDefault("") }
-                        Button("Refresh models") { Task { await store.loadModels() } }
-                    } label: {
-                        HStack(spacing: 5) {
-                            if let m = store.models.first(where: { $0.id == defaultModelID }) {
-                                ProviderLogoView(model: m.modelID, size: 11)
-                                    .foregroundStyle(.secondary)
-                                Text(m.displayWithTag)
-                            } else {
-                                Text("None")
-                            }
-                            Image(systemName: "chevron.up.chevron.down")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        Picker("", selection: Binding(
+                            get: { defaultModelID ?? "" },
+                            set: { setDefault($0) }
+                        )) {
+                            Text("None").tag("")
+                            ModelPickerItems(models: store.models)
                         }
-                        .font(.system(size: 12))
+                        .labelsHidden()
+                        .fixedSize()
+                        Button { Task { await store.loadModels() } } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Refresh models")
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
                 }
                 Text("Used for compaction, calendar quick-add and other background AI jobs.")
                     .font(.caption)

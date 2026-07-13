@@ -80,6 +80,28 @@ MACOS_USE_TOOL = {"type": "function", "function": {
         "required": ["action"]}}}
 
 
+ADVISOR_DEFAULT_DESC = (
+    "Ask the user's Advisor — a more powerful model they chose — for a second opinion. "
+    "Call it when you're genuinely stuck, the problem needs deeper reasoning than you can do "
+    "(tricky bugs, maths, architecture, high-stakes decisions), your attempts keep failing, or "
+    "the user asks for a second opinion. Send ONE self-contained question containing ALL the "
+    "context needed (relevant code, errors, constraints) — the advisor cannot see this chat and "
+    "has no tools. Weigh its advice against what you know, then act; you own the final answer.")
+
+
+def advisor_tool_schema(description=""):
+    """The Advisor plugin's tool schema. The description is user-editable (the
+    advisor_description pref) — it is how the user tunes WHEN their everyday
+    model escalates to the stronger one."""
+    return {"type": "function", "function": {
+        "name": "advisor",
+        "description": (description or "").strip() or ADVISOR_DEFAULT_DESC,
+        "parameters": {"type": "object", "properties": {
+            "question": {"type": "string",
+                         "description": "the complete, self-contained question for the advisor, including all relevant context/code/errors"}},
+            "required": ["question"]}}}
+
+
 def _macos_guard(blocked):
     """AppleScript prologue: resolve the frontmost app (fa) and refuse to touch
     it if it matches the user's blocked-apps list (substring, case-insensitive -
@@ -578,6 +600,9 @@ def read_doc_text(path: Path) -> str:
     if str(path).lower().endswith(".xlsx"):
         from jb_xlsx import xlsx_to_csv
         return xlsx_to_csv(path.read_bytes())
+    if str(path).lower().endswith(".apkg"):
+        from jb_apkg import apkg_to_text
+        return apkg_to_text(path.read_bytes())
     return path.read_text(encoding="utf-8", errors="replace")
 
 
@@ -588,8 +613,105 @@ def write_doc_text(path: Path, text: str):
     elif str(path).lower().endswith(".xlsx"):
         from jb_xlsx import csv_to_xlsx
         atomic_write_bytes(path, csv_to_xlsx(text))
+    elif str(path).lower().endswith(".apkg"):
+        from jb_apkg import text_to_apkg
+        atomic_write_bytes(path, text_to_apkg(text, path.stem))
     else:
         atomic_write_text(path, text)
+
+
+# ---- Cloak Mode ---------------------------------------------------------------
+# Scrub secrets and personal data from anything that leaves this process for a
+# model or search engine — replaced with placeholders BEFORE the request is
+# built, so no endpoint (local ones included) ever sees the real values.
+# Pattern-based: branded key formats, labelled credentials, Luhn-checked card
+# numbers, document-number shapes. Ordinary prose, code and model names pass.
+
+def _luhn_ok(digits):
+    total = 0
+    for i, d in enumerate(reversed(digits)):
+        n = int(d)
+        if i % 2 == 1:
+            n = n * 2 - 9 if n > 4 else n * 2
+        total += n
+    return total % 10 == 0
+
+
+def _card_repl(m):
+    digits = re.sub(r"[ -]", "", m.group(0))
+    return "[CREDIT CARD NO.]" if 13 <= len(digits) <= 19 and _luhn_ok(digits) else m.group(0)
+
+
+CLOAK_PATTERNS = [
+    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.DOTALL),
+     "[PRIVATE KEY]"),
+    # branded key formats (OpenAI/Anthropic/Stripe sk-, GitHub, Slack, AWS, Google)
+    (re.compile(r"\bsk-[A-Za-z0-9_-]{20,}"), "[API KEY]"),
+    (re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b"), "[API KEY]"),
+    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"), "[API KEY]"),
+    (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"), "[API KEY]"),
+    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[API KEY]"),
+    (re.compile(r"\bAIza[0-9A-Za-z_-]{30,}\b"), "[API KEY]"),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"), "[ACCESS TOKEN]"),
+    (re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{20,}"), "Bearer [API KEY]"),
+    # labelled credentials — password: hunter2, api_key=…, client_secret: …
+    (re.compile(r"(?i)\b([A-Za-z0-9_-]*(?:pass(?:word|phrase)?|pwd|passwd))[\"']?\s*[:=]\s*(?:\"[^\"\n]{3,}\"|'[^'\n]{3,}'|\S{3,})"),
+     r"\1: [PASSWORD]"),
+    (re.compile(r"(?i)\b([A-Za-z0-9_-]*(?:api[_ -]?key|access[_ -]?token|auth[_ -]?token|secret[_ -]?key"
+                r"|client[_ -]?secret|token|secret))[\"']?\s*[:=]\s*(?:\"[^\"\n]{8,}\"|'[^'\n]{8,}'|[A-Za-z0-9._~+/=-]{8,})"),
+     r"\1: [API KEY]"),
+    # identity documents / account numbers
+    (re.compile(r"(?i)\b(passport(?:\s*(?:no\.?|number|#))?)\s*[:=]?\s*([A-Z0-9]{6,10})\b"),
+     r"\1 [PASSPORT NO.]"),
+    (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "[SSN]"),
+    (re.compile(r"\b[A-CEGHJ-PR-TW-Z]{2}\s?\d{2}\s?\d{2}\s?\d{2}\s?[A-D]\b"), "[NI NUMBER]"),
+    (re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b"), "[IBAN]"),
+    (re.compile(r"\b[A-Z]{2}\d{2}(?: [A-Z0-9]{4}){3,7}(?: [A-Z0-9]{1,4})?\b"), "[IBAN]"),
+    # card numbers — Luhn-gated so ordinary long numbers survive
+    (re.compile(r"\b(?:\d[ -]?){12,18}\d\b"), _card_repl),
+    (re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), "[EMAIL]"),
+    (re.compile(r"(?<![\w.])\+\d{1,3}[ .-]?\(?\d{1,4}\)?(?:[ .-]?\d{2,4}){2,4}\b"), "[PHONE NO.]"),
+    (re.compile(r"\b07\d{3}[ -]?\d{6}\b"), "[PHONE NO.]"),
+    (re.compile(r"\(\d{3}\)\s?\d{3}[ .-]\d{4}\b"), "[PHONE NO.]"),
+]
+
+
+def cloak_text(text):
+    """Placeholders in, secrets out. No-op on non-strings."""
+    if not isinstance(text, str) or not text:
+        return text
+    for rx, repl in CLOAK_PATTERNS:
+        text = rx.sub(repl, text)
+    return text
+
+
+def cloak_messages(messages):
+    """Cloak every piece of text in a chat-completions message list: plain
+    content, vision text blocks, tool replies, and tool-call arguments echoed
+    back in history."""
+    out = []
+    for m in messages:
+        m = dict(m)
+        c = m.get("content")
+        if isinstance(c, str):
+            m["content"] = cloak_text(c)
+        elif isinstance(c, list):
+            m["content"] = [dict(b, text=cloak_text(b.get("text")))
+                            if isinstance(b, dict) and b.get("type") == "text" else b
+                            for b in c]
+        if m.get("tool_calls"):
+            fixed = []
+            for tc in m["tool_calls"]:
+                tc = dict(tc)
+                fn = dict(tc.get("function") or {})
+                if isinstance(fn.get("arguments"), str):
+                    fn["arguments"] = cloak_text(fn["arguments"])
+                tc["function"] = fn
+                fixed.append(tc)
+            m["tool_calls"] = fixed
+        out.append(m)
+    return out
+
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".bmp", ".tiff"}
 
@@ -668,8 +790,14 @@ FUNCTION_TOOL_SCHEMAS = [
         {"query": {"type": "string", "description": "the research topic"}}, ["query"]),
     _fn("manage_research", "List, view, archive or delete deep-research reports.",
         {"action": {"type": "string", "enum": ["list", "view", "archive", "delete"]}, "id": {"type": "string"}, "query": {"type": "string"}}, ["action"]),
-    _fn("manage_memory", "Store/recall long-term memory about the user.",
-        {"action": {"type": "string", "enum": ["add", "search", "list", "edit", "delete"]}, "text": {"type": "string"}, "category": {"type": "string"}, "memory_id": {"type": "string"}}, ["action"]),
+    _fn("manage_memory", "Long-term memory. add = store ONE self-contained fact (near-duplicates on the same topic merge automatically); search = recall by meaning; edit/delete = maintain. File facts on an existing topic page when one fits.",
+        {"action": {"type": "string", "enum": ["add", "search", "list", "edit", "delete"]},
+         "text": {"type": "string", "description": "the fact (add/edit) or the search query"},
+         "kind": {"type": "string", "enum": ["world", "experience", "opinion"],
+                  "description": "world = lasting fact; experience = what happened / project state; opinion = the user's judgement or preference"},
+         "topic": {"type": "string", "description": "short-kebab-slug page this fact lives on"},
+         "entities": {"type": "string", "description": "comma-separated named people/places/projects/tools"},
+         "memory_id": {"type": "string"}}, ["action"]),
     _fn("manage_tasks", "Create/list/edit/delete the user's scheduled tasks. Tasks run as a background agent on their schedule.",
         {"action": {"type": "string", "enum": ["add", "list", "edit", "delete"]}, "title": {"type": "string"}, "prompt": {"type": "string"},
          "schedule": {"type": "string", "enum": ["daily", "weekly", "monthly"]}, "time": {"type": "string", "description": "HH:MM 24h"},
@@ -1152,6 +1280,21 @@ class Store:
             # Migrate any earlier bundled row to drop the old external link + blurb.
             db.execute("update plugins set repo_path='', description=? where id='plugin_macos_use'",
                        (_macos_use_blurb,))
+
+            # Bundled Advisor plugin: the everyday model may consult a stronger
+            # one mid-task. Seeded at sandbox so it works at ANY agent access
+            # level (still configurable via the plugin's edit sheet); created_at
+            # is pinned just before macOS Use so it lists directly under it.
+            _advisor_blurb = ("Give your AI a second opinion: it can ask a more powerful model "
+                              "of your choice for advice mid-task. Pick the advisor model and "
+                              "tune when it gets called in the plugin's settings (gear).")
+            db.execute(
+                "insert or ignore into plugins"
+                "(id,name,kind,repo_path,description,is_enabled,source,permission_mode,created_at,updated_at) "
+                "select 'plugin_advisor','Advisor','foreground','',?,1,'bundled','sandbox',"
+                "datetime(created_at,'-1 second'),? from plugins where id='plugin_macos_use'",
+                (_advisor_blurb, now_iso()),
+            )
             db.execute("delete from endpoints where lower(name) like '%fake%' or lower(name) like '%qa%' or lower(base_url) like '%fake%'")
             db.execute("delete from prefs where key in ('default_endpoint_id', 'default_model_id') and value like '%fake%'")
             for col in ("caldav_href", "caldav_etag"):
@@ -1189,6 +1332,10 @@ class Store:
                          "alter table research add column images text default ''",
                          "alter table memory add column use_count integer default 0",
                          "alter table memory add column last_used text default ''",
+                         "alter table memory add column kind text default 'world'",
+                         "alter table memory add column topic text default ''",
+                         "alter table memory add column entities text default ''",
+                         "alter table memory add column updated_at text default ''",
                          "alter table tasks add column last_run text default ''",
                          "alter table tasks add column permission_mode text default 'sandbox'",
                          "alter table tasks add column repeat_day integer default 0",
@@ -1246,9 +1393,13 @@ class Store:
             db.execute("update skills set when_to_use=? where name=? and (when_to_use is null or when_to_use='')",
                        (when_to_use, name))
         memory_audit_prompt = (
-            "Audit my memories using manage_memory (action: list). Delete every memory that is stale — "
-            "use_count is 0 and last_used is empty (or older than two weeks) — using manage_memory "
-            "(action: delete, id: <id>). Keep anything pinned. Then briefly report what you removed.")
+            "Reflect over my long-term memory with manage_memory. 1) action: list — read every entry "
+            "(id, kind, topic, text, use_count, last_used, pinned). 2) Merge near-duplicates that share a "
+            "topic: keep the best one (action: edit with the combined text), delete the rest. 3) Rewrite any "
+            "entry that is vague or bloated so it reads as ONE self-contained fact (action: edit). 4) Delete "
+            "experience entries that newer entries supersede, and any entry with use_count 0 that is over a "
+            "month old. NEVER delete pinned entries. 5) If a topic page has more than ~8 entries, consolidate "
+            "it down to the essentials. Then briefly report what you merged, rewrote and removed.")
         # One-time upgrade for existing installs (these run regardless of the
         # seed flag): move a still-daily "Skill audit" to weekly, and insert the
         # "Memory audit" task if it isn't already present.
@@ -1259,6 +1410,9 @@ class Store:
                 " values(?,?,?,?,?,?,?,?)",
                 ("task_" + os.urandom(6).hex(), "Memory audit", memory_audit_prompt,
                  "weekly", "07:00", "active", now, now))
+        # Existing installs keep the row but get the current reflect protocol.
+        db.execute("update tasks set prompt=? where title='Memory audit' and prompt != ?",
+                   (memory_audit_prompt, memory_audit_prompt))
         if db.execute("select 1 from prefs where key='seeded_defaults_v1'").fetchone():
             db.commit()
             return   # already seeded once — only the upgrades above run for them
@@ -1315,7 +1469,7 @@ __all__ = [
     "ET",
     "FUNCTION_TOOL_SCHEMAS",
     "IMAGE_EXTS",
-    "MACOS_USE_TOOL",
+    "MACOS_USE_TOOL", "ADVISOR_DEFAULT_DESC", "advisor_tool_schema",
     "MCP_CALL_TIMEOUT",
     "MCP_CONNECT_TIMEOUT",
     "MCP_PATH_DIRS",
@@ -1358,6 +1512,7 @@ __all__ = [
     "argparse",
     "atomic_write_text", "atomic_write_bytes",
     "backup_existing",
+    "cloak_messages", "cloak_text", "CLOAK_PATTERNS",
     "base64",
     "datetime",
     "docx_extras",

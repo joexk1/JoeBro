@@ -13,6 +13,7 @@ struct ToolsPanel: View {
     @State private var editingPlugin: Plugin?
     @State private var editingMCP: MCPServer?
     @State private var configuringComputerUse = false
+    @State private var configuringAdvisor = false
 
     var body: some View {
         PanelChrome(title: "Tools", icon: "wrench.and.screwdriver") {
@@ -62,6 +63,9 @@ struct ToolsPanel: View {
         }
         .sheet(isPresented: $configuringComputerUse) {
             ComputerUseSettingsSheet()
+        }
+        .sheet(isPresented: $configuringAdvisor) {
+            AdvisorSettingsSheet()
         }
     }
 
@@ -155,6 +159,12 @@ struct ToolsPanel: View {
                 }
                 .buttonStyle(.borderless)
                 .help("Computer Use settings — permissions and blocked apps")
+            } else if plugin.id == "plugin_advisor" {
+                Button { configuringAdvisor = true } label: {
+                    Image(systemName: "gearshape")
+                }
+                .buttonStyle(.borderless)
+                .help("Advisor settings — pick the model and tune when it's called")
             } else if plugin.source != "bundled" {
                 Button(role: .destructive) {
                     store.deletePlugin(id: plugin.id)
@@ -718,5 +728,99 @@ struct ComputerUseSettingsSheet: View {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         Task { await APIClient.shared.setPref("macos_blocked_apps", value: list) }
+    }
+}
+/// Settings for the bundled Advisor plugin: which (stronger) model the everyday
+/// model may consult, and the editable tool description that tells it WHEN to.
+/// Saved as prefs (advisor_model / advisor_endpoint_id / advisor_description)
+/// that the backend reads when building the advisor tool schema.
+struct AdvisorSettingsSheet: View {
+    @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    @State private var modelID = ""
+    @State private var desc = ""
+    @State private var loaded = false
+
+    /// Keep in sync with ADVISOR_DEFAULT_DESC in jb_core.py.
+    static let defaultDesc = "Ask the user's Advisor — a more powerful model they chose — for a second opinion. Call it when you're genuinely stuck, the problem needs deeper reasoning than you can do (tricky bugs, maths, architecture, high-stakes decisions), your attempts keep failing, or the user asks for a second opinion. Send ONE self-contained question containing ALL the context needed (relevant code, errors, constraints) — the advisor cannot see this chat and has no tools. Weigh its advice against what you know, then act; you own the final answer."
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Label("Advisor", systemImage: "graduationcap")
+                    .font(.system(size: 14, weight: .semibold))
+                Spacer()
+                Button("Done") { save(); dismiss() }
+                    .buttonStyle(.glassProminent)
+                    .tint(Color.accentColor)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(14)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Advisor model")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("A more powerful model your everyday AI can call for a second opinion — at any agent access level. It sees only the question it's sent, never the whole chat.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        Picker("", selection: $modelID) {
+                            Text("Choose a model…").tag("")
+                            ModelPickerItems(models: store.models)
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    Divider()
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("When should it be called?")
+                                .font(.system(size: 12, weight: .semibold))
+                            Spacer()
+                            Button("Reset to default") { desc = Self.defaultDesc }
+                                .font(.system(size: 11))
+                                .buttonStyle(.borderless)
+                        }
+                        Text("This is the advisor tool's description — it's what tells your everyday model when to ask for advice. Edit it to make calls more or less frequent, or to point them at specific topics.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        TextEditor(text: $desc)
+                            .font(.system(size: 12))
+                            .frame(minHeight: 140)
+                            .padding(6)
+                            .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+                .padding(14)
+            }
+        }
+        .frame(width: 460, height: 480)
+        .task {
+            guard !loaded else { return }
+            loaded = true
+            if store.models.isEmpty { await store.loadModels() }
+            if let p = try? await APIClient.shared.getPrefs() {
+                if let m = p["advisor_model"]?.stringValue,
+                   let e = p["advisor_endpoint_id"]?.stringValue,
+                   !m.isEmpty, !e.isEmpty {
+                    modelID = m + "@" + e
+                }
+                let d = p["advisor_description"]?.stringValue ?? ""
+                desc = d.isEmpty ? Self.defaultDesc : d
+            }
+        }
+    }
+
+    private func save() {
+        let choice = store.models.first { $0.id == modelID }
+        let d = desc.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task {
+            await APIClient.shared.setPref("advisor_model", value: choice?.modelID ?? "")
+            await APIClient.shared.setPref("advisor_endpoint_id", value: choice?.endpointID ?? "")
+            // Empty pref = "use the built-in default", so the default can improve
+            // in updates without a stale copy pinned in everyone's settings.
+            await APIClient.shared.setPref("advisor_description", value: d == Self.defaultDesc ? "" : d)
+        }
     }
 }

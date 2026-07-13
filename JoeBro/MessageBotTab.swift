@@ -43,13 +43,7 @@ struct MessageBotTab: View {
             Section("Model") {
                 Picker("Model", selection: $selectedModel) {
                     Text("Default model").tag("")
-                    ForEach(modelGroups, id: \.endpoint) { group in
-                        Section(group.endpoint) {
-                            ForEach(group.models) { m in
-                                Text(m.displayWithTag).tag(m.id)
-                            }
-                        }
-                    }
+                    ModelPickerItems(models: store.models)
                 }
                 Toggle("Ask before commands & edits", isOn: $askPermissions)
                 Text("When on, anything the bot delegates that needs Full Access (a command) or edits an open document asks you to approve it in Telegram — reply y or n.")
@@ -87,23 +81,6 @@ struct MessageBotTab: View {
         .onChange(of: showMemories) { save("bot_show_memories", showMemories) }
         .onChange(of: showTools) { save("bot_show_tools", showTools) }
         .onChange(of: showPlugins) { save("bot_show_plugins", showPlugins) }
-    }
-
-    // Endpoint-grouped like the app's other model pickers (local machines first).
-    private var modelGroups: [(endpoint: String, models: [ModelChoice])] {
-        var order: [String] = []
-        var buckets: [String: [ModelChoice]] = [:]
-        for m in store.models {
-            if buckets[m.endpointName] == nil { order.append(m.endpointName) }
-            buckets[m.endpointName, default: []].append(m)
-        }
-        order.sort { a, b in
-            let la = buckets[a]?.first?.category == "local"
-            let lb = buckets[b]?.first?.category == "local"
-            if la != lb { return la }
-            return a < b
-        }
-        return order.map { ($0, buckets[$0] ?? []) }
     }
 
     private func load() async {

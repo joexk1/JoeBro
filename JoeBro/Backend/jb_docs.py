@@ -54,7 +54,7 @@ class DocsMixin:
                 target = Path(file_path)
                 with lock_for_path(target):
                     backup_existing(target)
-                    atomic_write_text(target, content)
+                    write_doc_text(target, content)
             except OSError as exc:
                 return self.json({"detail": f"Disk write failed: {exc}"}, 500)
         self.store.exec(
