@@ -152,10 +152,14 @@ JoeBro/
     jb_core.py                 shared library: helpers, constants, the SQLite store
     jb_chat.py                 chat, the agent loop, streaming, compaction
     jb_tools.py                tool dispatch and execution: native calls, XML blocks, API tools, MCP, plugins, macOS use
-    jb_assistant.py            memory, skills, tasks, deep research
+    jb_assistant.py            skills, tasks, deep research
+    jb_memory.py               long-term memory: retain / recall / reflect over topic pages
+    jb_telegram.py             the Message Bot: a long-polling Telegram orchestrator over your chats
     jb_email.py / jb_calendar.py / jb_docs.py    integrations
     jb_models.py               model discovery, API tools, MCP servers, plugins
     jb_files.py                workdir browsing and uploads
+    jb_apkg.py                 Anki .apkg decks <-> plain Q/A text (stdlib zip + SQLite)
+    jb_xlsx.py                 xlsx <-> CSV for the spreadsheet grid editor
 assets/                        logo and brand
 GETTING_STARTED.md             60-second quickstart
 USER_GUIDE.md                  full feature and right-click reference

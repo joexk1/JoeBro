@@ -143,6 +143,9 @@ struct MessageBubbleView: View, Equatable {
         let split = message.thinking.map {
             ThinkingSplit(thinking: $0, body: message.content, inProgress: liveThinking)
         } ?? extractThinking(message.content)
+        // Live frames strip tool/DSML markup on the fly (matching the renderer
+        // does the same every frame); finalized messages are already clean.
+        let renderedBody = message.isStreaming ? stripToolArtifacts(split.body) : split.body
         return VStack(alignment: .leading, spacing: 8) {
             // Model header — provider logo + name, like the web UI
             if let model = message.modelName {
@@ -165,11 +168,12 @@ struct MessageBubbleView: View, Equatable {
             if message.content.isEmpty && message.isStreaming && split.thinking.isEmpty {
                 ThinkingDots()
             } else if !split.body.isEmpty || split.thinking.isEmpty {
-                // Live frames strip tool/DSML markup on the fly (matching the
-                // renderer does the same every frame); finalized messages
-                // are already clean.
-                MarkdownText(text: message.isStreaming ? stripToolArtifacts(split.body) : split.body)
-                WorkspaceActionButtons(text: message.isStreaming ? stripToolArtifacts(split.body) : split.body)
+                MarkdownText(text: renderedBody)
+                WorkspaceActionButtons(text: renderedBody)
+            }
+
+            if !message.webSources.isEmpty {
+                webSourcesView
             }
 
             if !message.memoriesUsed.isEmpty {
@@ -297,6 +301,8 @@ struct MessageBubbleView: View, Equatable {
     }
 }
 
+private let mdLinkRegex = try? NSRegularExpression(pattern: #"\[([^\]]+)\]\(([^)]+)\)"#)
+
 private struct WorkspaceActionButtons: View {
     @Environment(AppStore.self) private var store
     let text: String
@@ -340,7 +346,7 @@ private struct WorkspaceActionButtons: View {
     }
 
     private var workspaceActions: [Action] {
-        guard let re = try? NSRegularExpression(pattern: #"\[([^\]]+)\]\(([^)]+)\)"#) else { return [] }
+        guard let re = mdLinkRegex else { return [] }
         let ns = text as NSString
         var out: [Action] = []
         for match in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
@@ -356,9 +362,11 @@ private struct WorkspaceActionButtons: View {
         return out
     }
 
+    // Deliberately no store.sessions lookup: the poller reassigns that array
+    // every 4s, which would re-run this regex scan in every visible bubble.
+    // The "session-" prefix already covers what the backend actually emits.
     private func isWorkspaceTarget(_ target: String) -> Bool {
         ["research-", "document-", "event-", "task-", "note-", "session-"].contains { target.hasPrefix($0) }
-            || store.sessions.contains(where: { $0.id == target })
     }
 
     private func open(_ target: String) {

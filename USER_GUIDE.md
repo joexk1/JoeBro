@@ -18,7 +18,7 @@ Optional but worth it: connect your **email** (IMAP) and **calendar** in Setting
 
 ## The window at a glance
 
-- **Sidebar (left):** your chats at the top, a **Bind to a folder** button and file tree in the middle, and the list of workspace tabs (Chats, Email, Calendar, Brain, Notes, Tasks, Skills, Tools, AI Check, Deep Research) below. The footer holds the **gear** (Settings) and the **◐** button (glass / appearance tuner).
+- **Sidebar (left):** your chats at the top, a **Bind to a folder** button and file tree in the middle, and the list of workspace tabs (Chats, Email, Calendar, Brain, Tasks, Skills, Tools, AI Check, Deep Research) below. The footer holds the **gear** (Settings) and the **◐** button (glass / appearance tuner).
 - **Main panel (right):** whichever tab is selected. For Chats this is the conversation plus the composer.
 - **Editor:** when a document is open it sits beside the chat. You can also pop it out into its own window from the editor's top bar.
 - **New chat:** the compose icon at the top of the sidebar, or `Cmd+N`.
@@ -79,7 +79,7 @@ JoeBro can work inside a real folder on your Mac.
 
 - **Bind to a folder:** click it in the sidebar and choose a project folder. Its files appear as a tree.
 - **Open a file:** click it. Text and Markdown open in the editor; PDFs and images open in a viewer; Word `.doc` and `.docx` open in the rich editor; `.apkg` flashcard decks open as a deck.
-- **Right-click a file in the tree:** **Delete**.
+- **Right-click a file in the tree:** **Rename…** or **Delete**.
 
 **The editor** sits beside the chat (or pop it out with the window button in its top bar):
 - Toolbar with **bold**, **italic**, **bullet list**, **font** and **text size** for rich documents.
@@ -314,11 +314,13 @@ Replies stream in live and render Markdown (bold, lists, code, links). The bot c
 
 Open with the gear in the sidebar footer.
 
+- **Models:** its own tab — add and manage your model endpoints (Ollama or any API key) with **Add Endpoint…**, and set your default model.
 - **Privacy:** **Cloak Mode**, on by default — see "Cloak Mode" below.
 - **Email:** connect a mailbox with IMAP and SMTP (use an app-specific password for Gmail or iCloud), and choose how many messages to load.
 - **Calendar:** connect macOS Calendar or a CalDAV account.
 - **Server:** the local backend URL (you should not need to change this).
-- **Documents:** "Ask before running commands" and "Require approval before applying the agent's document edits."
+- **Documents:** "Require approval for AI edits", the **tool-use limit per turn** (leave "Unlimited tool use" on, or cap how many tools the agent may call before it must answer), and "Ask before running commands."
+- **Updates:** check for updates automatically, check now, and see which version you're on.
 - **Message Bot:** connect a Telegram bot to run JoeBro from your phone (see Message Bot above).
 - **Glass / Background / Wallpaper:** appearance (see Theming).
 

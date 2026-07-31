@@ -204,17 +204,6 @@ struct SettingsView: View {
         calendarStatus = try? await APIClient.shared.calendarStatus()
     }
 
-    private func disconnectEmail() async {
-        do {
-            try await APIClient.shared.disconnectEmail()
-            await loadIntegrationStatus()
-            store.emailCache = nil
-            store.emailFoldersCache = nil
-        } catch {
-            integrationError = error.localizedDescription
-        }
-    }
-
     private func disconnectCalendar() async {
         do {
             try await APIClient.shared.disconnectCalendar()

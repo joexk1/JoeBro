@@ -753,9 +753,10 @@ struct EmailComposeSheet: View {
                 for url in urls {
                     let scoped = url.startAccessingSecurityScopedResource()
                     Task {
-                        if let up = try? await APIClient.shared.composeUpload(fileURL: url) {
-                            attachments.append(up)
-                        }
+                        // Silently dropping this used to send the mail with the
+                        // attachment missing and no sign anything went wrong.
+                        do { attachments.append(try await APIClient.shared.composeUpload(fileURL: url)) }
+                        catch { self.error = error.localizedDescription }
                         if scoped { url.stopAccessingSecurityScopedResource() }
                     }
                 }

@@ -363,6 +363,7 @@ struct RichDocEditor: NSViewRepresentable {
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
+        context.coordinator.parent = self
         if editable, let tv = scroll.documentView as? RichPageTextView {
             commands.textView = tv
             tv.onAddFootnote = { [weak tv] in
@@ -379,7 +380,7 @@ struct RichDocEditor: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
-        let parent: RichDocEditor
+        var parent: RichDocEditor
         weak var textView: NSTextView?
         var url: URL?
         private var pending: DispatchWorkItem?

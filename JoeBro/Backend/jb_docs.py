@@ -31,10 +31,15 @@ class DocsMixin:
         language = body.get("language") or Path(title).suffix.lstrip(".") or "markdown"
         content = body.get("content") or ""
         ts = now_iso()
+        # file_path is deliberately NOT taken from the request. update_document
+        # writes straight to whatever path is stored here, so accepting it from a
+        # caller was an arbitrary-file-write primitive (~/Library/LaunchAgents…).
+        # Disk-backed docs are created by the tool layer instead, which resolves
+        # the path inside the bound folder first (jb_tools.execute_file_tool).
         self.store.exec(
             """insert into documents(id,title,language,current_content,version_count,file_path,archived,created_at,updated_at)
                values(?,?,?,?,?,?,?,?,?)""",
-            (doc_id, title, language, content, 1, body.get("file_path") or "", 0, ts, ts),
+            (doc_id, title, language, content, 1, "", 0, ts, ts),
         )
         row = self.store.one("select * from documents where id=?", (doc_id,))
         return self.json(self.document_detail_json(row))

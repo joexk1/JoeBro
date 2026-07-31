@@ -276,9 +276,26 @@ struct CalendarPanel: View {
         }
     }
 
+    /// Same spanning rule as `eventsOn`, but parses each event's dates once.
+    private func bucketByDay(_ days: [Date], _ list: [CalEvent]) -> [Date: [CalEvent]] {
+        let ends = days.map { cal.date(byAdding: .day, value: 1, to: $0) ?? $0 }
+        var byDay: [Date: [CalEvent]] = [:]
+        for ev in list {
+            guard let s = ev.startDate else { continue }
+            let e = ev.endDate ?? s
+            for (i, day) in days.enumerated() where s < ends[i] && e > day {
+                byDay[cal.startOfDay(for: day), default: []].append(ev)
+            }
+        }
+        return byDay
+    }
+
     private func monthGrid(_ list: [CalEvent]) -> some View {
         let days = (0..<42).map { cal.date(byAdding: .day, value: $0, to: rangeStart)! }
         let weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        // Calling eventsOn per cell re-parsed every event's dates 42× per body
+        // eval. Bucket the list by day once instead.
+        let byDay = bucketByDay(days, list)
         return GeometryReader { geo in
             let padding: CGFloat = 8
             let headerHeight: CGFloat = 26
@@ -315,7 +332,7 @@ struct CalendarPanel: View {
                     ForEach(0..<42, id: \.self) { index in
                         let row = index / 7
                         let col = index % 7
-                        dayCell(days[index], list)
+                        dayCell(days[index], byDay[cal.startOfDay(for: days[index])] ?? [])
                             .frame(width: cellWidth, height: cellHeight, alignment: .topLeading)
                             .clipped()
                             .position(
@@ -333,10 +350,9 @@ struct CalendarPanel: View {
         }
     }
 
-    private func dayCell(_ day: Date, _ list: [CalEvent]) -> some View {
+    private func dayCell(_ day: Date, _ dayEvents: [CalEvent]) -> some View {
         let isToday = cal.isDateInToday(day)
         let inMonth = cal.isDate(day, equalTo: anchor, toGranularity: .month)
-        let dayEvents = eventsOn(day, list)
         return VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text("\(cal.component(.day, from: day))")
@@ -372,7 +388,7 @@ struct CalendarPanel: View {
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
             var d = EventDraft()
-            d.start = cal.date(bySettingHour: 9, minute: 0, second: 0, of: day)!
+            d.start = cal.date(bySettingHour: 9, minute: 0, second: 0, of: day) ?? day
             d.end = d.start.addingTimeInterval(3600)
             editing = d
         }
@@ -462,7 +478,7 @@ struct CalendarPanel: View {
         let timed = eventsOn(day, list)
             .filter { $0.allDay != true }
             .sorted { ($0.startDate ?? .distantPast) < ($1.startDate ?? .distantPast) }
-        let gridStart = cal.date(bySettingHour: firstHour, minute: 0, second: 0, of: day)!
+        let gridStart = cal.date(bySettingHour: firstHour, minute: 0, second: 0, of: day) ?? day
         return ZStack(alignment: .top) {
             if cal.isDateInToday(day) {
                 Color.accentColor.opacity(0.045)
@@ -596,7 +612,8 @@ struct CalendarPanel: View {
             Button("Edit") { editing = EventDraft(from: ev) }
                     Button("Delete", role: .destructive) {
                         Task {
-                            try? await deleteEvent(ev.uid)
+                            do { try await deleteEvent(ev.uid) }
+                            catch { events = .failed(error.localizedDescription); return }
                             await load()
                         }
                     }
@@ -647,7 +664,8 @@ struct EventEditorSheet: View {
                 if let uid = draft.uid {
                     Button(role: .destructive) {
                         Task {
-                            try? await deleteEvent(uid)
+                            do { try await deleteEvent(uid) }
+                            catch { self.error = error.localizedDescription; return }
                             await onSaved()
                             dismiss()
                         }

@@ -48,7 +48,12 @@ struct BrainPanel: View {
                         } else {
                             VStack(spacing: 0) {
                                 if !selection.isEmpty {
-                                    selectionBar(total: shown.count, allIDs: shown.map(\.id))
+                                    SelectionBar(total: shown.count, allIDs: shown.map(\.id), selection: $selection) { ids in
+                                        Task {
+                                            for id in ids { try? await APIClient.shared.deleteMemory(id: id) }
+                                            await load()
+                                        }
+                                    }
                                 }
                                 ScrollView {
                                     LazyVStack(spacing: 8) {
@@ -95,55 +100,12 @@ struct BrainPanel: View {
         }
     }
 
-    private func selectionBar(total: Int, allIDs: [String]) -> some View {
-        HStack(spacing: 10) {
-            Text("\(selection.count) selected")
-                .font(.system(size: 11, weight: .semibold))
-            Button(selection.count == total ? "None" : "All") {
-                withAnimation(.spring(duration: 0.25)) {
-                    selection = selection.count == total ? [] : Set(allIDs)
-                }
-            }
-            .buttonStyle(.borderless)
-            .font(.system(size: 11))
-            Spacer()
-            Button {
-                let ids = selection
-                selection = []
-                Task {
-                    for id in ids { try? await APIClient.shared.deleteMemory(id: id) }
-                    await load()
-                }
-            } label: {
-                Image(systemName: "trash").font(.system(size: 12))
-            }
-            .buttonStyle(.borderless)
-            .help("Delete selected")
-            Button {
-                withAnimation(.spring(duration: 0.25)) { selection = [] }
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.borderless)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color.accentColor.opacity(0.10))
-        .transition(.move(edge: .top).combined(with: .opacity))
-    }
 
-    private func toggleSelect(_ id: String) {
-        withAnimation(.spring(duration: 0.2)) {
-            if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
-        }
-    }
 
     private func memoryCard(_ m: MemoryEntry) -> some View {
         SkillRowShell(id: m.id, checked: selection.contains(m.id),
                       selecting: !selection.isEmpty,
-                      onToggleCheck: { toggleSelect(m.id) }) {
+                      onToggleCheck: { toggleSelection(m.id, in: &selection) }) {
             Image(systemName: m.pinned == true ? "pin.fill" : "sparkle")
                 .font(.system(size: 11))
                 .foregroundStyle(m.pinned == true ? Color.accentColor : .secondary)

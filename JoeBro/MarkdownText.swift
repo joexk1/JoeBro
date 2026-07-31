@@ -306,13 +306,17 @@ private func highlight(_ code: String, language: String) -> AttributedString {
     return out
 }
 
+// Compiled once: highlightLine runs up to 400× per block and re-runs on every
+// stream delta.
+private let mdNumberRegex = try? NSRegularExpression(pattern: #"\b\d+(\.\d+)?\b"#)
+private let mdStringRegex = try? NSRegularExpression(pattern: #""[^"]*"|'[^']*'"#)
+private let mdCommentRegex = try? NSRegularExpression(pattern: #"(//|#).*$"#)
+
 private func highlightLine(_ line: String) -> AttributedString {
     var attr = AttributedString(line)
-    guard let full = attr.range(of: line) else { return attr }
-    _ = full
 
-    func color(_ pattern: String, _ color: Color) {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
+    func color(_ regex: NSRegularExpression?, _ color: Color) {
+        guard let regex else { return }
         let ns = line as NSString
         for m in regex.matches(in: line, range: NSRange(location: 0, length: ns.length)) {
             guard let r = Range(m.range, in: line),
@@ -325,14 +329,14 @@ private func highlightLine(_ line: String) -> AttributedString {
     }
 
     // order matters: later passes overwrite earlier ones
-    color(#"\b\d+(\.\d+)?\b"#, .cyan)
+    color(mdNumberRegex, .cyan)
     for word in line.split(whereSeparator: { !$0.isLetter && $0 != "_" }) {
         if mdKeywords.contains(String(word)),
            let r = attr.range(of: String(word)) {
             attr[r].foregroundColor = .pink
         }
     }
-    color(#""[^"]*"|'[^']*'"#, .orange)
-    color(#"(//|#).*$"#, Color.secondary)
+    color(mdStringRegex, .orange)
+    color(mdCommentRegex, Color.secondary)
     return attr
 }

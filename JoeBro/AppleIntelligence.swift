@@ -14,10 +14,6 @@ enum AppleIntelligence {
 
     private static var sessions: [String: LanguageModelSession] = [:]
 
-    static func reset(chatID: String) {
-        sessions.removeValue(forKey: chatID)
-    }
-
     /// Streams cumulative response text for the prompt within the chat's
     /// running on-device session (context carries across turns).
     static func stream(chatID: String, prompt: String, history: [Message]) -> AsyncThrowingStream<String, Error> {

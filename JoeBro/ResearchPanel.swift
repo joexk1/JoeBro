@@ -137,7 +137,15 @@ struct ResearchPanel: View {
             case .loaded(let list):
                 VStack(spacing: 0) {
                     if !selection.isEmpty {
-                        selectionBar(total: list.count, allIDs: list.map(\.id))
+                        SelectionBar(total: list.count, allIDs: list.map(\.id), selection: $selection) { ids in
+                            Task {
+                                for id in ids {
+                                    await APIClient.shared.researchDelete(id: id)
+                                    if selected?.id == id { selected = nil; detail = nil }
+                                }
+                                await load()
+                            }
+                        }
                     }
                     ScrollView {
                         LazyVStack(spacing: 6) {
@@ -153,58 +161,12 @@ struct ResearchPanel: View {
         }
     }
 
-    private func selectionBar(total: Int, allIDs: [String]) -> some View {
-        HStack(spacing: 10) {
-            Text("\(selection.count) selected")
-                .font(.system(size: 11, weight: .semibold))
-            Button(selection.count == total ? "None" : "All") {
-                withAnimation(.spring(duration: 0.25)) {
-                    selection = selection.count == total ? [] : Set(allIDs)
-                }
-            }
-            .buttonStyle(.borderless)
-            .font(.system(size: 11))
-            Spacer()
-            Button {
-                let ids = selection
-                selection = []
-                Task {
-                    for id in ids {
-                        await APIClient.shared.researchDelete(id: id)
-                        if selected?.id == id { selected = nil; detail = nil }
-                    }
-                    await load()
-                }
-            } label: {
-                Image(systemName: "trash").font(.system(size: 12))
-            }
-            .buttonStyle(.borderless)
-            .help("Delete selected")
-            Button {
-                withAnimation(.spring(duration: 0.25)) { selection = [] }
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.borderless)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color.accentColor.opacity(0.10))
-        .transition(.move(edge: .top).combined(with: .opacity))
-    }
 
-    private func toggleSelect(_ id: String) {
-        withAnimation(.spring(duration: 0.2)) {
-            if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
-        }
-    }
 
     private func row(_ item: ResearchItem) -> some View {
         SkillRowShell(id: item.id, checked: selection.contains(item.id),
                       selecting: !selection.isEmpty,
-                      onToggleCheck: { toggleSelect(item.id) }) {
+                      onToggleCheck: { toggleSelection(item.id, in: &selection) }) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.query)
                     .font(.system(size: 12.5, weight: selected?.id == item.id ? .semibold : .regular))
@@ -228,7 +190,7 @@ struct ResearchPanel: View {
             Spacer(minLength: 0)
         }
         .contentShape(Rectangle())
-        .onTapGesture { selection.isEmpty ? open(item) : toggleSelect(item.id) }
+        .onTapGesture { selection.isEmpty ? open(item) : toggleSelection(item.id, in: &selection) }
         .contextMenu {
             Button("Copy Report") {
                 Task { await copyReport(item) }
@@ -255,8 +217,8 @@ struct ResearchPanel: View {
         var md = "# \(item.query)\n\n" + report
         if let sources = detail?["sources"]?.arrayValue, !sources.isEmpty {
             md += "\n\n## Sources\n"
-            for (i, s) in sources.enumerated() where s["url"]?.stringValue != nil {
-                let url = s["url"]!.stringValue!
+            for (i, s) in sources.enumerated() {
+                guard let url = s["url"]?.stringValue else { continue }
                 md += "\n\(i + 1). [\(s["title"]?.stringValue ?? url)](\(url))"
             }
         }

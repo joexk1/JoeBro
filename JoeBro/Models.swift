@@ -448,11 +448,6 @@ struct WorkdirInfo: Decodable {
     var workdir: String?
 }
 
-struct WorkdirListResponse: Decodable {
-    var entries: [WorkdirEntry]
-    var path: String?
-}
-
 struct WorkdirEntry: Decodable, Identifiable, Hashable {
     var name: String
     var type: String   // "dir" | "file"
@@ -689,18 +684,34 @@ struct IntegrationStatus: Decodable {
     }
 }
 
+// parseISO is reached from computed properties evaluated inside SwiftUI body,
+// so building formatters per call showed up in profiles. Configure once and
+// never mutate — reads are safe concurrently, mutation is not.
+private let isoFractional: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return f
+}()
+
+private let isoPlain: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime]
+    return f
+}()
+
+private let isoFallbacks: [DateFormatter] = ["yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd"].map {
+    let f = DateFormatter()
+    f.locale = Locale(identifier: "en_US_POSIX")
+    f.dateFormat = $0
+    return f
+}
+
 /// Backend dates come in several flavours: full ISO with/without Z,
 /// or bare "yyyy-MM-dd" for all-day events.
 func parseISO(_ s: String) -> Date? {
-    let iso = ISO8601DateFormatter()
-    iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    if let d = iso.date(from: s) { return d }
-    iso.formatOptions = [.withInternetDateTime]
-    if let d = iso.date(from: s) { return d }
-    let df = DateFormatter()
-    df.locale = Locale(identifier: "en_US_POSIX")
-    for fmt in ["yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd"] {
-        df.dateFormat = fmt
+    if let d = isoFractional.date(from: s) { return d }
+    if let d = isoPlain.date(from: s) { return d }
+    for df in isoFallbacks {
         if let d = df.date(from: s) { return d }
     }
     return nil
@@ -822,40 +833,6 @@ struct DocDetail: Decodable {
         case id, title, language
         case currentContent = "current_content"
         case versionCount = "version_count"
-    }
-}
-
-// MARK: - Personal files
-
-struct PersonalFilesResponse: Decodable {
-    var files: [PersonalFile]
-}
-
-struct PersonalFile: Decodable, Identifiable, Hashable {
-    var name: String
-    var size: Int?
-    var path: String?
-
-    var id: String { path ?? name }
-}
-
-// MARK: - Gallery
-
-struct GalleryLibraryResponse: Decodable {
-    var items: [GalleryItem]
-    var total: Int?
-}
-
-struct GalleryItem: Decodable, Identifiable, Hashable {
-    var id: String
-    var filename: String?
-    var prompt: String?
-    var favorite: Bool?
-    var createdAt: String?
-
-    enum CodingKeys: String, CodingKey {
-        case id, filename, prompt, favorite
-        case createdAt = "created_at"
     }
 }
 
@@ -995,7 +972,7 @@ func extractThinking(_ content: String) -> ThinkingSplit {
         var bestClose: Range<String.Index>?
         for tag in closeTags {
             if let close = body.range(of: tag, range: afterOpen..<body.endIndex),
-               bestClose == nil || close.lowerBound < bestClose!.lowerBound {
+               bestClose.map({ close.lowerBound < $0.lowerBound }) ?? true {
                 bestClose = close
             }
         }

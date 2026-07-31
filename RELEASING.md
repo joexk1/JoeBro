@@ -49,6 +49,18 @@ That's it. Installed copies pick up the update within a day, or immediately if
 the user hits **Check for Updates**. The download is verified against your
 public key and installed in place.
 
+> ⚠️ **The version never lands in the project file.** `release.sh` passes
+> `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` to `xcodebuild` as
+> command-line overrides for that one build, and nothing writes them back, so
+> the committed `JoeBro.xcodeproj/project.pbxproj` stays at whatever it was
+> (currently **1.1.1 / build 3**, while the appcast advertises **1.2.1 / 5**).
+> A build straight from Xcode — which is what CONTRIBUTING.md tells
+> contributors to do — therefore identifies itself as the old version and is
+> immediately offered an "update" to the shipped one. Only the DMG the script
+> produces carries the real version. If that bothers you, bump
+> `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in the project's build
+> settings and commit them alongside the appcast.
+
 > The DMG download URL in the appcast is
 > `https://github.com/joexk1/joebro/releases/download/v<version>/JoeBro-<version>.dmg`,
 > so the Release **tag must be `v<version>`** and the asset filename must match

@@ -47,7 +47,6 @@ final class AppStore {
     private var researchPollTask: Task<Void, Never>?
 
     // Status / notifications
-    var backendStatus: BackendStatus = .checking
     var researchDot = false
     // Email badge: dot shows while unread > 0; bounces while there are emails
     // unread that arrived since the Email workspace was last opened.
@@ -169,8 +168,6 @@ final class AppStore {
         try? await api.deleteMCPServer(id: id)
         await loadMCPServers()
     }
-
-    enum BackendStatus { case up, slow, down, checking }
 
     // Composer options
     var agentMode = false
@@ -310,7 +307,6 @@ final class AppStore {
             while !Task.isCancelled {
                 tick += 1
                 let up = (await api.ping()) != nil
-                backendStatus = up ? .up : .down
                 // Self-heal: if the backend was still spawning at launch the model
                 // & session lists come back empty and never retry. When it comes
                 // up, reload what's missing so the model picker fills in without a
@@ -473,6 +469,14 @@ final class AppStore {
                 for ev in hm.metadata?["tool_events"]?.arrayValue ?? [] {
                     let tool = ev["tool"]?.stringValue ?? "tool"
                     if isObsoleteBackendTool(tool) { continue }
+                    // Prose the model wrote before this tool ran — replayed in
+                    // place so a reloaded chat reads in the same order it
+                    // streamed, instead of every tool row then all the text.
+                    if let said = ev["narration"]?.stringValue, !said.isEmpty {
+                        var pre = Message(role: "assistant", kind: .text, content: said)
+                        pre.isIntermediate = true
+                        segments.append(pre)
+                    }
                     var row = Message(role: "tool", kind: .tool, content: "")
                     row.toolName = tool
                     row.command = ev["command"]?.stringValue
@@ -603,7 +607,10 @@ final class AppStore {
 
     func deleteSession(_ id: String) {
         Task {
-            try? await api.deleteSession(id)
+            // Removing the row before the server confirms just makes it reappear
+            // on the next poll, looking like the delete was ignored.
+            do { try await api.deleteSession(id) }
+            catch { loadError = "Delete: " + error.localizedDescription; return }
             sessions.removeAll { $0.id == id }
             if selectedSessionID == id { newChat() }
         }
@@ -611,7 +618,8 @@ final class AppStore {
 
     func archiveSession(_ id: String) {
         Task {
-            try? await api.archiveSession(id)
+            do { try await api.archiveSession(id) }
+            catch { loadError = "Archive: " + error.localizedDescription; return }
             sessions.removeAll { $0.id == id }
             if selectedSessionID == id { newChat() }
         }
@@ -668,31 +676,6 @@ final class AppStore {
         sessions.sort { ($0.sortOrder ?? 0) < ($1.sortOrder ?? 0) }
         Task {
             do { try await api.moveSession(id, folder: trimmed ?? "", sortOrder: sortOrder) }
-            catch {
-                loadError = "Move: " + error.localizedDescription
-                await loadSessions()
-            }
-        }
-    }
-
-    /// Live, NETWORK-FREE reorder while a drag is in progress, so the other
-    /// chats animate out of the dragged chat's way. Persisted on drop.
-    func reorderLocal(_ id: String, toFolder folder: String?, sortOrder: Double) {
-        guard let i = sessions.firstIndex(where: { $0.id == id }) else { return }
-        let trimmed = folder?.trimmingCharacters(in: .whitespaces)
-        sessions[i].folder = (trimmed?.isEmpty ?? true) ? nil : trimmed
-        sessions[i].sortOrder = sortOrder
-        sessions.sort { ($0.sortOrder ?? 0) < ($1.sortOrder ?? 0) }
-    }
-
-    /// Commit a dragged chat's current folder + position to the backend (called
-    /// once, on drop). The optimistic order is already live from reorderLocal.
-    func persistMove(_ id: String) {
-        guard let s = sessions.first(where: { $0.id == id }) else { return }
-        let folder = s.folder ?? ""
-        let order = s.sortOrder ?? 0
-        Task {
-            do { try await api.moveSession(id, folder: folder, sortOrder: order) }
             catch {
                 loadError = "Move: " + error.localizedDescription
                 await loadSessions()
@@ -1169,7 +1152,7 @@ final class AppStore {
                     endpointID: selectedModel?.endpointID,
                     endpointURL: selectedModel?.endpointURL,
                     effort: effortFor(selectedModel),
-                    maxToolCalls: agentMode ? maxToolCalls : 0
+                    maxToolCalls: effAgent ? maxToolCalls : 0
                 )
 
                 for try await event in stream {
@@ -1318,35 +1301,40 @@ final class AppStore {
         let texts = turn.filter { $0.kind == .text && !$0.content.isEmpty }
         guard !texts.isEmpty || !tools.isEmpty else { return }
 
-        var final = Message(role: "assistant",
-                            content: stripToolArtifacts(texts.map(\.content).joined(separator: "\n\n")))
-        final.thinking = texts.compactMap(\.thinking).first
-        final.thinkingTime = texts.compactMap(\.thinkingTime).first
-        final.modelName = texts.compactMap(\.modelName).last ?? selectedModel?.modelID
-        final.metrics = texts.compactMap(\.metrics).last
-        final.contextPercent = texts.compactMap(\.contextPercent).last
-        // Gather from the whole turn, not just non-empty text segments: the
-        // memories/plugins events fire at the start of the turn and land on the
-        // first text placeholder, which is empty (and thus filtered out of
-        // `texts`) when tool calls come before any prose.
-        final.memoriesUsed = dedupeMemories(turn.flatMap(\.memoriesUsed))
-        var seenPlugins = Set<String>()
-        final.pluginsUsed = turn.flatMap(\.pluginsUsed).filter { seenPlugins.insert($0).inserted }
-        var seenSkills = Set<String>()
-        final.skillsUsed = turn.flatMap(\.skillsUsed).filter { seenSkills.insert($0).inserted }
-        final.attachments = texts.flatMap(\.attachments)
-
-        var rebuilt = tools
-        if !isDebrisContent(final.content) || final.thinking != nil || !final.attachments.isEmpty {
-            rebuilt.append(final)
+        // Keep stream order — prose stays where the model wrote it, between the
+        // tool rows it triggered (the backend persists that narration, so a
+        // reload rebuilds the same shape). Only drop empty/debris placeholders.
+        var rebuilt = turn.filter { $0.kind == .tool || !isDebrisContent($0.content) }
+        guard let lastText = rebuilt.lastIndex(where: { $0.kind == .text }) else {
+            messages.replaceSubrange(start..., with: rebuilt)
+            return
         }
+        rebuilt[lastText].content = stripToolArtifacts(rebuilt[lastText].content)
+        rebuilt[lastText].isIntermediate = false
+        for i in rebuilt.indices where rebuilt[i].kind == .text && i != lastText {
+            rebuilt[i].isIntermediate = true   // round narration collapses, like thinking
+        }
+        // Turn-level readouts belong on the closing message. Gather from the
+        // WHOLE turn, not just the surviving text rows: the memories/plugins
+        // events fire at the start and land on the first text placeholder,
+        // which is empty (and dropped above) when tools come before any prose.
+        rebuilt[lastText].thinking = rebuilt[lastText].thinking ?? texts.compactMap(\.thinking).first
+        rebuilt[lastText].thinkingTime = rebuilt[lastText].thinkingTime ?? texts.compactMap(\.thinkingTime).first
+        rebuilt[lastText].modelName = rebuilt[lastText].modelName ?? selectedModel?.modelID
+        rebuilt[lastText].metrics = texts.compactMap(\.metrics).last
+        rebuilt[lastText].contextPercent = texts.compactMap(\.contextPercent).last
+        rebuilt[lastText].memoriesUsed = dedupeMemories(turn.flatMap(\.memoriesUsed))
+        var seenPlugins = Set<String>()
+        rebuilt[lastText].pluginsUsed = turn.flatMap(\.pluginsUsed).filter { seenPlugins.insert($0).inserted }
+        var seenSkills = Set<String>()
+        rebuilt[lastText].skillsUsed = turn.flatMap(\.skillsUsed).filter { seenSkills.insert($0).inserted }
         messages.replaceSubrange(start..., with: rebuilt)
     }
 
     // Reasoning-effort support — frontier models only
     var effort: String = UserDefaults.standard.string(forKey: "effort") ?? "medium"
 
-    func supportsEffort(_ model: ModelChoice?) -> Bool {
+    private func supportsEffort(_ model: ModelChoice?) -> Bool {
         guard let m = model?.modelID.lowercased() else { return false }
         return ["gpt-5", "o1", "o3", "o4", "gpt-oss"].contains { m.contains($0) }
     }

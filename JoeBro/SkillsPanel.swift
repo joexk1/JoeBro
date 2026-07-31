@@ -12,7 +12,6 @@ struct SkillsPanel: View {
     @State private var showGenerate = false
     @State private var showLearn = false
     @State private var showImporter = false
-    @State private var busyID: String?
     @State private var selection: Set<String> = []
     @State private var generatePrefill = ""
     @State private var search = ""
@@ -73,7 +72,16 @@ struct SkillsPanel: View {
                     let shown = filtered(list)
                     VStack(spacing: 0) {
                         if !selection.isEmpty {
-                            selectionBar(total: shown.count, allIDs: shown.compactMap { $0["id"]?.stringValue ?? $0["name"]?.stringValue })
+                            SelectionBar(total: shown.count,
+                                         allIDs: shown.compactMap { $0["id"]?.stringValue ?? $0["name"]?.stringValue },
+                                         selection: $selection) { ids in
+                                Task {
+                                    for id in ids {
+                                        _ = try? await APIClient.shared.sendJSON("api/skills/\(id)", method: "DELETE")
+                                    }
+                                    await load()
+                                }
+                            }
                         }
                         ScrollView {
                             LazyVStack(spacing: 8) {
@@ -151,52 +159,7 @@ struct SkillsPanel: View {
         }
     }
 
-    private func selectionBar(total: Int, allIDs: [String]) -> some View {
-        HStack(spacing: 10) {
-            Text("\(selection.count) selected")
-                .font(.system(size: 11, weight: .semibold))
-            Button(selection.count == total ? "None" : "All") {
-                withAnimation(.spring(duration: 0.25)) {
-                    selection = selection.count == total ? [] : Set(allIDs)
-                }
-            }
-            .buttonStyle(.borderless)
-            .font(.system(size: 11))
-            Spacer()
-            Button {
-                let ids = selection
-                selection = []
-                Task {
-                    for id in ids {
-                        _ = try? await APIClient.shared.sendJSON("api/skills/\(id)", method: "DELETE")
-                    }
-                    await load()
-                }
-            } label: {
-                Image(systemName: "trash").font(.system(size: 12))
-            }
-            .buttonStyle(.borderless)
-            .help("Delete selected")
-            Button {
-                withAnimation(.spring(duration: 0.25)) { selection = [] }
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.borderless)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color.accentColor.opacity(0.10))
-        .transition(.move(edge: .top).combined(with: .opacity))
-    }
 
-    private func toggleSelect(_ id: String) {
-        withAnimation(.spring(duration: 0.2)) {
-            if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
-        }
-    }
 
     private func isActive(_ s: JSONValue) -> Bool {
         let status = s["status"]?.stringValue ?? "active"
@@ -208,7 +171,7 @@ struct SkillsPanel: View {
         let active = isActive(s)
         return SkillRowShell(id: id, checked: selection.contains(id),
                              selecting: !selection.isEmpty,
-                             onToggleCheck: { toggleSelect(id) }) {
+                             onToggleCheck: { toggleSelection(id, in: &selection) }) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
                     Text(s["name"]?.stringValue ?? "Unnamed skill")
@@ -259,9 +222,7 @@ struct SkillsPanel: View {
 
     private func toggle(id: String, currentlyActive: Bool) {
         guard !id.isEmpty else { return }
-        busyID = id
         Task {
-            defer { busyID = nil }
             _ = try? await APIClient.shared.sendJSON("api/skills/\(id)", method: "PUT",
                                                      body: ["status": currentlyActive ? "disabled" : "active"])
             await load()
@@ -306,10 +267,14 @@ struct SkillEditorSheet: View {
                     .font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button(draft.skillID == nil ? "Add" : "Save") { save() }
-                    .buttonStyle(.glassProminent)
-                    .tint(Color.accentColor)
-                    .disabled(saving || draft.name.isEmpty || draft.procedure.isEmpty)
+                Button { save() } label: {
+                    if saving { ProgressView().controlSize(.small) }
+                    else { Text(draft.skillID == nil ? "Add" : "Save") }
+                }
+                .buttonStyle(.glassProminent)
+                .tint(Color.accentColor)
+                .keyboardShortcut(.defaultAction)
+                .disabled(saving || draft.name.isEmpty || draft.procedure.isEmpty)
             }
             .padding(14)
             Divider()

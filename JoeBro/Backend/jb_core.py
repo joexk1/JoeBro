@@ -802,7 +802,6 @@ FUNCTION_TOOL_SCHEMAS = [
         {"action": {"type": "string", "enum": ["add", "list", "edit", "delete"]}, "title": {"type": "string"}, "prompt": {"type": "string"},
          "schedule": {"type": "string", "enum": ["daily", "weekly", "monthly"]}, "time": {"type": "string", "description": "HH:MM 24h"},
          "weekday": {"type": "integer", "description": "for weekly tasks, which day it fires: 0=Mon, 1=Tue … 6=Sun"},
-         "permission_mode": {"type": "string", "enum": ["sandbox", "readonly", "full"], "description": "file access when the task runs: sandbox=bound folder only, readonly=read anywhere, full=read/write anywhere"},
          "id": {"type": "string"}}, ["action"]),
     _fn("manage_skills", "Create/list/edit/delete reusable skills. When adding, write a DETAILED skill, not a one-liner: a clear description, a when_to_use trigger, and a step-by-step procedure.",
         {"action": {"type": "string", "enum": ["add", "list", "edit", "delete"]}, "name": {"type": "string"},
@@ -1105,6 +1104,13 @@ class Store:
         self.db_path = self.root / "joebro.sqlite3"
         self.lock = threading.RLock()
         self._init_db()
+        # Provider API keys, the IMAP/SMTP password and the bot token all live in
+        # this file in clear, so don't leave it group/world readable.
+        try:
+            os.chmod(self.root, 0o700)
+            os.chmod(self.db_path, 0o600)
+        except OSError:
+            pass
 
     def _init_db(self):
         with self.db() as db:

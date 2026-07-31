@@ -16,6 +16,8 @@ __pycache__/
 
 # Local runtime data (never commit a user's data/keys)
 *.sqlite3
+.env
+.env.*
 
 # Dev artifacts (not for release)
 test_screenshots/

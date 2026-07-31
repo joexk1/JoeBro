@@ -12,6 +12,12 @@ from jb_memory import MemoryMixin
 from jb_files import FilesMixin
 from jb_xlsx import xlsx_to_csv, csv_to_xlsx
 import gzip
+import hmac
+
+
+# Prefs that must never leave the process in clear — see the /api/prefs handler.
+SECRET_PREFS = {"bot_token"}
+SECRET_MASK = "••••••••"
 
 
 class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, ModelsMixin, AssistantMixin, MemoryMixin, FilesMixin, BaseHTTPRequestHandler):
@@ -91,6 +97,30 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
     def not_found(self):
         self.json({"detail": "Not found"}, 404)
 
+    def _guard(self):
+        """Refuse requests a browser made on someone else's behalf.
+
+        This API runs shell commands and writes files with no login, so any page
+        the user visits could POST a form at it — a form POST is a CORS "simple
+        request", so the browser sends it and only hides the *reply*, which an
+        attacker doesn't need. Every browser marks such a request with `Origin`
+        or `Sec-Fetch-Site`; the app's URLSession sends neither, so rejecting
+        both costs our clients nothing. The Host check blocks DNS rebinding
+        (an attacker's domain re-pointed at 127.0.0.1 to become same-origin)."""
+        if self.headers.get("Origin") or (self.headers.get("Sec-Fetch-Site") or "same-origin") != "same-origin":
+            self.json({"detail": "cross-site request blocked"}, 403)
+            return False
+        hosts = getattr(self.server, "allowed_hosts", None)
+        if hosts and (self.headers.get("Host") or "").lower() not in hosts:
+            self.json({"detail": "unexpected Host header"}, 403)
+            return False
+        # Opt-in bearer auth, for installs that bind a real interface (Tailscale).
+        token = getattr(self.server, "auth_token", "")
+        if token and not hmac.compare_digest(self.headers.get("Authorization") or "", "Bearer " + token):
+            self.json({"detail": "unauthorized"}, 401)
+            return False
+        return True
+
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "http://127.0.0.1")
@@ -99,6 +129,8 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
         self.end_headers()
 
     def do_GET(self):
+        if not self._guard():
+            return
         path = self._path().path
         q = self._query()
         if path in ("/api/ping", "/api/health"):
@@ -146,8 +178,19 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
             ep_id = path.split("/")[-2]
             return self.json(self.endpoint_models(ep_id))
         if path == "/api/prefs":
-            rows = self.store.rows("select key,value from prefs")
-            return self.json({r["key"]: self.loads(r["value"]) for r in rows})
+            # Prefs is a bulk dump, so it also carried the Telegram bot token and
+            # the CalDAV password in clear. Hand back a mask instead: the UI only
+            # needs to show that a secret is set, and PUT ignores the mask so a
+            # form that round-trips it can't wipe the real value.
+            out = {}
+            for r in self.store.rows("select key,value from prefs"):
+                v = self.loads(r["value"])
+                if r["key"] in SECRET_PREFS and v:
+                    v = SECRET_MASK
+                elif r["key"] == "calendar_connection" and isinstance(v, dict) and v.get("password"):
+                    v = dict(v, password=SECRET_MASK)
+                out[r["key"]] = v
+            return self.json(out)
         if path == "/api/email/status":
             sources = self.email_sources()
             first = sources[0] if sources else {}
@@ -236,6 +279,8 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
         return self.not_found()
 
     def do_POST(self):
+        if not self._guard():
+            return
         path = self._path().path
         if path == "/api/session":
             f = self._form_body()
@@ -463,6 +508,8 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
         return self.not_found()
 
     def do_PUT(self):
+        if not self._guard():
+            return
         path = self._path().path
         if path.startswith("/api/session/") and path.endswith("/workdir"):
             return self.workdir_post(path)
@@ -482,6 +529,8 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
         if path.startswith("/api/prefs/"):
             key = path.rsplit("/", 1)[-1]
             val = self._json_body().get("value")
+            if key in SECRET_PREFS and val == SECRET_MASK:
+                return self.json({"ok": True})   # the UI echoed the mask back — keep the real value
             self.store.exec("insert or replace into prefs(key,value) values(?,?)", (key, json.dumps(val)))
             return self.json({"ok": True})
         if path.startswith("/api/memory/"):
@@ -515,6 +564,8 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
     do_PATCH = do_PUT
 
     def do_DELETE(self):
+        if not self._guard():
+            return
         path = self._path().path
         if path.startswith("/api/session/"):
             self.store.exec("delete from sessions where id=?", (path.split("/")[3],))
@@ -568,6 +619,13 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
     COMPACT_KEEP_RECENT = 12       # most recent turns always sent verbatim
     COMPACT_CHAR_BUDGET = 48000    # ~12k tokens of history before we compact
 
+    # A tool's reply is fed back to the model and then RE-SENT on every later round
+    # of the same turn, so one `read_file` on a big source file or a chatty `bash`
+    # used to multiply across the whole loop. Compaction can't save us — it only
+    # ever sees persisted user/assistant rows, never live tool replies. Keep the
+    # head and the tail: errors and summaries live at the ends, filler in the middle.
+    MAX_TOOL_OUTPUT_CHARS = 24000
+
     COMPACT_SYSTEM_PROMPT = (
         "You are summarizing a conversation to preserve context after compaction. "
         "Produce a dense, structured summary that lets the conversation continue "
@@ -591,6 +649,16 @@ def main():
     root = Path(args.data_dir) if args.data_dir else app_support_dir()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.store = Store(root)
+    # Anti-rebinding: on the normal loopback bind, only loopback Hosts are real.
+    # A non-loopback bind (Tailscale) legitimately sees any Host, so it swaps the
+    # Host check for an opt-in bearer token instead — see Handler._guard.
+    loopback = args.host in ("127.0.0.1", "localhost", "::1")
+    server.allowed_hosts = ({f"127.0.0.1:{args.port}", f"localhost:{args.port}",
+                             f"[::1]:{args.port}"} if loopback else None)
+    server.auth_token = os.environ.get("JOEBRO_TOKEN", "")
+    if not loopback and not server.auth_token:
+        print(f"WARNING: bound to {args.host} with no JOEBRO_TOKEN — anyone who can "
+              "reach this port can run tools as you.", flush=True)
     threading.Thread(target=_task_scheduler, args=(server,), daemon=True).start()
     from jb_telegram import telegram_bot_loop
     threading.Thread(target=telegram_bot_loop, args=(server,), daemon=True).start()

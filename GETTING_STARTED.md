@@ -17,7 +17,7 @@ Open JoeBro. The local backend starts automatically on first run — no setup ne
 
 ### Step 2 — Add a model
 
-Click the **gear** (bottom-left of the sidebar) → **Add Model** → paste your API key or Ollama endpoint.
+Click the **gear** (bottom-left of the sidebar) → the **Models** tab → **Add Endpoint…** → paste your API key or Ollama endpoint, then hit **Add**.
 
 ### Step 3 — Say something
 

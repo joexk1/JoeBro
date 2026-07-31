@@ -194,10 +194,6 @@ final class APIClient {
         ])
     }
 
-    func disconnectEmail() async throws {
-        try await sendJSON("api/email/disconnect")
-    }
-
     func connectCalDAV(url: String, principal: String, password: String) async throws {
         try await sendJSON("api/calendar/connect-caldav", body: [
             "url": url,
@@ -446,11 +442,6 @@ final class APIClient {
         try await sendJSON("api/session/\(sid)/workdir", method: "PUT", body: body)
     }
 
-    /// Raw file bytes from the bound folder (for PDFs/images QuickLook).
-    func downloadWorkdirFile(sid: String, sub: String, filename: String) async throws -> URL {
-        try await downloadToTemp("api/session/\(sid)/workdir/raw", query: ["sub": sub], filename: filename)
-    }
-
     /// Header / footer / footnote text of a .docx (NSAttributedString skips them).
     func docxExtras(sid: String, sub: String) async throws -> (header: String, footer: String, footnotes: String) {
         let v: JSONValue = try await getJSON("api/session/\(sid)/workdir/docx-extras", query: ["sub": sub])
@@ -482,10 +473,6 @@ final class APIClient {
         let (data, resp) = try await session.data(for: req)
         try check(data, resp)
         return try JSONDecoder().decode(JSONValue.self, from: data)
-    }
-
-    func createEventRaw(_ fields: [String: Any]) async throws {
-        try await sendJSON("api/calendar/events", body: fields)
     }
 
     // MARK: Deep research
@@ -927,7 +914,10 @@ final class APIClient {
         var req: URLRequest
         if path.contains("?") {
             // appendingPathComponent escapes '?' — build query URLs properly
-            req = URLRequest(url: URL(string: baseURL.absoluteString + "/" + path)!)
+            guard let url = URL(string: baseURL.absoluteString + "/" + path) else {
+                throw URLError(.badURL)
+            }
+            req = URLRequest(url: url)
             req.httpMethod = method
         } else {
             req = request(path, method: method)
@@ -982,16 +972,22 @@ final class APIClient {
         return r.folders
     }
 
+    /// IMAP folder names contain spaces and brackets ("[Gmail]/All Mail", "Sent Items"),
+    /// which make URL(string:) return nil once interpolated into a query string.
+    private func esc(_ s: String) -> String {
+        s.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? s
+    }
+
     func emailMarkRead(uid: String, folder: String, read: Bool) async {
-        _ = try? await sendJSON("api/email/\(read ? "mark-read" : "mark-unread")/\(uid)?folder=\(folder)")
+        _ = try? await sendJSON("api/email/\(read ? "mark-read" : "mark-unread")/\(esc(uid))?folder=\(esc(folder))")
     }
 
     func emailArchive(uid: String, folder: String) async throws {
-        try await sendJSON("api/email/archive/\(uid)?folder=\(folder)")
+        try await sendJSON("api/email/archive/\(esc(uid))?folder=\(esc(folder))")
     }
 
     func emailDelete(uid: String, folder: String) async throws {
-        try await sendJSON("api/email/delete/\(uid)?folder=\(folder)", method: "DELETE")
+        try await sendJSON("api/email/delete/\(esc(uid))?folder=\(esc(folder))", method: "DELETE")
     }
 
     func emailSend(to: String, cc: String, subject: String, body: String,
@@ -1145,10 +1141,6 @@ final class APIClient {
         return r.documents
     }
 
-    func document(id: String) async throws -> DocDetail {
-        try await getJSON("api/document/\(id)")
-    }
-
     func updateDocument(id: String, content: String) async throws {
         var req = request("api/document/\(id)", method: "PUT")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -1221,60 +1213,6 @@ final class APIClient {
     func sessionWorkdir(sid: String) async throws -> String? {
         let r: WorkdirInfo = try await getJSON("api/session/\(sid)/workdir")
         return r.workdir
-    }
-
-    func setSessionWorkdir(sid: String, path: String?) async throws {
-        try await sendJSON("api/session/\(sid)/workdir", method: "PUT",
-                           body: ["workdir": path as Any])
-    }
-
-    func workdirList(sid: String, sub: String = "") async throws -> [WorkdirEntry] {
-        let r: WorkdirListResponse = try await getJSON("api/session/\(sid)/workdir/list",
-                                                       query: sub.isEmpty ? [:] : ["sub": sub])
-        return r.entries
-    }
-
-    func deleteWorkdirFile(sid: String, sub: String) async throws {
-        var req = request("api/session/\(sid)/workdir/delete-file", method: "POST")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["sub": sub])
-        let (data, resp) = try await session.data(for: req)
-        try check(data, resp)
-    }
-
-    func renameWorkdirFile(sid: String, sub: String, newName: String) async throws {
-        var req = request("api/session/\(sid)/workdir/rename-file", method: "POST")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["sub": sub, "new_name": newName])
-        let (data, resp) = try await session.data(for: req)
-        try check(data, resp)
-    }
-
-    /// Opens a workdir file as an editable Document (file_path-mirrored:
-    /// saves write back to disk). Returns the doc for the editor sheet.
-    func openWorkdirFile(sid: String, sub: String) async throws -> DocDetail {
-        var req = request("api/session/\(sid)/workdir/open-file", method: "POST")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["sub": sub])
-        let (data, resp) = try await session.data(for: req)
-        try check(data, resp)
-        return try JSONDecoder().decode(DocDetail.self, from: data)
-    }
-
-    // MARK: Local files / gallery
-
-    func personalFiles() async throws -> [PersonalFile] {
-        let r: PersonalFilesResponse = try await getJSON("api/personal")
-        return r.files
-    }
-
-    func galleryLibrary() async throws -> [GalleryItem] {
-        let r: GalleryLibraryResponse = try await getJSON("api/gallery/library", query: ["limit": "60"])
-        return r.items
-    }
-
-    func galleryImageURL(filename: String) -> URL {
-        baseURL.appendingPathComponent("api/generated-image/\(filename)")
     }
 
     // MARK: STT

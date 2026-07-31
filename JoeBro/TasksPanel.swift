@@ -49,7 +49,12 @@ struct TasksPanel: View {
                     let shown = filtered(list)
                     VStack(spacing: 0) {
                         if !selection.isEmpty {
-                            selectionBar(total: shown.count, allIDs: shown.map(\.id))
+                            SelectionBar(total: shown.count, allIDs: shown.map(\.id), selection: $selection) { ids in
+                                Task {
+                                    for id in ids { await APIClient.shared.deleteTask(id) }
+                                    await load()
+                                }
+                            }
                         }
                         ScrollView {
                             LazyVStack(spacing: 8) {
@@ -92,56 +97,13 @@ struct TasksPanel: View {
         catch { tasks = .failed(error.localizedDescription) }
     }
 
-    private func selectionBar(total: Int, allIDs: [String]) -> some View {
-        HStack(spacing: 10) {
-            Text("\(selection.count) selected")
-                .font(.system(size: 11, weight: .semibold))
-            Button(selection.count == total ? "None" : "All") {
-                withAnimation(.spring(duration: 0.25)) {
-                    selection = selection.count == total ? [] : Set(allIDs)
-                }
-            }
-            .buttonStyle(.borderless)
-            .font(.system(size: 11))
-            Spacer()
-            Button {
-                let ids = selection
-                selection = []
-                Task {
-                    for id in ids { await APIClient.shared.deleteTask(id) }
-                    await load()
-                }
-            } label: {
-                Image(systemName: "trash").font(.system(size: 12))
-            }
-            .buttonStyle(.borderless)
-            .help("Delete selected")
-            Button {
-                withAnimation(.spring(duration: 0.25)) { selection = [] }
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.borderless)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color.accentColor.opacity(0.10))
-        .transition(.move(edge: .top).combined(with: .opacity))
-    }
 
-    private func toggleSelect(_ id: String) {
-        withAnimation(.spring(duration: 0.2)) {
-            if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
-        }
-    }
 
     private func taskRow(_ t: TaskItem) -> some View {
         let paused = t.status == "paused"
         return SkillRowShell(id: t.id, checked: selection.contains(t.id),
                              selecting: !selection.isEmpty,
-                             onToggleCheck: { toggleSelect(t.id) }) {
+                             onToggleCheck: { toggleSelection(t.id, in: &selection) }) {
             Image(systemName: paused ? "pause.circle" : "clock.arrow.circlepath")
                 .font(.system(size: 14))
                 .foregroundStyle(paused ? Color.secondary : Color.accentColor)
@@ -212,7 +174,7 @@ struct TasksPanel: View {
                     name: t["name"] as? String ?? String(described.prefix(40)),
                     prompt: t["prompt"] as? String ?? described,
                     schedule: ["daily", "weekly", "monthly"].contains(t["schedule"] as? String ?? "")
-                        ? t["schedule"] as! String : "daily",
+                        ? (t["schedule"] as? String ?? "daily") : "daily",
                     time: t["time"] as? String ?? "09:00")
                 await load()
             } catch {
@@ -264,6 +226,7 @@ struct NewTaskSheet: View {
     @State private var repeatDay = 0
     @State private var mode = "sandbox"
     @State private var error: String?
+    @State private var saving = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -271,10 +234,13 @@ struct NewTaskSheet: View {
                 Text("New Task").font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Create") { create() }
-                    .buttonStyle(.glassProminent)
-                    .tint(Color.accentColor)
-                    .disabled(prompt.isEmpty)
+                Button { create() } label: {
+                    if saving { ProgressView().controlSize(.small) } else { Text("Create") }
+                }
+                .buttonStyle(.glassProminent)
+                .tint(Color.accentColor)
+                .keyboardShortcut(.defaultAction)
+                .disabled(saving || prompt.isEmpty)
             }
             .padding(14)
             Divider()
@@ -316,7 +282,9 @@ struct NewTaskSheet: View {
     }
 
     private func create() {
+        saving = true
         Task {
+            defer { saving = false }   // a second click while in flight made two tasks
             do {
                 try await APIClient.shared.createTask(
                     name: name.isEmpty ? String(prompt.prefix(40)) : name,
@@ -342,6 +310,7 @@ struct EditTaskSheet: View {
     @State private var mode = "sandbox"
     @State private var repeatDay = 0
     @State private var error: String?
+    @State private var saving = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -349,10 +318,13 @@ struct EditTaskSheet: View {
                 Text("Edit Task").font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save") { save() }
-                    .buttonStyle(.glassProminent)
-                    .tint(Color.accentColor)
-                    .disabled(prompt.isEmpty)
+                Button { save() } label: {
+                    if saving { ProgressView().controlSize(.small) } else { Text("Save") }
+                }
+                .buttonStyle(.glassProminent)
+                .tint(Color.accentColor)
+                .keyboardShortcut(.defaultAction)
+                .disabled(saving || prompt.isEmpty)
             }
             .padding(14)
             Divider()
@@ -402,7 +374,9 @@ struct EditTaskSheet: View {
     }
 
     private func save() {
+        saving = true
         Task {
+            defer { saving = false }
             do {
                 try await APIClient.shared.updateTask(
                     id: task.id, name: name, prompt: prompt, schedule: schedule, time: time, permissionMode: mode, repeatDay: repeatDay)

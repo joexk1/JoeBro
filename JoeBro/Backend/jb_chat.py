@@ -192,7 +192,8 @@ class ChatMixin:
         # readout. The full prompt is every message stored for this session so far
         # (the assistant reply isn't persisted until below), plus the response.
         elapsed = round(time.time() - started, 2)
-        m = self._response_stats(sid, saved_reply, thinking, f.get("model"), elapsed)
+        m = self._response_stats(sid, saved_reply, thinking, f.get("model"), elapsed,
+                                 getattr(self, "_prompt_overhead_tokens", 1500))
         sse({"type": "metrics", "data": {"total_time": elapsed, "response_time": elapsed,
                                          "tokens_per_second": m["tokens_per_second"],
                                          "context_percent": m["context_percent"]}})
@@ -239,7 +240,9 @@ class ChatMixin:
         content = doc.get("content") or ""
         title = doc.get("title", "")
         language = doc.get("language", "markdown")
-        sse({"type": "doc_stream_open", "title": title, "language": language})
+        # is_new marks this as a CREATE so the client lands it directly instead
+        # of raising the Apply/Reject edit banner (which is only for edits).
+        sse({"type": "doc_stream_open", "title": title, "language": language, "is_new": True})
         step = max(40, len(content) // 60)  # cap the animation at ~60 frames
         acc = ""
         for chunk in self._chunks(content, step):
@@ -247,7 +250,7 @@ class ChatMixin:
             sse({"type": "doc_stream_delta", "content": acc})
             time.sleep(0.02)
         sse({"type": "doc_update", "doc_id": doc.get("doc_id", ""), "title": title,
-             "language": language, "content": content, "version": 1})
+             "language": language, "content": content, "version": 1, "is_new": True})
 
     # no agent round cap — the loop runs until the model stops calling tools
 
@@ -290,7 +293,16 @@ class ChatMixin:
             system += (" The terminal is OFF: you have NO ability to run shell or Python commands or copy/move/delete "
                        "files. If the user asks for that, say the terminal toggle (Full Access) must be enabled — do not claim you did it.")
         doc = self.open_doc_context(f)
-        if doc:
+        if doc and doc.get("clipped"):
+            # Only the head is here, so a whole-file rewrite would DELETE the rest.
+            system += (
+                f"\n\nThe user has this document OPEN: path `{doc['path']}`. It is too long to show in "
+                f"full — you have only the FIRST part below. To change it you MUST use edit_document with "
+                f"find/replace, never `content` (that rewrites the whole file and would destroy everything "
+                f"you cannot see). Call read_file on `{doc['path']}` if you need the rest. "
+                f"Beginning of `{doc['path']}`:\n\"\"\"\n{doc['content']}\n\"\"\""
+            )
+        elif doc:
             system += (
                 f"\n\nThe user has this document OPEN: path `{doc['path']}`. When they ask to add to / "
                 f"append to / change \"the doc\", call edit_document for that path with `content` set to the "
@@ -541,7 +553,15 @@ class ChatMixin:
             system = self._agent_system(f)
         else:
             system = self._chat_system(f)
-        skills_ctx, skills_used = self._use_relevant_skills(f.get("message", ""))   # inject + bump confidence
+        # Say WHERE the bound folder is, and name its top level. The prompt used
+        # to talk about "bound-folder files" without ever giving the path or a
+        # single filename, so every turn opened with a list_files round just to
+        # find out whether a folder was bound at all.
+        if agent:
+            system += ("\n\n" + self._workdir_context(root) if root else
+                       "\n\nNo folder is bound to this chat, so the file tools are unavailable — "
+                       "tell the user to bind one (the folder button in the sidebar) rather than guessing paths.")
+        skills_ctx, skills_used = self._use_relevant_skills(f.get("message", ""), f)   # gate + inject + bump
         if skills_ctx:
             system += "\n\n" + skills_ctx
         if skills_used:
@@ -584,6 +604,9 @@ class ChatMixin:
                 "created, sent, or changed anything now. If the user asks you to actually "
                 "do something, tell them to switch on Agent mode (the hammer toggle).")})
         tools = self.tools_for(f, has_folder=root is not None)
+        # What the system prompt + tool schemas actually cost this turn, for the
+        # context gauge (~4 chars/token, same estimate the rest of the readout uses).
+        self._prompt_overhead_tokens = (len(system) + len(json.dumps(tools or []))) / 4.0
         events, thinking_parts, final_text = [], [], ""
         # Optional hard cap on tool calls per turn (Settings). 0 = unlimited.
         max_tool_calls = max(0, int(f.get("max_tool_calls") or 0))
@@ -619,6 +642,11 @@ class ChatMixin:
                                   "I started repeating myself there, so I stopped. Tell me how you'd like to proceed.")
                 break
             messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": raw_calls})
+            # This round's narration streamed live, but only the FINAL round's
+            # text is persisted — so a reloaded chat lost the prose between tool
+            # rows and clients had to re-order live output to match. Hang it on
+            # the round's first event instead: order survives the reload.
+            pending_narration = (msg.get("content") or "").strip()
             pending_vis = []   # image vision messages, appended AFTER all tool replies
             for tc in raw_calls:
                 fn = tc.get("function") or {}
@@ -639,8 +667,11 @@ class ChatMixin:
                 if call_sigs[sig] >= 3:
                     stuck = True   # same call 3× — wrap up on the next round
                 command = self.tool_command_summary(name, body)
-                # Claude-Code-style approval for commands in full mode.
-                if name in ("bash", "python") and self._needs_permission(f, sid, name):
+                # Claude-Code-style approval for commands in full mode. Creating a
+                # NEW file is a tool action, so it's gated here (the tool-use
+                # prompt) — NOT by the editor's Apply/Reject banner, which is only
+                # for EDITS to existing docs.
+                if name in ("bash", "python", "create_document") and self._needs_permission(f, sid, name):
                     decision = self._await_permission(emit, name, command)
                     if decision == "always":
                         with _PERMISSION_GUARD:
@@ -649,7 +680,10 @@ class ChatMixin:
                         emit({"type": "tool_start", "tool": name, "command": command})
                         emit({"type": "tool_output", "tool": name, "command": command,
                               "output": "Command denied by the user.", "exit_code": 1})
-                        events.append({"tool": name, "command": command, "output": "Command denied by the user.", "exit_code": 1})
+                        denied = {"tool": name, "command": command, "output": "Command denied by the user.", "exit_code": 1}
+                        if pending_narration:
+                            denied["narration"], pending_narration = pending_narration, ""
+                        events.append(denied)
                         messages.append({"role": "tool", "tool_call_id": tc.get("id") or name,
                                          "content": "Command denied by the user."})
                         continue
@@ -660,6 +694,8 @@ class ChatMixin:
                 if event is None:
                     event = {"tool": name, "command": command,
                              "output": f"The {name} tool is not available in this mode.", "exit_code": 1}
+                if pending_narration:
+                    event["narration"], pending_narration = pending_narration, ""
                 events.append(event)
                 emit({"type": "tool_output", "tool": event.get("tool"), "command": event.get("command", ""),
                       "output": event.get("output", ""), "exit_code": event.get("exit_code", 0)})
@@ -667,7 +703,7 @@ class ChatMixin:
                 if doc and event.get("exit_code") == 0:
                     emit({"_doc": doc, "_tool": event.get("tool")})
                 messages.append({"role": "tool", "tool_call_id": tc.get("id") or name,
-                                 "content": (event.get("output") or "")})
+                                 "content": self._clip_tool_output(event.get("output") or "")})
                 # If the agent read an image, remember it — but DON'T append it
                 # here: a user vision message wedged between an assistant's
                 # tool_calls and their tool replies breaks the pairing and the
@@ -685,6 +721,55 @@ class ChatMixin:
         if not final_text:
             final_text = "I stopped without a final answer. Ask me to continue."
         return final_text, "\n\n".join(thinking_parts), events
+
+    # Base64 inflates a file by ~4/3, so a 4 MB photo becomes ~5.5M characters —
+    # past what any endpoint will accept, and four of them in context guaranteed a
+    # failed request. Downscale first; models see nothing useful above ~1568px.
+    MAX_IMAGE_BYTES = 1_500_000
+
+    def _image_bytes(self, path):
+        """Image data small enough to send, or None. Shrinks oversized images with
+        sips (macOS, where the production app runs). ponytail: no Pillow — the
+        backend is stdlib-only by design; a Linux host without sips just skips the
+        image rather than sending a request the endpoint will reject."""
+        try:
+            raw = Path(path).read_bytes()
+        except OSError:
+            return None
+        if len(raw) <= self.MAX_IMAGE_BYTES:
+            return raw
+        try:
+            with tempfile.NamedTemporaryFile(suffix=os.path.splitext(str(path))[1] or ".png") as tmp:
+                subprocess.run(["sips", "--resampleHeightWidthMax", "1568", str(path), "--out", tmp.name],
+                               capture_output=True, timeout=30, check=True)
+                small = Path(tmp.name).read_bytes()
+            return small if small and len(small) <= self.MAX_IMAGE_BYTES else None
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    def _workdir_context(self, root):
+        """One line for the bound folder plus its top level, so the agent starts
+        knowing what it's looking at. Names only — no sizes, no recursion; a
+        deeper look is what list_files is for."""
+        try:
+            names = sorted(p.name + ("/" if p.is_dir() else "")
+                           for p in root.iterdir() if not p.name.startswith("."))
+        except OSError:
+            names = []
+        listing = ", ".join(names[:40]) + (" …" if len(names) > 40 else "")
+        return (f"The chat is bound to the folder `{root}`. Every file-tool path is relative to it. "
+                f"Its top level: {listing or '(empty)'}. Use list_files to look inside a sub-folder.")
+
+    def _clip_tool_output(self, text):
+        """Bound one tool reply before it enters the loop's message list. Keeps
+        the head and the tail — a file's shape is at the top, an error or a
+        summary at the bottom; it's the middle that's filler."""
+        cap = self.MAX_TOOL_OUTPUT_CHARS
+        if len(text) <= cap:
+            return text
+        head, tail = int(cap * 0.7), cap - int(cap * 0.7)
+        return (f"{text[:head]}\n\n… [{len(text) - cap:,} characters cut from the middle — "
+                f"narrow the request (a sub-path, a search term) to see them] …\n\n{text[-tail:]}")
 
     def _attachment_image_blocks(self, f):
         """Vision blocks for files the user attached to this turn. The app uploads
@@ -709,10 +794,10 @@ class ChatMixin:
             ext = os.path.splitext(row.get("name") or path)[1].lower()
             if not (mime.startswith("image/") or ext in IMAGE_EXTS):
                 continue
-            try:
-                b64 = base64.b64encode(Path(path).read_bytes()).decode("ascii")
-            except Exception:
+            raw = self._image_bytes(path)
+            if not raw:
                 continue
+            b64 = base64.b64encode(raw).decode("ascii")
             if not mime:
                 mime = mimetypes.guess_type(path)[0] or "image/png"
             blocks.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
@@ -720,8 +805,8 @@ class ChatMixin:
 
     def _image_vision_message(self, f, root, body, allow_outside):
         """Build a vision user-message for an image the agent just read, so the
-        model actually sees it — full quality. Request size is bounded by
-        _prune_context_images, not by compressing the image."""
+        model actually sees it. Request size is bounded by _prune_context_images
+        across turns and by _image_bytes within one."""
         rel = (self.parse_tool_fields(body).get("path") or "").strip()
         ext = os.path.splitext(rel)[1].lower()
         if not rel or ext not in IMAGE_EXTS:
@@ -730,8 +815,8 @@ class ChatMixin:
         b64 = None
         try:
             target = self.resolve_tool_path(root, rel, allow_outside)
-            if target.is_file():
-                b64 = base64.b64encode(target.read_bytes()).decode("ascii")
+            raw = self._image_bytes(target) if target.is_file() else None
+            b64 = base64.b64encode(raw).decode("ascii") if raw else None
         except Exception:
             b64 = None
         if not b64:
@@ -998,9 +1083,15 @@ class ChatMixin:
         self.store.exec("delete from prefs where key=?", ("compact_" + sid,))   # stale cache
         return {"ok": True, "compacted": True, "removed": len(older)}
 
+    # The open document rides in the system prompt on EVERY round of every turn
+    # while the tab is open, so a long file is the most expensive thing here.
+    # Past this, send the head and tell the model to read the rest on demand.
+    MAX_OPEN_DOC_CHARS = 20000
+
     def open_doc_context(self, f):
         """The path + current text of the document open in the app, so the model
-        edits it instead of creating a new file. Truncated to bound spend."""
+        edits it instead of creating a new file. Long files are clipped — see
+        MAX_OPEN_DOC_CHARS."""
         doc_id = (f.get("active_doc_id") or "").strip()
         if not doc_id or doc_id == "_streaming_":
             return None
@@ -1014,7 +1105,7 @@ class ChatMixin:
             try:
                 target = self.resolve_in_workdir(Path(root_text).expanduser().resolve(), sub)
                 if target.is_file():
-                    return {"path": sub, "content": read_doc_text(target)}
+                    return self._doc_ctx(sub, read_doc_text(target))
             except Exception:
                 pass
             return None
@@ -1028,7 +1119,12 @@ class ChatMixin:
                 rel = str(Path(file_path).resolve().relative_to(Path(root_text).expanduser().resolve()))
             except Exception:
                 rel = Path(file_path).name
-        return {"path": rel or Path(file_path).name, "content": (row.get("current_content") or "")}
+        return self._doc_ctx(rel or Path(file_path).name, row.get("current_content") or "")
+
+    def _doc_ctx(self, path, content):
+        if len(content) <= self.MAX_OPEN_DOC_CHARS:
+            return {"path": path, "content": content, "clipped": False}
+        return {"path": path, "content": content[:self.MAX_OPEN_DOC_CHARS], "clipped": True}
 
     def chat_reply_with_tools(self, f):
         sid = f.get("session") or ""
@@ -1114,7 +1210,7 @@ class ChatMixin:
             return 32_000
         return 128_000
 
-    def _response_stats(self, sid, reply, thinking, model, elapsed):
+    def _response_stats(self, sid, reply, thinking, model, elapsed, overhead_tokens=1500):
         """tok/s + context-window-used %, estimated from text (~4 chars/token).
         Endpoints seldom return real usage on a stream, and this only feeds the
         readout, so an estimate is fine and works for every endpoint."""
@@ -1122,14 +1218,16 @@ class ChatMixin:
         out_tokens = out_chars / 4.0
         tps = round(out_tokens / elapsed, 1) if elapsed and elapsed > 0 else 0.0
         # Prompt ≈ every message stored for this session so far (the assistant
-        # reply isn't persisted yet) + ~1.5k for the system prompt / tool schemas.
+        # reply isn't persisted yet) + the system prompt and tool schemas. That
+        # overhead was pinned at 1.5k tokens; it's ~2.8k in agent mode, so the
+        # gauge under-read by nearly half. Measure it instead of guessing.
         try:
             prompt_chars = sum(len(r.get("content") or "")
                                for r in self.store.rows(
                                    "select content from messages where session_id=?", (sid,)))
         except Exception:
             prompt_chars = 0
-        used = prompt_chars / 4.0 + 1500 + out_tokens
+        used = prompt_chars / 4.0 + overhead_tokens + out_tokens
         window = self._context_window(model)
         ctx = round(min(100.0, max(0.0, 100.0 * used / window)), 1) if window else 0.0
         return {"tokens_per_second": tps, "context_percent": ctx}

@@ -1,4 +1,4 @@
-"""Memory, skills, tasks, deep research, JSON serializers."""
+"""Skills, tasks, deep research, JSON serializers. (Memory lives in jb_memory.)"""
 from jb_core import *  # noqa: F401,F403
 
 _LEARN_JOBS = {}   # learn-from-sources jobs: id -> {status, detail, skills, error}
@@ -73,13 +73,14 @@ class AssistantMixin:
         "tell", "show", "find", "take", "them", "time", "work", "stuff", "thing",
     })
 
-    def _use_relevant_skills(self, message):
-        """Find saved skills relevant to this request, inject them, and RAISE
-        their confidence (frequency of use). Skills that keep getting used climb
-        and survive the audit; ones that never match stay low and get pruned —
-        the self-improving loop. Matching is whole-word against the CURATED fields
-        only (name/description/when-to-use), with a real threshold, so a skill's
-        long procedure body no longer pulls it into unrelated chat."""
+    def _use_relevant_skills(self, message, f=None):
+        """Find saved skills relevant to this request, inject them, and RAISE the
+        confidence of the ones ACTUALLY chosen (the self-improving loop). Two
+        stages: (1) a cheap whole-word keyword filter over the curated fields
+        (name/description/when-to-use) builds a small CANDIDATE set — when nothing
+        overlaps we stop here with zero cost and inject nothing; (2) a fast-model
+        gate then confirms which candidates truly apply before anything is
+        injected, so marginal keyword overlap no longer pollutes the context."""
         rows = self.store.rows("select * from skills where status != 'archived'")
         if not rows:
             return "", []
@@ -119,19 +120,68 @@ class AssistantMixin:
         if not scored:
             return "", []
         scored.sort(key=lambda t: t[0], reverse=True)
-        top = scored[:3]
-        matched = [r for _, _, r in top]
-        for _, nhits, r in top:
-            # Confidence climbs HARSH and incremental: a few on-point uses to clear
-            # the 30% audit threshold, not one. Based on distinct matching words
-            # (real efficacy), not the match rank — so name/rare bonuses sharpen
-            # WHICH skills match without inflating how fast they gain trust.
+        candidates = [r for _, _, r in scored[:6]]      # recall set (cap for the gate)
+        cand_hits = {r["id"]: nh for _, nh, r in scored[:6]}
+
+        # PRECISION GATE — a fast model confirms which candidates DIRECTLY apply.
+        # Only reached because the keyword filter already found plausible matches,
+        # so most turns never pay for it. None = call failed → conservative
+        # fallback to the single top keyword match (not the old top-3 dump).
+        f = f or {}
+        endpoint_id = f.get("endpoint_id") or f.get("endpoint") or ""
+        model = f.get("model") or ""
+        matched = self._skill_router(message, candidates, endpoint_id, model) if (endpoint_id and model) else None
+        if matched is None:
+            matched = candidates[:1]
+        matched = matched[:3]
+        if not matched:
+            return "", []
+        for r in matched:
+            # Confidence climbs HARSH and incremental, and ONLY for skills the gate
+            # actually chose — so keyword-matched-but-rejected skills don't inflate
+            # and survive the audit. Based on distinct matching words (real efficacy).
+            nhits = cand_hits.get(r["id"], 1)
             bump = min(8, 2 + nhits)
             new_conf = min(100, (r.get("confidence") if r.get("confidence") is not None else 60) + bump)
             self.store.exec("update skills set confidence=?, updated_at=? where id=?", (new_conf, now_iso(), r["id"]))
-        lines = "\n".join(f"- {r.get('name')}: {(r.get('content') or '').strip()[:300]}" for r in matched)
+        # 300 chars used to cut the average skill's procedure in half — the gate
+        # above already decided this skill applies, so sending a procedure the
+        # model can't finish reading is the worst of both. At most 3 skills reach
+        # here, so the ceiling is ~3.6k chars and only on turns that earned it.
+        lines = "\n".join(f"- {r.get('name')}: {(r.get('content') or '').strip()[:1200]}" for r in matched)
         return ("Relevant saved skills you can apply to this request:\n" + lines,
                 [r.get("name") for r in matched if r.get("name")])
+
+    def _skill_router(self, message, candidates, endpoint_id, model):
+        """Ask a fast model which CANDIDATE skills directly apply to the request.
+        Returns the chosen subset (possibly empty), or None if the call fails so
+        the caller can fall back. Keeps the prompt tiny: numbered triggers only."""
+        catalog = "\n".join(
+            f"{i + 1}. {r.get('name')}: {(r.get('when_to_use') or r.get('description') or '').strip()[:160]}"
+            for i, r in enumerate(candidates))
+        try:
+            out = self._complete(
+                endpoint_id, model,
+                "You gate which saved skills apply to a user request. MOST requests need NONE. "
+                "A skill applies ONLY if the request is exactly the kind of task its trigger describes. "
+                "Reply with ONLY a JSON array of the numbers that clearly apply — [] when in doubt.",
+                f"Skills:\n{catalog}\n\nUser request: {message}", max_tokens=40)
+        except Exception:
+            return None
+        if not out:
+            return None
+        m = re.search(r"\[[\d,\s]*\]", out)
+        if not m:
+            return [] if "[]" in out else None
+        try:
+            nums = json.loads(m.group(0))
+        except Exception:
+            return None
+        chosen = []
+        for n in nums:
+            if isinstance(n, int) and 1 <= n <= len(candidates) and candidates[n - 1] not in chosen:
+                chosen.append(candidates[n - 1])
+        return chosen
 
     def _auto_learn(self, sid, user_msg, reply, endpoint_id, model):
         """After a turn, quietly extract a durable user memory and/or a reusable

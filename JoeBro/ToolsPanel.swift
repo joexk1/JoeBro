@@ -88,10 +88,8 @@ struct ToolsPanel: View {
 
             if store.plugins.isEmpty {
                 Spacer()
-                Text("No plugins yet. Add a plugin's repo folder to install it.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
+                ContentUnavailableView("No plugins yet", systemImage: "puzzlepiece.extension",
+                                       description: Text("Add a plugin's repo folder to install it."))
                 Spacer()
             } else {
                 ScrollView {
@@ -241,10 +239,8 @@ struct ToolsPanel: View {
 
             if store.mcpServers.isEmpty {
                 Spacer()
-                Text("No MCP servers yet. Add one (e.g. command npx, args -y @modelcontextprotocol/server-everything).")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
+                ContentUnavailableView("No MCP servers yet", systemImage: "server.rack",
+                                       description: Text("Add one — e.g. command `npx`, args `-y @modelcontextprotocol/server-everything`."))
                 Spacer()
             } else {
                 ScrollView {
@@ -338,10 +334,8 @@ struct ToolsPanel: View {
 
             if store.apiTools.isEmpty {
                 Spacer()
-                Text("No API tools yet. Add one to make it callable in Agent mode.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
+                ContentUnavailableView("No API tools yet", systemImage: "wrench.and.screwdriver",
+                                       description: Text("Add one to make it callable in Agent mode."))
                 Spacer()
             } else {
                 ScrollView {
@@ -619,6 +613,8 @@ struct PluginEditSheet: View {
                 Button("Save") { save() }
                     .buttonStyle(.glassProminent)
                     .tint(Color.accentColor)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(name.isEmpty)
             }
             .padding(14)
             Divider()

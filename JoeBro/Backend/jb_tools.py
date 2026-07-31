@@ -1001,6 +1001,11 @@ class ToolsMixin:
     def manage_tasks_tool(self, body):
         args = self.parse_tool_args(body)
         action = (args.get("action") or "list").lower()
+        # Scheduled tasks later run at whatever permission_mode they were saved
+        # with, so letting the MODEL set it is a privilege escalation: a sandboxed
+        # agent (or a prompt injected into one) could schedule itself write-anywhere
+        # access for tomorrow. Only the Tasks UI sets this, over the HTTP route.
+        args.pop("permission_mode", None)
         if action in ("add", "create"):
             return json.dumps(self.upsert_task(args), ensure_ascii=False)
         if action in ("edit", "update"):

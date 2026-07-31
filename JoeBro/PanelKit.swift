@@ -75,11 +75,16 @@ extension View {
     }
 }
 
+// Built once per email row and per memory card otherwise.
+private let relativeFmt: RelativeDateTimeFormatter = {
+    let f = RelativeDateTimeFormatter()
+    f.unitsStyle = .abbreviated
+    return f
+}()
+
 func relativeDate(_ iso: String?) -> String {
     guard let iso, let d = parseISO(iso) else { return "" }
-    let fmt = RelativeDateTimeFormatter()
-    fmt.unitsStyle = .abbreviated
-    return fmt.localizedString(for: d, relativeTo: Date())
+    return relativeFmt.localizedString(for: d, relativeTo: Date())
 }
 
 
@@ -109,11 +114,6 @@ struct HoverBounce: ViewModifier {
 extension View {
     func hoverBounce(_ scale: CGFloat = 1.02) -> some View {
         modifier(HoverBounce(scale: scale))
-    }
-
-    /// Bounce + hover highlight behind the row.
-    func hoverBounceHighlight(_ cornerRadius: CGFloat = 9, scale: CGFloat = 1.02) -> some View {
-        modifier(HoverBounce(scale: scale, highlightRadius: cornerRadius))
     }
 }
 
@@ -282,11 +282,6 @@ extension View {
     func joeGlassCapsuleInteractive() -> some View {
         modifier(JoeGlass(cornerRadius: nil, interactive: true))
     }
-    /// Content cards (bubbles etc) scale at a fraction of the chrome
-    /// effect — preserves the chrome/content contrast ratio.
-    func joeCardBacking(_ cornerRadius: CGFloat) -> some View {
-        modifier(JoeCardBacking(cornerRadius: cornerRadius))
-    }
 }
 
 
@@ -326,18 +321,6 @@ private struct JoeCard: ViewModifier {
 extension View {
     func joeCard(_ cornerRadius: CGFloat) -> some View {
         modifier(JoeCard(cornerRadius: cornerRadius))
-    }
-}
-
-private struct JoeCardBacking: ViewModifier {
-    var cornerRadius: CGFloat
-    @Environment(GlassSettings.self) private var settings
-
-    func body(content: Content) -> some View {
-        content.background(
-            Color(nsColor: .windowBackgroundColor)
-                .opacity(max(0, settings.solidity - 0.5) * 2 * 0.5),
-            in: RoundedRectangle(cornerRadius: cornerRadius))
     }
 }
 
@@ -458,5 +441,58 @@ struct PanelSearchField: View {
         .padding(.vertical, open ? 5 : 0)
         .background(open ? AnyShapeStyle(.quaternary.opacity(0.5)) : AnyShapeStyle(.clear), in: Capsule())
         .onChange(of: open) { _, isOpen in if isOpen { focused = true } }
+    }
+}
+
+
+/// The "N selected · All/None · 🗑 · ✕" strip every list panel shows once you
+/// tick a row. Was copy-pasted into four panels; only `onDelete` ever differed.
+struct SelectionBar: View {
+    let total: Int
+    let allIDs: [String]
+    @Binding var selection: Set<String>
+    let onDelete: ([String]) -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text("\(selection.count) selected")
+                .font(.system(size: 11, weight: .semibold))
+            Button(selection.count == total ? "None" : "All") {
+                withAnimation(.spring(duration: 0.25)) {
+                    selection = selection.count == total ? [] : Set(allIDs)
+                }
+            }
+            .buttonStyle(.borderless)
+            .font(.system(size: 11))
+            Spacer()
+            Button {
+                let ids = selection
+                selection = []          // clear first: the rows are about to go
+                onDelete(Array(ids))
+            } label: {
+                Image(systemName: "trash").font(.system(size: 12))
+            }
+            .buttonStyle(.borderless)
+            .help("Delete selected")
+            Button {
+                withAnimation(.spring(duration: 0.25)) { selection = [] }
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.accentColor.opacity(0.10))
+        .transition(.move(edge: .top).combined(with: .opacity))
+    }
+}
+
+/// Tick/untick one row in a panel's selection set.
+func toggleSelection(_ id: String, in selection: inout Set<String>) {
+    withAnimation(.spring(duration: 0.2)) {
+        if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
     }
 }

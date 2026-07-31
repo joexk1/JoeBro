@@ -221,7 +221,7 @@ struct ComposerView: View {
             .tint(Color.accentColor)
             .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && store.pendingAttachments.isEmpty)
             .keyboardShortcut(.return, modifiers: .command)
-            .help("Send (⏎)")
+            .help("Send (⏎, or ⌘⏎ from the text field)")
         }
     }
 

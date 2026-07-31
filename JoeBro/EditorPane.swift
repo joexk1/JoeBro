@@ -294,8 +294,14 @@ struct EditorPane: View {
                 .padding(.vertical, 5)
                 Divider().opacity(0.3)
                 RichDocEditor(url: url, commands: richCommands, editable: true,
-                              onChange: { store.openDocs[i].dirty = true },
-                              onSaved: { if let j = store.docIndex(store.openDocs[i].id) { store.openDocs[j].dirty = false } },
+                              onChange: {
+                                  guard store.openDocs.indices.contains(i) else { return }
+                                  store.openDocs[i].dirty = true
+                              },
+                              onSaved: {
+                                  guard store.openDocs.indices.contains(i) else { return }
+                                  if let j = store.docIndex(store.openDocs[i].id) { store.openDocs[j].dirty = false }
+                              },
                               onSelectionSize: { richFontSize = Double($0.rounded()) },
                               onSelectionFont: { richFontName = $0 },
                               onAddFootnote: { textView in addFootnote(index: i, textView: textView) })
@@ -497,6 +503,7 @@ struct EditorPane: View {
                                monospaced: isMonospaced(doc),
                                commands: commands)
                     .onChange(of: store.openDocs[i].content) {
+                        guard store.openDocs.indices.contains(i) else { return }
                         store.openDocs[i].dirty = true
                         store.scheduleAutosave(doc.id)
                     }
@@ -846,14 +853,15 @@ struct DiffView: View {
     }
 
     var body: some View {
-        ScrollView {
+        let rows = lines   // full difference(from:) — compute it once per body
+        return ScrollView {
             VStack(alignment: .leading, spacing: 1) {
-                if lines.isEmpty {
+                if rows.isEmpty {
                     Text("No line-level changes (whitespace or reorder only)")
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
                 }
-                ForEach(Array(lines.enumerated()), id: \.offset) { _, entry in
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, entry in
                     HStack(alignment: .top, spacing: 6) {
                         Text(entry.1 == 1 ? "+" : "−")
                             .font(.system(size: 10.5, weight: .bold, design: .monospaced))
