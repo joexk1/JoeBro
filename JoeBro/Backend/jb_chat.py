@@ -396,6 +396,7 @@ class ChatMixin:
             # Cloak Mode (default ON): secrets/PII never leave this process —
             # every endpoint, local ones included.
             payload = dict(payload, messages=cloak_messages(payload["messages"]))
+        payload = self._reasoning_payload(base, f, payload)
         req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), method="POST")
         req.add_header("Content-Type", "application/json")
         # Groq/Cerebras sit behind Cloudflare, which 403s requests that have no
@@ -406,6 +407,35 @@ class ChatMixin:
         if ep.get("api_key"):
             req.add_header("Authorization", "Bearer " + ep["api_key"])
         return req
+
+    @staticmethod
+    def _reasoning_payload(base_url, f, payload):
+        """Apply the Think/Fast switch to an outgoing chat payload.
+
+        No field is understood by every provider, so each one gets the key it
+        actually reads; anything we don't recognise gets `reasoning_effort`,
+        which providers that don't support it ignore rather than reject. Only
+        "Fast" acts — "Think" leaves the model exactly as configured, so a
+        reasoning model still reasons without us guessing a budget for it.
+
+        ponytail: matched on base_url, which covers every endpoint the app
+        ships with. Add a per-endpoint column if a provider ever needs one."""
+        url = (base_url or "").lower()
+        if str(f.get("thinking", "")).strip().lower() in ("false", "0", "off", "no"):
+            if "openrouter.ai" in url:
+                payload["reasoning"] = {"enabled": False, "exclude": True}
+            elif "api.anthropic.com" in url:
+                pass                                       # extended thinking is opt-in there
+            elif "api.openai.com" in url:
+                payload["reasoning_effort"] = "minimal"    # OpenAI rejects "none"
+            else:
+                payload["reasoning_effort"] = "none"       # deepseek, groq, cerebras, gemini
+                if ":11434" in url:                        # Ollama reads the template flag instead
+                    payload["chat_template_kwargs"] = {"enable_thinking": False}
+        elif f.get("effort"):
+            # gpt-5 / o-series / gpt-oss: the app only sends this for models that take it.
+            payload["reasoning_effort"] = f["effort"]
+        return payload
 
     @staticmethod
     def _endpoint_error(exc):
@@ -1234,15 +1264,25 @@ class ChatMixin:
 
     def _complete(self, endpoint_id, model, system, user, max_tokens=1500):
         """One-shot text completion against an endpoint (no tools). Used for
-        background work like research synthesis."""
+        background work like compaction and research synthesis.
+
+        Thinking is forced off: providers count reasoning tokens against
+        max_tokens, so on a reasoning model a long input (a whole chat, say)
+        burns the entire budget on reasoning and comes back with an EMPTY
+        content — which every caller here reads as "the model is down"."""
         payload = {"model": model or "", "stream": False, "max_tokens": max_tokens,
                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
-        req = self._endpoint_request({"endpoint_id": endpoint_id}, payload)
+        req = self._endpoint_request({"endpoint_id": endpoint_id, "thinking": "false"}, payload)
         if req is None:
             return None
         try:
             with urllib.request.urlopen(req, timeout=180) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-            return (data.get("choices", [{}])[0].get("message", {}) or {}).get("content")
+            choice = (data.get("choices") or [{}])[0]
+            text = (choice.get("message") or {}).get("content")
+            if not text and choice.get("finish_reason") == "length" and max_tokens < 4096:
+                # Reasoning ate the budget on a provider we couldn't switch off.
+                return self._complete(endpoint_id, model, system, user, max_tokens=4096)
+            return text
         except Exception:
             return None

@@ -711,8 +711,18 @@ final class AppStore {
         Task {
             defer { compacting = false }
             do {
-                _ = try await api.compactSession(sid)
+                // The server answers 200 even when it declines, so the body is
+                // the only signal — without this the menu item looked inert.
+                let res = try await api.compactSession(sid)
                 guard selectedSessionID == sid else { return }
+                if res["ok"] as? Bool == false {
+                    loadError = "Compact: " + ((res["error"] as? String) ?? "failed")
+                    return
+                }
+                if res["compacted"] as? Bool == false {
+                    loadError = "Nothing to compact — this chat is still short."
+                    return
+                }
                 await loadHistory(for: sid)
                 await loadSessions()
             } catch {

@@ -1070,14 +1070,6 @@ struct TaskItem: Decodable, Identifiable, Hashable {
     }
 }
 
-// MARK: - Filesystem browse (folder picker)
-
-struct FSEntry: Identifiable, Hashable {
-    var name: String
-    var isDir: Bool
-    var id: String { name }
-}
-
 // MARK: - Endpoint model visibility
 
 struct EndpointModelInfo: Decodable, Identifiable {

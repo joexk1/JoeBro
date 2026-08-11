@@ -421,21 +421,6 @@ final class APIClient {
         _ = try? await sendJSON("api/tasks/\(id)", method: "DELETE")
     }
 
-    // MARK: Filesystem browse (folder picker)
-
-    func fsBrowse(path: String, device: String?) async throws -> (path: String, entries: [FSEntry]) {
-        var q: [String: String] = [:]
-        if !path.isEmpty { q["path"] = path }
-        if let device, !device.isEmpty { q["device"] = device }
-        let v: JSONValue = try await getJSON("api/fs/browse", query: q)
-        let entries = (v["entries"]?.arrayValue ?? []).compactMap { e -> FSEntry? in
-            guard let name = e["name"]?.stringValue else { return nil }
-            let isDir = e["type"]?.stringValue == "dir" || e["is_dir"]?.boolValue == true
-            return FSEntry(name: name, isDir: isDir)
-        }
-        return (v["path"]?.stringValue ?? path, entries)
-    }
-
     func bindWorkdir(sid: String, path: String, device: String?) async throws {
         var body: [String: Any] = ["workdir": path]
         if let device, !device.isEmpty { body["device"] = device }
@@ -543,10 +528,6 @@ final class APIClient {
 
     func researchDetail(id: String) async throws -> JSONValue {
         try await getJSON("api/research/detail/\(id)")
-    }
-
-    func researchArchive(id: String) async {
-        _ = try? await sendJSON("api/research/\(id)/archive?archived=true")
     }
 
     func researchDelete(id: String) async {
