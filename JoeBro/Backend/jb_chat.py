@@ -493,7 +493,7 @@ class ChatMixin:
         req = self._endpoint_request(f, payload)
         if req is None:
             return None
-        content, reasoning, calls = [], [], {}
+        content, reasoning, calls, finish = [], [], {}, ""
         try:
             with urllib.request.urlopen(req, timeout=300) as resp:
                 for raw in resp:
@@ -507,6 +507,8 @@ class ChatMixin:
                         choice = (json.loads(data).get("choices") or [{}])[0]
                     except Exception:
                         continue
+                    if choice.get("finish_reason"):
+                        finish = choice["finish_reason"]
                     delta = choice.get("delta") or {}
                     rc = delta.get("reasoning_content") or delta.get("reasoning")
                     if rc:
@@ -528,6 +530,10 @@ class ChatMixin:
             msg["reasoning_content"] = "".join(reasoning)
         if calls:
             msg["tool_calls"] = [calls[i] for i in sorted(calls)]
+        if finish:
+            # Caller pops this before the message goes back to the API — see
+            # run_agent, which needs to tell "done" from "ran out of tokens".
+            msg["finish_reason"] = finish
         return msg
 
     def remote_reply(self, f):
@@ -642,6 +648,7 @@ class ChatMixin:
         max_tool_calls = max(0, int(f.get("max_tool_calls") or 0))
         tool_calls_made = 0
         call_sigs, stuck = {}, False
+        no_think = False   # set once reasoning has eaten a whole round's budget
         while True:
             # NO hardcoded cap — the user's Settings tool-use limit (0 = unlimited)
             # and the repeated-identical-call detector are the only stops. If either
@@ -650,28 +657,55 @@ class ChatMixin:
             use_tools = None if (stuck or hit_limit) else tools
             # Stream every round: content + reasoning deltas reach the client
             # live (the final answer no longer appears all at once after a wait).
-            msg = self._stream_chat(f, messages, use_tools, emit)
+            round_f = dict(f, thinking="false") if no_think else f
+            msg = self._stream_chat(round_f, messages, use_tools, emit)
             # If the call errored and we'd attached images, the model/endpoint
             # likely can't take them — drop the images and try once more so the
             # whole run doesn't die on one image.
             if isinstance(msg, str) and self._strip_image_blocks(messages):
-                msg = self._stream_chat(f, messages, use_tools, emit)
+                msg = self._stream_chat(round_f, messages, use_tools, emit)
             if msg is None:
                 final_text = self.local_reply(f.get("message", "")); emit({"delta": final_text}); break
             if isinstance(msg, str):
                 final_text = msg; emit({"delta": final_text}); break
+            finish = msg.pop("finish_reason", "")
             r = msg.get("reasoning_content") or msg.get("reasoning")
             if r:
                 thinking_parts.append(r)   # already streamed live by _stream_chat
             raw_calls = msg.get("tool_calls") or []
             if not raw_calls or use_tools is None:
                 final_text = msg.get("content") or ""   # already streamed live
-                if not final_text and use_tools is None:
-                    final_text = ("I've hit the tool-use limit for this turn — say continue and I'll pick up from here."
-                                  if hit_limit else
-                                  "I started repeating myself there, so I stopped. Tell me how you'd like to proceed.")
+                if not final_text and finish == "length" and not no_think:
+                    # A reasoning model spent the ENTIRE reply budget thinking and
+                    # returned no text and no tool call. The turn used to end right
+                    # there, silently, mid-task — which reads as "it got stuck after
+                    # reading the file". Redo the round with thinking off so the
+                    # tokens go to the answer instead.
+                    no_think = True
+                    continue
+                if not final_text:
+                    # Nothing streamed this text, so it has to be emitted here or
+                    # the turn ends with a blank bubble and no explanation.
+                    final_text = (
+                        "I've hit the tool-use limit for this turn — say continue and I'll pick up from here."
+                        if hit_limit else
+                        "I started repeating myself there, so I stopped. Tell me how you'd like to proceed."
+                        if stuck else
+                        "That round came back empty — the reply ran out of tokens before it produced "
+                        "anything. Say continue and I'll pick up from here.")
+                    emit({"delta": final_text})
                 break
-            messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": raw_calls})
+            assistant_turn = {"role": "assistant", "content": msg.get("content") or "", "tool_calls": raw_calls}
+            # Hand the model back its own reasoning alongside the tool_calls it
+            # produced. DeepSeek REQUIRES this ("the reasoning_content in the
+            # thinking mode must be passed back") and 400s without it; everyone
+            # else benefits, because otherwise the model re-derives its whole plan
+            # from scratch on every round of the same turn.
+            for key in ("reasoning_content", "reasoning"):
+                if msg.get(key):
+                    assistant_turn[key] = msg[key]
+                    break
+            messages.append(assistant_turn)
             # This round's narration streamed live, but only the FINAL round's
             # text is persisted — so a reloaded chat lost the prose between tool
             # rows and clients had to re-order live output to match. Hang it on
