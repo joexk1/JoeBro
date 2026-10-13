@@ -5,6 +5,8 @@ when the active model can't see. With no caption model chosen, the image is
 replaced by "[Image attached: <name>; this model cannot view images]" and
 nothing is sent anywhere. Choose one in Settings > Mobile: pref
 `vision_caption_model` = "<endpoint_id>:<model>" (REQUIRED, there is no default).
+IMAGES CANNOT BE TEXT-CLOAKED: captioning is local-only (loopback/LAN/tailnet endpoints) unless pref
+`vision_allow_remote` is true, and remote captioning skips images whose OCR text matches a secret.
 
 Captions are cached by sha256 under <data dir>/vision_cache and are UNTRUSTED
 DATA (a photo can contain text that tries to instruct the agent). The request
@@ -13,7 +15,7 @@ goes through the endpoint request builder, so Cloak Mode applies to its text.
 import base64, hashlib, json, re, urllib.request
 from pathlib import Path
 
-from jb_core import data_dir
+from jb_core import data_dir, cloak_text
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 PROMPT_V = "v1"
@@ -72,6 +74,46 @@ def _target(h):
     return None
 
 
+def _is_local_url(url):
+    """Loopback, private LAN, tailnet (100.64/10) or .local: the image stays on our own machines."""
+    import ipaddress, urllib.parse
+    host = (urllib.parse.urlparse(str(url)).hostname or "").lower()
+    if host in ("localhost", "host.docker.internal") or host.endswith((".local", ".ts.net")):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_loopback or ip.is_private or ip in ipaddress.ip_network("100.64.0.0/10")
+
+
+def _ocr_has_secret(data):
+    """Local OCR (tesseract, if installed) matched against the Cloak patterns."""
+    import shutil, subprocess
+    exe = shutil.which("tesseract")
+    if not exe:
+        return False
+    try:
+        out = subprocess.run([exe, "stdin", "stdout"], input=data, capture_output=True, timeout=40).stdout.decode("utf-8", "replace")
+    except Exception:
+        return False
+    return cloak_text(out) != out
+
+
+def _guard_remote(h, eid, data):
+    """Images can't be text-cloaked, so by default they only go to a local caption
+    model. A remote one needs pref `vision_allow_remote` = true, and even then an
+    image whose OCR'd text matches a secret pattern is not sent."""
+    ep = h.store.one("select base_url from endpoints where id=?", (eid,)) or {}
+    if _is_local_url(ep.get("base_url")):
+        return
+    if h.pref("vision_allow_remote") is not True:
+        raise VisionError("caption model is remote and images cannot be cloaked; pick a local (Ollama) caption model "
+                          "or set vision_allow_remote")
+    if h.pref("vision_skip_secret_images") is not False and _ocr_has_secret(data):
+        raise VisionError("image text looks like a secret; not sent to a remote model")
+
+
 def _call(h, eid, model, mime, data):
     payload = {"model": model, "max_tokens": 500, "temperature": 0, "stream": False, "messages": [{"role": "user", "content": [
         {"type": "text", "text": PROMPT},
@@ -101,6 +143,7 @@ def caption_bytes(h, data, call=_call):
     if hit:
         return hit
     try:
+        _guard_remote(h, target[0], data)
         text = _clean(call(h, target[0], target[1], mime, data))
     except Exception as exc:
         raise VisionError(f"could not caption image ({target[1]}: {exc})") from None

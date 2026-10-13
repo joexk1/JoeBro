@@ -1060,7 +1060,7 @@ class ChatMixin:
     def _zerogpt_score(self, chunk):
         req = urllib.request.Request(
             "https://api.zerogpt.com/api/detect/detectText",
-            data=json.dumps({"input_text": chunk}).encode("utf-8"), method="POST")
+            data=json.dumps({"input_text": cloak_text(chunk) if self.pref("cloak_mode") is not False else chunk}).encode("utf-8"), method="POST")
         for k, v in {"Content-Type": "application/json", "Origin": "https://www.zerogpt.com",
                      "Referer": "https://www.zerogpt.com/", "User-Agent": self._AICHECK_UA}.items():
             req.add_header(k, v)

@@ -359,6 +359,8 @@ class ToolsMixin:
             if not query and len(params) == 1:
                 query = str(next(iter(params.values())))
         query = str(query or "")
+        if self.pref("cloak_mode") is not False:
+            query = cloak_text(query)
         method = (row.get("method") or "GET").strip().upper()
         base = (row.get("base_url") or "").strip()
         try:
