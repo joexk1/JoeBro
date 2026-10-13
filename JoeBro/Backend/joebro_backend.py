@@ -10,6 +10,17 @@ from jb_models import ModelsMixin
 from jb_assistant import AssistantMixin
 from jb_memory import MemoryMixin
 from jb_files import FilesMixin
+from jb_agents import AgentsMixin
+from jb_fleet import FleetMixin, pulse_loop
+from jb_personal import PersonalMixin, reminder_loop
+from jb_muse import MuseMixin, muse_name
+from jb_ptasks import PersonalTasksMixin
+from jb_heartbeat import HeartbeatMixin
+from jb_location import LocationMixin
+from jb_prompt import PromptMixin
+from jb_mobile import MobileMixin, lan_denied, clamp_form, start_lan_if_enabled, LAN
+from jb_push import register_device, push_status, PushError, register_activity, list_devices, remove_device
+from jb_janitor import janitor_loop
 from jb_xlsx import xlsx_to_csv, csv_to_xlsx
 import gzip
 import hmac
@@ -18,9 +29,13 @@ import hmac
 # Prefs that must never leave the process in clear — see the /api/prefs handler.
 SECRET_PREFS = {"bot_token"}
 SECRET_MASK = "••••••••"
+_AUTH_FAILS = {"n": 0}      # a count in memory only: how many bad tokens this run has seen
 
 
-class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, ModelsMixin, AssistantMixin, MemoryMixin, FilesMixin, BaseHTTPRequestHandler):
+class Handler(PromptMixin, ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, ModelsMixin,
+              AssistantMixin, MemoryMixin, FilesMixin, FleetMixin, PersonalMixin, MuseMixin,
+              PersonalTasksMixin, AgentsMixin, HeartbeatMixin, LocationMixin, MobileMixin,
+              BaseHTTPRequestHandler):
     server_version = "JoeBroLocal/1.0"
 
     @property
@@ -39,6 +54,7 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
 
     def _body_bytes(self):
         n = int(self.headers.get("content-length") or 0)
+        self._body_drained = True
         return self.rfile.read(n) if n else b""
 
     def _json_body(self):
@@ -62,6 +78,14 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
         self.end_headers()
 
     def json(self, obj, status=200):
+        if not getattr(self, "_body_drained", False):
+            self._body_drained = True       # don't reset a client that is still sending
+            try:
+                n = min(int(self.headers.get("content-length") or 0), 1 << 20)
+                if n:
+                    self.rfile.read(n)
+            except (ValueError, OSError):
+                pass
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         # gzip larger payloads — chat history over Tailscale was ~1MB/10s
         # uncompressed; gzip cuts the transfer several-fold. URLSession sends
@@ -97,6 +121,9 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
     def not_found(self):
         self.json({"detail": "Not found"}, 404)
 
+    def _refuse(self, payload, code):
+        self.json(payload, code)
+
     def _guard(self):
         """Refuse requests a browser made on someone else's behalf.
 
@@ -108,17 +135,29 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
         both costs our clients nothing. The Host check blocks DNS rebinding
         (an attacker's domain re-pointed at 127.0.0.1 to become same-origin)."""
         if self.headers.get("Origin") or (self.headers.get("Sec-Fetch-Site") or "same-origin") != "same-origin":
-            self.json({"detail": "cross-site request blocked"}, 403)
+            self._refuse({"detail": "cross-site request blocked"}, 403)
             return False
         hosts = getattr(self.server, "allowed_hosts", None)
         if hosts and (self.headers.get("Host") or "").lower() not in hosts:
-            self.json({"detail": "unexpected Host header"}, 403)
+            self._refuse({"detail": "unexpected Host header"}, 403)
             return False
-        # Opt-in bearer auth, for installs that bind a real interface (Tailscale).
+        # Bearer auth: always on for the phone listener, opt-in (JOEBRO_TOKEN) otherwise.
         token = getattr(self.server, "auth_token", "")
-        if token and not hmac.compare_digest(self.headers.get("Authorization") or "", "Bearer " + token):
-            self.json({"detail": "unauthorized"}, 401)
+        # /api/health is the only unauthenticated route (liveness probes).
+        if token and self.command == "GET" and self.path.split("?", 1)[0] == "/api/health":
+            return True
+        # Compare bytes: a str compare raises TypeError on a non-ASCII header (a 500).
+        if token and not hmac.compare_digest((self.headers.get("Authorization") or "").encode(), ("Bearer " + token).encode()):
+            _AUTH_FAILS["n"] += 1
+            time.sleep(0.3)         # makes guessing a token slow
+            self._refuse({"detail": "unauthorized"}, 401)
             return False
+        # What the phone listener refuses even with a valid token (see jb_mobile).
+        if getattr(self.server, "is_lan", False):
+            denied = lan_denied(self.command, self._path().path)
+            if denied:
+                self._refuse({"detail": denied[1]}, denied[0])
+                return False
         return True
 
     def do_OPTIONS(self):
@@ -135,12 +174,68 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
         q = self._query()
         if path in ("/api/ping", "/api/health"):
             return self.json({"ok": True, "local": True})
+        if path == "/api/mobile/hello":
+            return self.json(self.mobile_hello())
+        if path == "/api/mobile":
+            return self.json(self.mobile_status())
+        if path == "/api/mobile/devices":
+            return self.json({"devices": list_devices(self.store)})
+        if path == "/api/push/status":
+            return self.json(push_status(self.store))
+        if path == "/api/muse":
+            return self.json({"ok": True, "files": self.muse_list()})
+        if path.startswith("/api/muse/"):
+            try:
+                text = self.muse_read(path.split("/")[3])
+            except ValueError as e:
+                return self.json({"ok": False, "detail": str(e)}, 400)
+            if text is None:
+                return self.json({"ok": False, "detail": "memory file not found"}, 404)
+            return self.json({"ok": True, "name": path.split("/")[3], "content": text})
+        if path == "/api/joebro":
+            return self.json(self.phone_payload())
+        if path == "/api/inbox":
+            return self.json({"inbox": self.inbox_rows(unread_only=q.get("unread") == "1")})
+        if path == "/api/pulse":
+            return self.json({"pulse": self.pulse_config()})
+        if path == "/api/heartbeat":
+            return self.json(self.heartbeat_config())
+        if path == "/api/agents":
+            return self.json(self.agents_payload(
+                kind=(q.get("kind") or "").strip(), status=(q.get("status") or "").strip(),
+                limit=int(q.get("limit") or 100)))
+        # Exact match above, so this only catches /api/agents/<id>: the detail
+        # view, with the FULL result text and the session_id to open its transcript.
+        if path.startswith("/api/agents/"):
+            aid = path[len("/api/agents/"):].strip("/")
+            row = self.store.one("select * from agents where id=?", (aid,))
+            if not row:
+                return self.json({"ok": False, "detail": "no such agent"}, 404)
+            rec = self.agent_record(row, full=True)
+            rec["messages"] = self.store.rows(
+                "select role, content, created_at from messages where session_id=? order by id",
+                (rec["session_id"],)) if rec["session_id"] else []
+            return self.json({"ok": True, "agent": rec})
+        if path == "/api/reminders":
+            return self.json({"reminders": self.store.rows(
+                "select * from reminders where status='pending' order by due_at")})
+        if path == "/api/plan":
+            sid = q.get("session") or ""
+            return self.json({"session": sid, "steps": self.plan_get(sid)})
+        if path == "/api/fs/browse":
+            if str(self.pref("mobile_allow_browse")).lower() in ("0", "false", "no", "off") and getattr(self.server, "is_lan", False):
+                return self.json({"detail": "folder browsing from the phone is off"}, 403)
+            return self.browse_host(q)
         if path == "/api/sessions":
-            # bot_tg_* are the Telegram bot's own per-chat sessions — never shown
-            # in the app sidebar.
+            # bot_tg_* are the Telegram bot's own per-chat sessions and ptask_* the phone
+            # agent's silent task runs: never shown in the sidebar. The phone chat
+            # itself is hidden unless the user asked to see it (show_phone_session).
+            show_phone = str(self.pref("show_phone_session")).lower() in ("1", "true", "yes", "on")
             rows = self.store.rows(
-                "select id,name,model,mode,archived,is_important,folder,sort_order,created_at from sessions where id not like 'bot\\_tg\\_%' escape '\\' order by coalesce(sort_order, -julianday(created_at)) asc"
-            )
+                "select id,name,model,mode,archived,is_important,folder,sort_order,created_at from sessions "
+                "where id not like 'bot\\_tg\\_%' escape '\\' and id not like 'task\\_session\\_ptask\\_%' escape '\\' "
+                "and (id != ? or ?) order by coalesce(sort_order, -julianday(created_at)) asc",
+                (PHONE_SESSION_ID, 1 if show_phone else 0))
             return self.json([self.session_json(r) for r in rows])
         if path.startswith("/api/session/") and path.endswith("/tip"):
             # Cheap freshness probe for the open chat — the app polls this and
@@ -164,6 +259,10 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
                 ],
                 "model": (session or {}).get("model"),
                 "name": (session or {}).get("name"),
+                "mode": (session or {}).get("mode") or "chat",
+                "permission_mode": (session or {}).get("permission_mode") or "sandbox",
+                "endpoint_id": (session or {}).get("endpoint_id") or "",
+                "endpoint_url": (session or {}).get("endpoint_url") or "",
             })
         if path == "/api/models":
             refresh = str(q.get("refresh") or "").lower() in ("1", "true", "yes")
@@ -260,8 +359,7 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
         if path == "/api/notes":
             return self.json({"notes": []})
         if path == "/api/tasks":
-            rows = self.store.rows("select * from tasks order by datetime(created_at) desc")
-            return self.json({"tasks": [self.task_json(r) for r in rows]})
+            return self.json({"tasks": self.tasks_for_scope(q.get("scope"))})   # default general; ?scope=personal
         if path == "/api/skills/learn-status":
             return self.json(self.learn_skills_status(q.get("job") or ""))
         if path == "/api/skills":
@@ -282,6 +380,117 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
         if not self._guard():
             return
         path = self._path().path
+        if path == "/api/mobile/enable":
+            out, code = self.mobile_enable(self._json_body() or {})
+            return self.json(out, code)
+        if path == "/api/mobile/rotate":
+            return self.json(self.mobile_rotate())
+        if path == "/api/mobile/apns":
+            out, code = self.mobile_apns_save()
+            return self.json(out, code)
+        if path == "/api/personal/location":
+            try:
+                return self.json(self.location_post(self._json_body()))
+            except (KeyError, ValueError, TypeError):
+                return self.json({"ok": False, "detail": "lat and lon required"}, 400)
+        if path == "/api/push/activity":
+            try:
+                return self.json(register_activity(self.store, self._json_body()))
+            except (PushError, ValueError, TypeError):
+                return self.json({"ok": False, "detail": "Invalid activity token"}, 400)
+        if path == "/api/push/register":
+            try:
+                return self.json(register_device(self.store, self._json_body()))
+            except (PushError, ValueError, TypeError) as exc:
+                return self.json({"ok": False, "detail": str(exc) if isinstance(exc, PushError) else "Invalid push registration"}, 400)
+        if path == "/api/joebro/session":
+            return self.json(self.phone_payload(create=True))
+        if path in ("/api/joebro/compact", "/api/joebro/clear"):
+            if self.phone_busy():
+                return self.json({"detail": "Wait for JoeBro to finish this reply."}, 409)
+            if path.endswith("/compact"):
+                return self.json(self.manual_compact(PHONE_SESSION_ID))
+            self.store.exec("delete from messages where session_id=?", (PHONE_SESSION_ID,))
+            self.store.exec("delete from prefs where key=?", ("compact_" + PHONE_SESSION_ID,))
+            return self.json({"ok": True})
+        if path.startswith("/api/session/" + PHONE_SESSION_ID + "/"):
+            return self.json({"detail": "The phone chat is managed by the server"}, 403)
+        if path == "/api/inbox/read":
+            return self.json(self.mark_inbox_read((self._json_body() or {}).get("id")))
+        if path == "/api/inbox/delete":
+            b = self._json_body() or {}
+            ids = b.get("ids", [])
+            if not isinstance(ids, list) or len(ids) > 1000 or any(not isinstance(n, str) or len(n) > 100 for n in ids):
+                return self.json({"ok": False, "detail": "Invalid notification selection"}, 400)
+            if b.get("all") is True:
+                self.store.exec("delete from inbox")
+            elif ids:
+                self.store.exec("delete from inbox where id in (" + ",".join("?" for _ in ids) + ")", tuple(ids))
+            return self.json({"ok": True})
+        if path.startswith("/api/inbox/delete/"):
+            self.store.exec("delete from inbox where id=?", (path.rsplit("/", 1)[-1],))
+            return self.json({"ok": True})
+        if path == "/api/notify":
+            b = self._json_body() or {}
+            try:
+                return self.json(self.notify(b.get("message") or b.get("body") or "", b.get("title") or "",
+                                             kind=b.get("kind") or "note", channel=b.get("channel") or "auto"))
+            except ValueError as exc:
+                return self.json({"ok": False, "detail": str(exc)}, 400)
+        if path == "/api/heartbeat":
+            try:
+                return self.json(self.heartbeat_control(self._json_body() or {}))
+            except (ValueError, TypeError) as exc:
+                return self.json({"ok": False, "detail": str(exc)}, 400)
+        if path == "/api/pulse":
+            b = self._json_body() or {}
+            if (b.get("action") or "set").lower() == "run":
+                return self.json(self.run_pulse(force=True))
+            for key in ("enabled", "interval_minutes", "checklist", "quiet_hours", "model", "endpoint_id"):
+                if key in b:
+                    self.set_pref("pulse_" + key, b[key])
+            return self.json({"ok": True, "pulse": self.pulse_config()})
+        if path == "/api/agents":
+            try:
+                self._turn_form = {"session": PHONE_SESSION_ID} if getattr(self.server, "is_lan", False) else {}
+                return self.json({"ok": True, "agents": self.spawn_agents(self._json_body() or {})})
+            except ValueError as exc:
+                return self.json({"ok": False, "detail": str(exc)}, 400)
+        # /api/agents/<id>/cancel and /stop: checked before any bare /api/agents/
+        # prefix so the suffix can't be swallowed.
+        if path.startswith("/api/agents/") and path.rsplit("/", 1)[-1] in ("cancel", "stop"):
+            out, code = self.agent_cancel(path.split("/")[3])
+            return self.json(out, code)
+        if path.startswith("/api/chat/stop/"):
+            out, code = self.cancel_session_run(path[len("/api/chat/stop/"):].strip("/"))
+            return self.json(out, code)
+        if path == "/api/reminders":
+            try:
+                return self.json(json.loads(self.remind_me_tool(json.dumps(self._json_body() or {}))))
+            except ValueError as exc:
+                return self.json({"ok": False, "detail": str(exc)}, 400)
+        if path == "/api/muse":
+            b = self._json_body() or {}
+            try:
+                n = muse_name(b.get("name"))
+                if self.muse_read(n) is not None:
+                    return self.json({"ok": False, "detail": "that memory file already exists"}, 409)
+                self.muse_write(n, b.get("content") or "# " + n.replace("-", " ").title() + "\n")
+            except ValueError as e:
+                return self.json({"ok": False, "detail": str(e)}, 400)
+            return self.json({"ok": True, "name": n})
+        if path == "/api/plan":
+            b = self._json_body() or {}
+            self._plan_session = b.get("session") or ""
+            try:
+                return self.json(json.loads(self.manage_plan_tool(json.dumps(b))))
+            except ValueError as exc:
+                return self.json({"ok": False, "detail": str(exc)}, 400)
+        if path == "/api/tasks/starters":
+            try:
+                return self.json(self.ptask_starter((self._json_body() or {}).get("id")))
+            except ValueError as exc:
+                return self.json({"ok": False, "detail": str(exc)}, 400)
         if path == "/api/session":
             f = self._form_body()
             sid = "s_" + os.urandom(8).hex()
@@ -332,6 +541,8 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
             # Background AI jobs (skill/task generators) post message+session
             # only — the session row carries which model to use.
             f = self._form_body()
+            if getattr(self.server, "is_lan", False):
+                clamp_form(f, str(self.pref("mobile_allow_full")).lower() in ("1", "true", "yes", "on"))
             sess = self.store.one("select * from sessions where id=?", (f.get("session") or "",)) or {}
             f.setdefault("model", sess.get("model") or "")
             f.setdefault("endpoint_id", sess.get("endpoint_id") or "")
@@ -511,6 +722,20 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
         if not self._guard():
             return
         path = self._path().path
+        if path.startswith("/api/muse/"):
+            try:
+                self.muse_write(path.split("/")[3], (self._json_body() or {}).get("content") or "")
+            except ValueError as e:
+                return self.json({"ok": False, "detail": str(e)}, 400)
+            return self.json({"ok": True})
+        if path == "/api/joebro/soul":
+            soul = (self._json_body() or {}).get("soul")
+            if not isinstance(soul, str) or len(soul) > 4000:
+                return self.json({"detail": "soul must be a string of at most 4000 characters"}, 400)
+            self.set_pref("phone_soul", soul)
+            return self.json({"ok": True, "soul": soul})
+        if path.startswith("/api/session/" + PHONE_SESSION_ID):
+            return self.json({"detail": "The phone chat is managed by the server"}, 403)
         if path.startswith("/api/session/") and path.endswith("/workdir"):
             return self.workdir_post(path)
         if path.startswith("/api/session/"):
@@ -567,8 +792,33 @@ class Handler(ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, Model
         if not self._guard():
             return
         path = self._path().path
+        if path.startswith("/api/mobile/devices/"):
+            return self.json(remove_device(self.store, path.rsplit("/", 1)[-1]))
+        if path == "/api/mobile/apns":
+            return self.json(self.mobile_apns_delete())
+        if path.startswith("/api/muse/"):
+            try:
+                if not self.muse_delete(path.split("/")[3]):
+                    return self.json({"ok": False, "detail": "memory file not found"}, 404)
+            except ValueError as e:
+                return self.json({"ok": False, "detail": str(e)}, 400)
+            return self.json({"ok": True})
+        if path.startswith("/api/agents/"):
+            aid = path[len("/api/agents/"):].strip("/")
+            row = self.store.one("select * from agents where id=?", (aid,))
+            if not row:
+                return self.json({"ok": False, "detail": "no such agent"}, 404)
+            if self.agent_status(row) in ("queued", "running"):
+                return self.json({"ok": False, "detail": "stop it first"}, 409)
+            self.store.exec("delete from agents where id=?", (aid,))
+            return self.json({"ok": True})
+        if path.startswith("/api/reminders/"):
+            self.store.exec("update reminders set status='cancelled' where id=?", (path.rsplit("/", 1)[-1],))
+            return self.json({"ok": True})
+        if path.startswith("/api/session/" + PHONE_SESSION_ID):
+            return self.json({"detail": "The phone chat is managed by the server"}, 403)
         if path.startswith("/api/session/"):
-            self.store.exec("delete from sessions where id=?", (path.split("/")[3],))
+            self.delete_session_cascade(path.split("/")[3])      # the chat AND its agent records
             return self.json({"ok": True})
         if path.startswith("/api/model-endpoints/"):
             self.store.exec("delete from endpoints where id=?", (path.rsplit("/", 1)[-1],))
@@ -645,6 +895,10 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=int(os.environ.get("JOEBRO_PORT", DEFAULT_PORT)))
     parser.add_argument("--data-dir", default="")
+    # The phone listener is a SECOND server (see jb_mobile). Normally the Mac app
+    # drives it through mobile.json; these flags are for running it by hand.
+    parser.add_argument("--lan-host", default="", help="also listen for the phone on this address (token required)")
+    parser.add_argument("--lan-port", type=int, default=8766)
     args = parser.parse_args()
     root = Path(args.data_dir) if args.data_dir else app_support_dir()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
@@ -660,6 +914,25 @@ def main():
         print(f"WARNING: bound to {args.host} with no JOEBRO_TOKEN — anyone who can "
               "reach this port can run tools as you.", flush=True)
     threading.Thread(target=_task_scheduler, args=(server,), daemon=True).start()
+    threading.Thread(target=reminder_loop, args=(server,), daemon=True).start()
+    threading.Thread(target=pulse_loop, args=(server,), daemon=True).start()   # heartbeat + pulse, both off until enabled
+    threading.Thread(target=janitor_loop, args=(server,), daemon=True).start()  # deletes only if enabled
+    try:
+        _h = Handler.__new__(Handler); _h.server = server
+        _h.reconcile_agents_on_boot()      # a restart killed any run still marked live
+    except Exception:
+        pass
+    if args.lan_host:
+        from jb_mobile import load_mobile
+        cfg = dict(load_mobile(server.store), host=args.lan_host, port=args.lan_port)
+        cfg["token"] = os.environ.get("JOEBRO_LAN_TOKEN") or cfg["token"]
+        try:
+            LAN.start(Handler, server.store, cfg)       # refuses to start without a token
+            print(f"Phone listener on http://{args.lan_host}:{args.lan_port} (token required)", flush=True)
+        except ValueError as exc:
+            print("Phone listener NOT started:", exc, flush=True)
+    else:
+        start_lan_if_enabled(Handler, server.store)   # only if the user left it on
     from jb_telegram import telegram_bot_loop
     threading.Thread(target=telegram_bot_loop, args=(server,), daemon=True).start()
     # Boot the local searxng meta-search alongside the app (best-effort).

@@ -27,3 +27,8 @@ test_screenshots/
 dist/
 .build-dd/
 .sparkle-tools/
+
+# Local signing / secrets (never commit)
+Local.xcconfig
+Secrets.xcconfig
+*.p8

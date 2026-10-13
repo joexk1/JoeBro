@@ -26,8 +26,10 @@ struct SettingsView: View {
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
             MessageBotTab()
                 .tabItem { Label("Message Bot", systemImage: "paperplane") }
+            MobileSettingsTab()
+                .tabItem { Label("Mobile", systemImage: "iphone") }
         }
-        .frame(width: 560, height: 480)
+        .frame(width: 620, height: 560)
     }
 
     private var generalTab: some View {
@@ -107,6 +109,11 @@ struct SettingsView: View {
                 TextField("Server URL", text: $serverURL)
                     .font(.system(size: 13, design: .monospaced))
                 Text("JoeBro runs a private local backend on this Mac. Model endpoints can still point at local or Tailscale devices.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Phone access") {
+                Text("Pair an iPhone, set up push and tune the phone agent in the Mobile tab.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

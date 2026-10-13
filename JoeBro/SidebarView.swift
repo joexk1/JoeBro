@@ -125,6 +125,7 @@ struct SidebarView: View {
                             navRow(.skills)
                             navRow(.tools)
                             navRow(.research)
+                            navRow(.inbox)
                             navRow(.aiCheck)
                         }
                         .transition(.opacity.combined(with: .move(edge: .top)))
@@ -475,7 +476,7 @@ struct SidebarView: View {
 
     private func navRow(_ tab: WorkspaceTab) -> some View {
         NavRowView(tab: tab, isSelected: store.activeTab == tab,
-                   showDot: (tab == .email && store.emailDot) || (tab == .research && store.researchDot),
+                   showDot: (tab == .email && store.emailDot) || (tab == .research && store.researchDot) || (tab == .inbox && store.inboxUnread > 0),
                    bounce: tab == .email && store.emailBounce,
                    working: tab == .research && store.researchRun != nil) {
             store.activeTab = tab

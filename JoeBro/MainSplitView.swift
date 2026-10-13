@@ -60,6 +60,8 @@ struct MainSplitView: View {
             AICheckPanel()
         case .research:
             ResearchPanel()
+        case .inbox:
+            InboxPanel()
         }
     }
 }

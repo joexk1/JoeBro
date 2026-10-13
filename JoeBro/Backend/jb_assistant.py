@@ -1,4 +1,6 @@
 """Skills, tasks, deep research, JSON serializers. (Memory lives in jb_memory.)"""
+import traceback
+
 from jb_core import *  # noqa: F401,F403
 
 _LEARN_JOBS = {}   # learn-from-sources jobs: id -> {status, detail, skills, error}
@@ -28,15 +30,27 @@ class AssistantMixin:
         row = self.store.one("select * from tasks where id=?", (task_id,))
         if not row:
             return None
+        personal = (row.get("scope") or "general") == "personal"
+        if personal and str(self.pref("personal_automation_paused")).lower() in ("true", "1", "yes", "on"):
+            return "Phone automation is paused. Resume it in Settings > Mobile to run this task."
         ep, model = self._task_endpoint()
-        if not ep:
-            return "No model endpoint configured — add one in Settings."
         tsid = "task_session_" + task_id
+        # Every task run is a registry run, so "did my task happen?" is a question
+        # with an answer, including when it failed before starting.
+        aid = self.agent_open("task", row.get("title") or "Task", session_id=tsid,
+                              model=model, endpoint_id=ep, ref_id=task_id,
+                              prompt=row.get("prompt") or "", progress="Starting")
+        if not ep:
+            self.agent_close(aid, "failed", error="no model endpoint configured")
+            return "No model endpoint configured — add one in Settings."
         if not self.store.one("select id from sessions where id=?", (tsid,)):
             self.store.exec(
                 "insert into sessions(id,name,model,endpoint_url,endpoint_id,workdir,created_at) values(?,?,?,?,?,?,?)",
                 (tsid, "[TASK] " + (row.get("title") or "Task"), model, "", ep, "", now_iso()))
         prompt = row.get("prompt") or row.get("title") or "Run this task."
+        if personal:        # silent background run: fresh context every time, reply is the notification
+            self.store.exec("delete from messages where session_id=?", (tsid,))
+            prompt = self.ptask_prompt(prompt)
         self.add_message(tsid, "user", prompt, {})
         # GUARANTEE: every task runs as an agent. This is the single chokepoint for
         # running a task — both the manual "Run now" route and the scheduler call
@@ -47,7 +61,18 @@ class AssistantMixin:
         f = {"session": tsid, "message": prompt, "endpoint_id": ep, "model": model,
              "permission_mode": pmode, "max_tokens": "4000", "allow_web_search": "true"}
         f["mode"] = "agent"   # forced last — cannot be overridden
-        reply, thinking, events = self.run_agent(f)
+        if personal:
+            f["phone_tools"] = "true"     # the phone toolset (weather, reminders, agents...)
+        self._agent_run_id = aid              # so run_agent can honour a cancel
+        self.agent_started(aid)
+        self.agent_progress(aid, "Running")
+        try:
+            reply, thinking, events = self.run_agent(f)
+        except Exception as exc:
+            self.agent_close(aid, "failed", error=str(exc)[:500])
+            raise
+        finally:
+            self._agent_run_id = ""
         meta = {"model": model}
         if thinking:
             meta["thinking"] = thinking
@@ -55,6 +80,16 @@ class AssistantMixin:
             meta["tool_events"] = [{k: v for k, v in e.items() if k != "doc"} for e in events]
         self.add_message(tsid, "assistant", reply, meta)
         self.store.exec("update tasks set last_run=?, updated_at=? where id=?", (now_iso(), now_iso(), task_id))
+        if self.agent_run_cancelled(aid):
+            self.agent_close(aid, "cancelled", result=(reply or "").strip(),
+                             error="stopped on request; partial output kept")
+        else:
+            self.agent_close(aid, "done", result=(reply or "").strip())
+            if personal:
+                try:
+                    self.ptask_report(row, reply)
+                except Exception:
+                    traceback.print_exc()
         return reply
 
     def _active_background_plugins(self):
@@ -264,6 +299,10 @@ class AssistantMixin:
             rday = max(0, min(6, int(rday or 0)))
         except (TypeError, ValueError):
             rday = 0
+        # scope is fixed at creation: phone-agent tasks get a ptask_ id and never change sides.
+        scope = (existing or {}).get("scope") or ("personal" if str(body.get("scope") or "").lower() == "personal" else "general")
+        if not existing and scope == "personal" and not str(tid).startswith("ptask_"):
+            tid = "ptask_" + os.urandom(6).hex()
         if existing:
             self.store.exec(
                 "update tasks set title=?,prompt=?,schedule=?,scheduled_time=?,status=?,permission_mode=?,repeat_day=?,updated_at=? where id=?",
@@ -271,8 +310,8 @@ class AssistantMixin:
             )
         else:
             self.store.exec(
-                "insert into tasks(id,title,prompt,schedule,scheduled_time,status,permission_mode,repeat_day,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?)",
-                (tid, title, prompt, schedule, scheduled_time, status, pmode, rday, now, now),
+                "insert into tasks(id,title,prompt,schedule,scheduled_time,status,permission_mode,repeat_day,scope,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)",
+                (tid, title, prompt, schedule, scheduled_time, status, pmode, rday, scope, now, now),
             )
         return {"ok": True, "task": self.task_json(self.store.one("select * from tasks where id=?", (tid,)))}
 
@@ -387,6 +426,8 @@ class AssistantMixin:
         return docs
 
     def create_research(self, query, endpoint_id=None, model=None):
+        endpoint_id = endpoint_id or self.pref("default_endpoint_id") or ""
+        model = model or self.pref("default_model") or ""
         rid = "research_" + os.urandom(6).hex()
         now = now_iso()
         progress = json.dumps({"phase": "Queued", "message": query})
@@ -394,6 +435,10 @@ class AssistantMixin:
             "insert into research(id,query,status,content,progress,archived,created_at,updated_at) values(?,?,?,?,?,?,?,?)",
             (rid, query, "running", f"# {query}\n\nResearching…", progress, 0, now, now),
         )
+        # Register in the one agent registry so a client sees research beside
+        # chat agents and tasks instead of having to poll a third API.
+        self.agent_open("research", query, ref_id=rid, model=model or "",
+                        endpoint_id=endpoint_id or "", progress="Queued", notify=0)
         self.start_research_worker(rid, query, endpoint_id, model)
         return rid
 
@@ -420,7 +465,17 @@ class AssistantMixin:
         self.store.exec(
             "update research set status='cancelled', progress=?, updated_at=? where id=?",
             (json.dumps({"phase": "Cancelled", "message": ""}), now_iso(), rid))
+        self._close_research_run(rid, "cancelled")
         return self.json({"ok": True, "status": "cancelled"})
+
+    def _close_research_run(self, rid, status, error=""):
+        aid = self._research_run_id(rid)
+        if aid:
+            self.agent_close(aid, status, error=error)   # result is read from research.content
+
+    def _research_run_id(self, rid):
+        row = self.store.one("select id from agents where kind='research' and ref_id=?", (rid,))
+        return (row or {}).get("id") or ""
 
     def _research_cancelled(self, rid):
         with _RESEARCH_GUARD:
@@ -453,6 +508,11 @@ class AssistantMixin:
     def _set_research_progress(self, rid, phase, message=""):
         self.store.exec("update research set progress=?, updated_at=? where id=?",
                         (json.dumps({"phase": phase, "message": message}), now_iso(), rid))
+        aid = self._research_run_id(rid)
+        if aid:
+            if not self.store.one("select started_at from agents where id=? and started_at!=''", (aid,)):
+                self.agent_started(aid)
+            self.agent_progress(aid, phase + ((": " + message) if message else ""))
 
     def _run_research(self, rid, query, endpoint_id, model):
         try:
@@ -503,12 +563,14 @@ class AssistantMixin:
                 f"# {query}\n\n## Sources\n{sources_md}")
             self.store.exec("update research set status='completed', content=?, progress=?, updated_at=? where id=?",
                             (content, json.dumps({"phase": "Complete", "message": ""}), now_iso(), rid))
+            self._close_research_run(rid, "done")
         except Exception as exc:
             if self._research_cancelled(rid):
                 return
             self.store.exec("update research set status='completed', content=?, progress=?, updated_at=? where id=?",
                             (f"# {query}\n\nResearch failed: {exc}",
                              json.dumps({"phase": "Complete", "message": "failed"}), now_iso(), rid))
+            self._close_research_run(rid, "failed", error=str(exc)[:500])
         finally:
             with _RESEARCH_GUARD:
                 _RESEARCH_STARTED.discard(rid)
@@ -563,6 +625,8 @@ class AssistantMixin:
             "status": r.get("status") or "active",
             "permission_mode": r.get("permission_mode") or "sandbox",
             "repeat_day": int(r.get("repeat_day") or 0),
+            "scope": r.get("scope") or "general",
+            "last_run": r.get("last_run") or "",
             "created_at": r.get("created_at"),
             "updated_at": r.get("updated_at"),
         }
@@ -585,11 +649,22 @@ class AssistantMixin:
 
     @classmethod
     def research_json(cls, r):
+        # The bibliography lives in the Markdown body; expose it as structured
+        # data too, for the readers that want links without parsing Markdown.
+        content = r.get("content") or ""
+        bibliography = re.split(r"(?m)^## Sources\s*$", content, maxsplit=1)
+        sources = []
+        if len(bibliography) == 2:
+            for match in re.finditer(r"(?m)^- \[([^\]]+)\]\((https?://[^)]+)\)(?:\n  ([^\n]+))?", bibliography[1]):
+                sources.append({"title": match.group(1), "url": match.group(2),
+                                "snippet": match.group(3) or ""})
         return {
             "id": r["id"],
             "query": r.get("query") or "",
             "status": r.get("status") or "queued",
-            "content": r.get("content") or "",
+            "sources": sources,
+            "source_count": len(sources),
+            "content": content,
             "progress": cls.loads(r.get("progress")) or {},
             "archived": bool(r.get("archived")),
             "created_at": r.get("created_at"),

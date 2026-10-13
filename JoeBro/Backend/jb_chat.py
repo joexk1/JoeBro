@@ -10,6 +10,10 @@ class ChatMixin:
 
     def chat_stream(self):
         f = self._form_body()
+        if getattr(self.server, "is_lan", False):     # a phone: held at sandbox unless the Mac allowed more
+            from jb_mobile import clamp_form
+            clamp_form(f, str(self.pref("mobile_allow_full")).lower() in ("1", "true", "yes", "on"))
+        f = self.phone_turn(f)                        # the reserved phone chat's capability policy
         sid = f.get("session")
         message = f.get("message", "")
         sess = self.store.one("select * from sessions where id=?", (sid or "",)) or {}
@@ -65,9 +69,13 @@ class ChatMixin:
             pass
         with _ACTIVE_TURNS_LOCK:
             _ACTIVE_TURNS.add(sid)
+        # Every agent-mode turn is a registry row, so another device can see it run.
+        self._chat_turn_aid = self.chat_turn_open(sid, f)
+        _turn_status, _turn_err = "done", ""
         try:
             self._chat_stream_turn(f, sid, message)
         except Exception as exc:
+            _turn_status, _turn_err = "failed", str(exc)
             # A turn must NEVER die silently: the user sees the failure, the
             # journal gets the traceback, and the persisted assistant row keeps
             # the duplicate guard from wedging the chat.
@@ -82,6 +90,12 @@ class ChatMixin:
         finally:
             with _ACTIVE_TURNS_LOCK:
                 _ACTIVE_TURNS.discard(sid)
+            self.chat_turn_close(self._chat_turn_aid, _turn_status, _turn_err)
+            try:
+                from jb_push import end_if_idle
+                end_if_idle(self.store, lambda: bool(_ACTIVE_TURNS))   # no-op unless an island is live
+            except Exception:
+                pass
 
     def _chat_stream_turn(self, f, sid, message):
         started = time.time()
@@ -91,15 +105,34 @@ class ChatMixin:
         # so the agent still finishes and the reply is persisted (loaded when
         # they come back) — otherwise a backgrounded turn silently loses its answer.
         client_alive = {"ok": True}
+        write_lock = threading.Lock()
+        stop_keepalive = threading.Event()
 
         def sse(obj):
             if not client_alive["ok"]:
                 return
-            try:
-                self.wfile.write(f"data: {json.dumps(obj)}\n\n".encode("utf-8"))
-                self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError, OSError):
-                client_alive["ok"] = False
+            with write_lock:
+                try:
+                    self.wfile.write(f"data: {json.dumps(obj)}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    client_alive["ok"] = False
+
+        def keepalive():
+            # A slow model or tool can go quiet longer than a phone's idle timeout.
+            # An SSE comment keeps the socket open without adding visible tokens.
+            while not stop_keepalive.wait(15):
+                if not client_alive["ok"]:
+                    return
+                with write_lock:
+                    try:
+                        self.wfile.write(b": keepalive\n\n")
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError, OSError):
+                        client_alive["ok"] = False
+                        return
+
+        threading.Thread(target=keepalive, daemon=True).start()
 
         captured_meta = {"memories_used": [], "plugins_used": [], "skills_used": []}
         def emit(obj):
@@ -116,6 +149,8 @@ class ChatMixin:
                          "title": doc.get("title", ""), "language": doc.get("language", "markdown"),
                          "content": doc.get("content", ""), "version": 1})
             else:
+                if obj.get("type") == "tool_start" and getattr(self, "_chat_turn_aid", ""):
+                    self.agent_progress(self._chat_turn_aid, ("Using " + str(obj.get("tool") or "tool"))[:200])
                 if obj.get("type") == "memories_used":
                     captured_meta["memories_used"] = obj.get("data") or []
                 elif obj.get("type") == "plugins_used":
@@ -197,12 +232,14 @@ class ChatMixin:
         sse({"type": "metrics", "data": {"total_time": elapsed, "response_time": elapsed,
                                          "tokens_per_second": m["tokens_per_second"],
                                          "context_percent": m["context_percent"]}})
-        if client_alive["ok"]:
-            try:
-                self.wfile.write(b"data: [DONE]\n\n")
-                self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError, OSError):
-                client_alive["ok"] = False
+        stop_keepalive.set()
+        with write_lock:
+            if client_alive["ok"]:
+                try:
+                    self.wfile.write(b"data: [DONE]\n\n")
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    client_alive["ok"] = False
 
         # Persist the assistant message AFTER streaming (with tool_events meta).
         metadata = {"model": f.get("model") or "Local fallback",
@@ -224,10 +261,11 @@ class ChatMixin:
 
         # Self-improving: quietly learn a memory / skill from this turn (off the
         # request path so it never delays the reply). Skipped for task sessions.
-        if not sid.startswith("task_session_"):
+        if not sid.startswith("task_session_") and sid != PHONE_SESSION_ID:   # the phone has its own memory (Muse)
             threading.Thread(target=self._auto_learn,
                              args=(sid, message, saved_reply, f.get("endpoint_id"), f.get("model")),
                              daemon=True).start()
+        self.muse_reflect_async(sid, message, saved_reply, f)    # phone chat only; gated inside
 
     @staticmethod
     def _chunks(text, n):
@@ -570,6 +608,8 @@ class ChatMixin:
         for persistence; the caller must NOT re-stream tool rows it already saw."""
         emit = emit or (lambda obj: None)
         sid = f.get("session") or ""
+        self._plan_session, self._turn_form = sid, f      # the plan and spawn tools need to know who is calling
+        self.agent_clear_cancel(session_id=sid)           # a new turn starts un-cancelled
         if not (f.get("endpoint_id") or "") or f.get("endpoint_id") == "local":
             return self.local_reply(f.get("message", "")), "", []
         readonly = (f.get("permission_mode") or "") == "readonly"
@@ -583,7 +623,16 @@ class ChatMixin:
         # claim they'd "edited the doc" or emit tool syntax that never ran.
         orchestrator = str(f.get("orchestrator") or "").lower() in ("1", "true", "yes")
         agent = orchestrator or (f.get("mode") or "").lower() == "agent"
-        if orchestrator:
+        on_phone = sid == PHONE_SESSION_ID
+        tools = None
+        if on_phone and agent:
+            # Tools are resolved BEFORE the prompt: the composed phone prompt only
+            # carries advice for the tools actually on offer this turn.
+            tools = self.tools_for(f, has_folder=root is not None)
+            tools = list(tools) if tools is not None else []
+            self._turn_tools = tools      # find_tools appends to THIS list mid-turn
+            system = self._phone_system(f, [t["function"]["name"] for t in tools if t.get("function")])
+        elif orchestrator:
             system = self._orchestrator_system(f)
         elif agent:
             system = self._agent_system(f)
@@ -593,10 +642,17 @@ class ChatMixin:
         # to talk about "bound-folder files" without ever giving the path or a
         # single filename, so every turn opened with a list_files round just to
         # find out whether a folder was bound at all.
-        if agent:
+        if agent and not on_phone:
             system += ("\n\n" + self._workdir_context(root) if root else
                        "\n\nNo folder is bound to this chat, so the file tools are unavailable — "
                        "tell the user to bind one (the folder button in the sidebar) rather than guessing paths.")
+        if on_phone and agent:
+            # The phone agent's own memory: about-me always, other files only when
+            # a line overlaps the message. Saved DATA, never instructions.
+            system += "\n\n" + self.muse_system_block()
+            muse_ctx = self.muse_context_block(f.get("message", ""))
+            if muse_ctx:
+                system += "\n\n" + muse_ctx
         skills_ctx, skills_used = self._use_relevant_skills(f.get("message", ""), f)   # gate + inject + bump
         if skills_ctx:
             system += "\n\n" + skills_ctx
@@ -615,6 +671,20 @@ class ChatMixin:
             system += "\n\nActive guardrail plugins — follow these:\n" + guard
             emit({"type": "plugins_used", "data": [p.get("name") for p in bg_plugins]})
         messages = [{"role": "system", "content": system}] + self._history_messages(f)
+        if on_phone and agent:
+            # The clock (and weather, if the user opted in) rides in one note just
+            # before the user's message, not in the system prompt: a changing prefix
+            # would invalidate the provider's prompt cache for everything after it.
+            tail = [self._now_line()]
+            if str(self.pref("location_enabled")).lower() in ("1", "true", "yes", "on"):
+                try:
+                    from jb_location import now_line
+                    nl = now_line()
+                    if nl:
+                        tail.append(nl)
+                except Exception:
+                    pass
+            messages.insert(max(len(messages) - 1, 1), {"role": "system", "content": "\n\n".join(tail)})
         # Images the user attached to THIS turn (dropped/picked in chat): fold them
         # into the latest user message as vision blocks so the model can see them.
         att_imgs = self._attachment_image_blocks(f)
@@ -639,7 +709,19 @@ class ChatMixin:
                 "continue those actions and never state or imply you edited, saved, "
                 "created, sent, or changed anything now. If the user asks you to actually "
                 "do something, tell them to switch on Agent mode (the hammer toggle).")})
-        tools = self.tools_for(f, has_folder=root is not None)
+        if tools is None:
+            tools = self.tools_for(f, has_folder=root is not None)
+            if self._lazy_tools(f):
+                tools = list(tools)
+                self._turn_tools = tools          # find_tools appends to THIS list mid-turn
+        # Images become captions for text-only models, only when the user chose a
+        # caption model or on the phone chat (see jb_vision); other chats are untouched.
+        if on_phone or self.pref("vision_caption_model"):
+            try:
+                from jb_vision import vision_downgrade
+                vision_downgrade(self, f, messages)
+            except Exception:
+                pass
         # What the system prompt + tool schemas actually cost this turn, for the
         # context gauge (~4 chars/token, same estimate the rest of the readout uses).
         self._prompt_overhead_tokens = (len(system) + len(json.dumps(tools or []))) / 4.0
@@ -649,7 +731,18 @@ class ChatMixin:
         tool_calls_made = 0
         call_sigs, stuck = {}, False
         no_think = False   # set once reasoning has eaten a whole round's budget
+        cancelled = False
         while True:
+            # Stop, for real. A registry run (spawned agent, task) or a chat the user
+            # hit Stop on is checked HERE, between rounds, the one place a long
+            # multi-round turn can be interrupted without abandoning a tool call
+            # half-done. An in-flight model call still finishes first.
+            if self.agent_run_cancelled(session_id=sid):
+                cancelled = True
+                if not final_text:
+                    final_text = "Stopped."
+                    emit({"delta": final_text})
+                break
             # NO hardcoded cap — the user's Settings tool-use limit (0 = unlimited)
             # and the repeated-identical-call detector are the only stops. If either
             # trips, drop tools so the model MUST give a final answer this round.
@@ -784,6 +877,8 @@ class ChatMixin:
                 self._prune_context_images(messages)
         if not final_text:
             final_text = "I stopped without a final answer. Ask me to continue."
+        if cancelled:
+            self.agent_clear_cancel(session_id=sid)
         return final_text, "\n\n".join(thinking_parts), events
 
     # Base64 inflates a file by ~4/3, so a 4 MB photo becomes ~5.5M characters —

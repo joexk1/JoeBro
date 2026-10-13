@@ -48,6 +48,7 @@ final class AppStore {
 
     // Status / notifications
     var researchDot = false
+    var inboxUnread = 0
     // Email badge: dot shows while unread > 0; bounces while there are emails
     // unread that arrived since the Email workspace was last opened.
     var emailUnread = 0
@@ -319,6 +320,9 @@ final class AppStore {
                 if activeTab != .research,
                    let active = try? await api.researchActive(), !active.isEmpty {
                     researchDot = true
+                }
+                if up, activeTab != .inbox, let items = try? await api.inbox() {
+                    inboxUnread = items.filter { !$0.read }.count
                 }
                 // IMAP is the expensive one — every 3rd tick is plenty.
                 if tick % 3 == 1, let unread = await api.emailUnreadTotal() {

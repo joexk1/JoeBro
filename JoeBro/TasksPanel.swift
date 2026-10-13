@@ -11,9 +11,28 @@ struct TasksPanel: View {
     @State private var genError: String?
     @State private var search = ""
     @State private var searchOpen = false
+    @State private var phoneScope = false
 
     var body: some View {
         PanelChrome(title: "Tasks", icon: "clock.badge.checkmark") {
+            Picker("", selection: $phoneScope) {
+                Text("Tasks").tag(false)
+                Text("Phone agent").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 190)
+            if phoneScope {
+                Menu {
+                    Button("Morning briefing") { addStarter("morning") }
+                    Button("Evening wrap-up") { addStarter("evening") }
+                } label: {
+                    Image(systemName: "sparkles")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Starter tasks")
+            }
             PanelSearchField(text: $search, open: $searchOpen, placeholder: "Search tasks")
             Button {
                 Task { await load() }
@@ -30,7 +49,9 @@ struct TasksPanel: View {
             .help("New task")
         } content: {
             VStack(spacing: 10) {
-                QuickAddBar(placeholder: "Describe a new task…", busy: generating) { generateTask($0) }
+                if !phoneScope {
+                    QuickAddBar(placeholder: "Describe a new task…", busy: generating) { generateTask($0) }
+                }
                 if let genError {
                     Text(genError)
                         .font(.system(size: 11))
@@ -44,7 +65,8 @@ struct TasksPanel: View {
                 case .failed(let e):
                     ContentUnavailableView("Couldn't load tasks", systemImage: "clock.badge.exclamationmark", description: Text(e))
                 case .loaded(let list) where list.isEmpty:
-                    ContentUnavailableView("No scheduled tasks", systemImage: "clock")
+                    ContentUnavailableView(phoneScope ? "No phone-agent tasks" : "No scheduled tasks", systemImage: "clock",
+                                           description: phoneScope ? Text("Use the starter menu or the + button.") : nil)
                 case .loaded(let list):
                     let shown = filtered(list)
                     VStack(spacing: 0) {
@@ -70,12 +92,18 @@ struct TasksPanel: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .joeGlassRect(16)
+                if phoneScope {
+                    Text("Runs silently, tells your phone only when there is something to say.")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.tertiary)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .task { await load() }
+        .onChange(of: phoneScope) { selection = []; tasks = .loading; Task { await load() } }
         .sheet(isPresented: $showNew) {
-            NewTaskSheet { await load() }
+            NewTaskSheet(personal: phoneScope) { await load() }
         }
         .sheet(item: $editing) { t in
             EditTaskSheet(task: t) { await load() }
@@ -93,8 +121,18 @@ struct TasksPanel: View {
     }
 
     private func load() async {
-        do { tasks = .loaded(try await APIClient.shared.tasks()) }
-        catch { tasks = .failed(error.localizedDescription) }
+        do {
+            tasks = .loaded(phoneScope ? try await APIClient.shared.personalTasks()
+                                       : try await APIClient.shared.tasks())
+        } catch { tasks = .failed(error.localizedDescription) }
+    }
+
+    private func addStarter(_ id: String) {
+        Task {
+            do { try await APIClient.shared.createStarterTask(id) }
+            catch { genError = error.localizedDescription }
+            await load()
+        }
     }
 
 
@@ -217,6 +255,7 @@ struct TasksPanel: View {
 }
 
 struct NewTaskSheet: View {
+    var personal = false
     let onSaved: () async -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
@@ -288,7 +327,7 @@ struct NewTaskSheet: View {
             do {
                 try await APIClient.shared.createTask(
                     name: name.isEmpty ? String(prompt.prefix(40)) : name,
-                    prompt: prompt, schedule: schedule, time: time, permissionMode: mode, repeatDay: repeatDay)
+                    prompt: prompt, schedule: schedule, time: time, permissionMode: mode, repeatDay: repeatDay, personal: personal)
                 await onSaved()
                 dismiss()
             } catch {

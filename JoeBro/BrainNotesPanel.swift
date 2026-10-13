@@ -11,8 +11,33 @@ struct BrainPanel: View {
     // AppStorage so map/list choice survives tab switches (the panel is recreated).
     @AppStorage("brainMapMode") private var mapMode = true
 
+    @AppStorage("brainSource") private var phoneMemory = false
+
     var body: some View {
+        if phoneMemory {
+            PanelChrome(title: "Phone memory", icon: "iphone") {
+                brainSourcePicker
+            } content: {
+                PhoneMemoryView()
+            }
+        } else {
+            brainBody
+        }
+    }
+
+    private var brainSourcePicker: some View {
+        Picker("", selection: $phoneMemory) {
+            Text("Brain").tag(false)
+            Text("Phone memory").tag(true)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(width: 190)
+    }
+
+    private var brainBody: some View {
         PanelChrome(title: "Brain", icon: "brain.head.profile") {
+            brainSourcePicker
             Button {
                 withAnimation(.spring(duration: 0.25)) { mapMode.toggle() }
             } label: {

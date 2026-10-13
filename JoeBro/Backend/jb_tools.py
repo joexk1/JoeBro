@@ -26,6 +26,29 @@ DOC_WRITE_TOOLS = {"create_document", "edit_document", "update_document"}
 # so e.g. an iPhone-control server can require Full access.
 _PERM_RANK = {"sandbox": 0, "readonly": 1, "full": 2}
 
+# Built-in tools that are LOADED ON DEMAND rather than sent on every round, for the
+# phone agent (and any chat with pref `lazy_tools` on). Email, calendar and
+# reminder schemas are a couple of thousand tokens that every round of every turn
+# would otherwise pay. A group is offered when the latest message (or the last few
+# turns, so "yes, send it" still works) mentions it; otherwise find_tools pulls it
+# in. Nothing is removed, only not advertised until relevant. Fails open.
+DEFERRED_GROUPS = {
+    "email": ({"list_email_accounts", "list_emails", "read_email", "send_email", "archive_email",
+               "delete_email", "mark_email_read", "reply_to_email", "bulk_email"},
+              r"\b(?:e-?mails?|inbox|gmail|outlook|imap|mailbox|unsubscribe|attachment|\breply\b|\bsend (it|this|that|them)\b|"
+              r"\bdraft\b|list_emails|send_email|read_email)"),
+    "calendar": ({"create_event"},
+                 r"\b(?:calendar|events?\b|meetings?|appointments?|schedul|flights?|booking|itinerary|invite|"
+                 r"birthday|dinner|lunch|reschedul|\b(mon|tues|wednes|thurs|fri|satur|sun)day\b|"
+                 r"tomorrow|tonight|next week|this week|weekend|\bat \d{1,2}(:\d\d)?\s?(am|pm)?\b|\bical\b|caldav)"),
+    "reminders": ({"remind_me", "manage_reminders", "manage_pulse", "push_status"},
+                  r"\b(?:remind|reminders?|pulse|checklist|standing instruction|alert me|let me know|tell me (when|if)|"
+                  r"ping me|nudge|keep an eye|monitor|watch for|watchlist|routines?|push|notifications?|weekly|daily|don.t forget|\bin \d+ ?(min|minutes|hours?|h)\b)"),
+    "transfer": ({"export_to_artifact", "deliver_artifact", "move_file", "describe_image"},
+                 r"\b(?:save (it|this|that|the)|move (it|this|that|the)|copy (it|this|that|the)|download|upload|forward|attach\w*|"
+                 r"send (it|this|that|them|the|her|him|over)|export|photos?|pictures?|images?|pdf|files?|artifact|document)"),
+}
+
 
 class ToolsMixin:
 
@@ -41,6 +64,15 @@ class ToolsMixin:
             drop = {"bash", "python", "list_files", "read_file", "read_pdf",
                     "create_document", "edit_document", "update_document", "suggest_document"}
             schemas = [t for t in FUNCTION_TOOL_SCHEMAS if t["function"]["name"] not in drop]
+            if self._phone_toolset(f):
+                if (f.get("permission_mode") or "") == "readonly":
+                    drop = drop | WRITE_SIDE_EFFECT_TOOLS
+                    schemas = [t for t in schemas if t["function"]["name"] not in drop]
+                schemas = self._phone_schemas(f, drop) + schemas
+                hidden = self.deferred_tool_names(f)
+                schemas = [t for t in schemas if t["function"]["name"] not in hidden]
+                return (schemas + [t for t in self.custom_tool_schemas() if t["function"]["name"] not in hidden]
+                        + self.relevant_mcp_schemas(f) + self.find_tools_schema(f, hidden))
             return schemas + self.custom_tool_schemas() + self.mcp_tool_schemas(f)
         # Chat mode is pure conversation — no tools at all. Tools (search, email,
         # files, research, …) are an AGENT-mode capability.
@@ -68,16 +100,233 @@ class ToolsMixin:
             # can't reach the web (it would otherwise always be available).
             drop |= {"web_search"}
         schemas = [t for t in FUNCTION_TOOL_SCHEMAS if t["function"]["name"] not in drop]
+        if self._phone_toolset(f):         # silent phone runs (pulse, phone-agent tasks)
+            schemas = self._phone_schemas(f, drop) + schemas
         # Enabled custom API tools are offered alongside the built-ins (agent mode
         # only — we already returned [] for chat above). Their description is the
         # schema; the model infers the single `query` string from it.
-        schemas += self.custom_tool_schemas()
-        schemas += self.mcp_tool_schemas(f)
+        if self._lazy_tools(f):
+            hidden = self.deferred_tool_names(f)
+            schemas = [t for t in schemas if t["function"]["name"] not in hidden]
+            schemas += [t for t in self.custom_tool_schemas() if t["function"]["name"] not in hidden]
+            schemas += self.relevant_mcp_schemas(f)
+            schemas += self.find_tools_schema(f, hidden)
+        else:
+            schemas += self.custom_tool_schemas()
+            schemas += self.mcp_tool_schemas(f)
         if self._plugin_allowed("plugin_macos_use", f):
             schemas.append(MACOS_USE_TOOL)
         if self._plugin_allowed("plugin_advisor", f) and (self.pref("advisor_model") or ""):
             schemas.append(advisor_tool_schema(self.pref("advisor_description") or ""))
         return schemas
+
+    # ----- the phone agent's tools (schemas live in jb_core) ------------------
+
+    @staticmethod
+    def _truthy_flag(v):
+        return str(v or "").lower() in ("1", "true", "yes")
+
+    def _phone_toolset(self, f):
+        """The phone toolset belongs to the phone chat and the silent runs that
+        serve it (pulse, phone-agent tasks). Ordinary Mac chats never get it."""
+        return (f.get("session") or "") == PHONE_SESSION_ID or self._truthy_flag(f.get("phone_tools"))
+
+    def _lazy_tools(self, f):
+        return self._phone_toolset(f) or self._truthy_flag(self.pref("lazy_tools"))
+
+    def _phone_schemas(self, f, drop=()):
+        """The phone toolset for this turn. Memory and phone-task tools are for the
+        phone chat only; a subagent is a leaf and never gets the spawn tools."""
+        on_phone = (f.get("session") or "") == PHONE_SESSION_ID
+        skip = set(drop) | {"find_tools"}
+        if not on_phone:
+            skip |= {"muse_recall", "muse_remember", "muse_forget", "notify_me",
+                     "personal_task_create", "personal_task_list", "personal_task_update",
+                     "personal_task_delete", "personal_task_run_now"}
+        if self._truthy_flag(f.get("subagent")):
+            skip |= {"spawn_subagent", "spawn_agent"}
+        out = []
+        for t in PHONE_TOOL_SCHEMAS:
+            name = t["function"]["name"]
+            if name in skip:
+                continue
+            out.append(self.subagent_schema(t) if name == "spawn_subagent" else t)
+        return out
+
+    def phone_tool(self, name, body, form):
+        """Run one phone-toolset tool. Every branch returns text and never raises
+        for a missing capability: it says how to enable it."""
+        form = form or {}
+        if not self._phone_toolset(form):
+            raise ValueError(name + " is only available to the phone agent")
+        if getattr(self, "_turn_form", None) is None:
+            self._turn_form = form
+        if name == "manage_plan":
+            return self.manage_plan_tool(body)
+        if name == "remind_me":
+            return self.remind_me_tool(body)
+        if name == "manage_reminders":
+            return self.manage_reminders_tool(body)
+        if name == "notify_me":
+            return self.notify_me_tool(body)
+        if name == "manage_pulse":
+            return self.manage_pulse_tool(body)
+        if name == "spawn_agent":
+            return self.spawn_agent_tool(body)
+        if name == "spawn_subagent":
+            return self.spawn_subagent_tool(body)
+        if name == "manage_agents":
+            return self.manage_agents_tool(body)
+        if name == "get_location":
+            return self.get_location_tool(body)
+        if name == "get_weather":
+            return self.get_weather_tool(body)
+        if name == "push_status":
+            from jb_push import push_status
+            return json.dumps(push_status(self.store), ensure_ascii=False)
+        if name == "describe_image":
+            from jb_vision import describe_image_tool
+            return describe_image_tool(self, self.parse_tool_args(body))
+        if name == "find_tools":
+            return self.find_tools_tool(body)
+        if name in ("muse_recall", "muse_remember", "muse_forget"):
+            return self.muse_tool(name, body, form)
+        if name.startswith("personal_task_"):
+            return self.ptask_tool(name, body, form)
+        if name in TRANSFER_AI_TOOLS:
+            from jb_transfer import run_transfer_tool
+            return run_transfer_tool(self, name, self.parse_tool_args(body))
+        raise ValueError("unsupported tool " + name)
+
+    # ----- lazy loading: find_tools ------------------------------------------
+
+    MCP_AUTO_CAP = 8
+    _STOP = {"the", "a", "an", "and", "or", "of", "to", "for", "in", "on", "my", "me", "i",
+             "is", "it", "that", "this", "with", "what", "can", "you", "please", "get", "do"}
+
+    def _recent_text(self, f, turns=4):
+        """The latest message plus the last few turns' text (lowercased): what
+        decides whether a deferred tool group is relevant."""
+        parts = [str(f.get("message") or "")]
+        sid = f.get("session") or ""
+        if sid:
+            try:
+                rows = self.store.rows(
+                    "select content from messages where session_id=? and role in ('user','assistant') "
+                    "order by id desc limit ?", (sid, turns))
+                parts += [str(r.get("content") or "")[:1500] for r in rows]
+            except Exception:
+                pass
+        return " ".join(parts).lower()
+
+    def deferred_tool_names(self, f):
+        """Names of built-in tools NOT advertised this turn (still reachable via
+        find_tools). Fails open: any problem hides nothing."""
+        try:
+            text = self._recent_text(f)
+            hidden = set()
+            for names, rx in DEFERRED_GROUPS.values():
+                if not re.search(rx, text):
+                    hidden |= names
+            return hidden
+        except Exception:
+            return set()
+
+    def find_tools_schema(self, f, hidden=()):
+        """The find_tools schema, or [] when there is nothing it could load."""
+        if not self._lazy_tools(f):
+            return []
+        find = next(t for t in PHONE_TOOL_SCHEMAS if t["function"]["name"] == "find_tools")
+        names = sorted({s["function"]["description"][1:].split("]")[0]
+                        for s in self.mcp_tool_schemas(f)
+                        if s["function"].get("description", "").startswith("[")})
+        later = sorted({g for g, (gn, _) in DEFERRED_GROUPS.items() if gn & set(hidden)})
+        if not names and not later and (f.get("session") or "") != PHONE_SESSION_ID:
+            return []
+        note = ((" Connected integrations: " + ", ".join(names) + ".") if names else "")
+        if later:
+            note += " Also loadable on demand: " + ", ".join(later) + "."
+        out = json.loads(json.dumps(find))
+        out["function"]["description"] += note
+        return [out]
+
+    def relevant_mcp_schemas(self, f, cap=None):
+        """MCP tools worth offering unprompted: ranked by word overlap with what
+        the user actually said. No overlap, no tools; find_tools covers the rest."""
+        all_schemas = self.mcp_tool_schemas(f)
+        if not all_schemas:
+            return []
+        cap = self.MCP_AUTO_CAP if cap is None else cap
+        words = {w for w in re.findall(r"[a-z0-9]+", (f.get("message") or "").lower())
+                 if len(w) > 2 and w not in self._STOP}
+        if not words:
+            return []
+        scored = []
+        for sch in all_schemas:
+            fn = sch["function"]
+            hay = set(re.findall(r"[a-z0-9]+", (fn["name"] + " " + fn.get("description", "")).lower()))
+            hits = words & hay
+            if hits:
+                name_words = set(re.findall(r"[a-z0-9]+", fn["name"].lower()))
+                scored.append((len(hits) + 2 * len(words & name_words), fn["name"], sch))
+        scored.sort(key=lambda x: (-x[0], x[1]))
+        return [sch for _, _, sch in scored[:cap]]
+
+    def find_tools_tool(self, body):
+        """Pull tools into the CURRENT turn: the schemas are appended to the live
+        list run_agent passes each round, so they are callable on the next step.
+        With nothing to match it says so plainly (no error)."""
+        args = self.parse_tool_args(body)
+        query = (args.get("query") or args.get("q") or "").strip()
+        if not query:
+            raise ValueError("find_tools needs a query: what capability do you need?")
+        words = {w for w in re.findall(r"[a-z0-9]+", query.lower()) if len(w) > 2 and w not in self._STOP}
+        active = getattr(self, "_turn_tools", None)
+        have = {t["function"]["name"] for t in (active or []) if t.get("function")}
+        turn_form = getattr(self, "_turn_form", {}) or {}
+        readonly = (turn_form.get("permission_mode") or "") == "readonly"
+        unsafe = {"bash", "python", "list_files", "read_file", "read_pdf", "create_document",
+                  "edit_document", "update_document", "suggest_document", "find_tools"}
+        candidates = list(self.mcp_tool_schemas(turn_form))
+        candidates += [s for s in self._phone_schemas(turn_form) if s["function"]["name"] not in unsafe]
+        candidates += [s for s in FUNCTION_TOOL_SCHEMAS if s["function"]["name"] not in unsafe | {"manage_chats"}]
+        candidates += self.custom_tool_schemas()
+        group_names = set()
+        for names, rx in DEFERRED_GROUPS.values():
+            if re.search(rx, query.lower()):
+                group_names |= names
+        found, seen_names = [], set()
+        for sch in candidates:
+            fn = sch["function"]
+            if fn["name"] in have or fn["name"] in seen_names:
+                continue
+            if readonly and fn["name"] in WRITE_SIDE_EFFECT_TOOLS:
+                continue
+            seen_names.add(fn["name"])
+            hay = set(re.findall(r"[a-z0-9]+", (fn["name"] + " " + fn.get("description", "")).lower()))
+            hits = words & hay
+            if fn["name"] in group_names:
+                hits = hits | {"_group"}
+            if hits:
+                found.append((len(hits), sch))
+        found.sort(key=lambda x: -x[0])
+        picked = [sch for _, sch in found[:12]]
+        if not picked:
+            return json.dumps({"ok": True, "found": 0, "tools": [],
+                               "note": "No matching capability. If the user wants it, they can connect one "
+                                       "in Tools on the Mac (Tools > MCP Servers)."}, ensure_ascii=False)
+        if active is not None:
+            active.extend(picked)          # live list: callable from the next round
+        try:
+            from jb_prompt import _advice_for
+            how = "\n".join(_advice_for([s["function"]["name"] for s in picked]))
+        except Exception:
+            how = ""
+        return json.dumps({"ok": True, "found": len(picked),
+                           "note": "these are now available to you, call them directly"
+                                   + (("\nUsage notes:\n" + how) if how else ""),
+                           "tools": [{"name": s["function"]["name"], "description": s["function"]["description"][:200]}
+                                     for s in picked]}, ensure_ascii=False)
 
     def custom_tool_schemas(self):
         """OpenAI-style schemas for every enabled custom API tool."""
@@ -1070,6 +1319,20 @@ class ToolsMixin:
         if sid:
             self.set_pref("bot_focus_" + sid, {"id": chat_id, "name": chat_name or ""})
 
+    def _phone_may_run(self, form):
+        """False only for the phone chat when the user has NOT switched on "Let the
+        phone agent run commands" (pref mobile_allow_full)."""
+        if ((form or {}).get("session") or "") != PHONE_SESSION_ID:
+            return True
+        return self._truthy_flag(self.pref("mobile_allow_full"))
+
+    def _phone_bind_ok(self, form, folder):
+        """The folder a phone-driven bind may use (see jb_files.phone_folder_check)."""
+        if folder and ((form or {}).get("session") or "") == PHONE_SESSION_ID:
+            from jb_files import phone_folder_check
+            return phone_folder_check(folder)
+        return folder
+
     def manage_chats_tool(self, body, form=None):
         args = self.parse_tool_args(body)
         action = (args.get("action") or "list").lower()
@@ -1114,7 +1377,9 @@ class ToolsMixin:
             mode = mode if mode in ("chat", "agent") else "agent"
             perm = (args.get("permission") or "sandbox").lower()
             perm = perm if perm in ("sandbox", "readonly", "full") else "sandbox"
-            folder = (args.get("folder") or "").strip()
+            if perm == "full" and not self._phone_may_run(form):
+                perm = "sandbox"
+            folder = self._phone_bind_ok(form, (args.get("folder") or "").strip())
             # Inherit a working model/endpoint so the new chat can actually run:
             # the bot's configured model first, then the app default.
             ep = self.pref("bot_endpoint_id") or self.pref("default_endpoint_id") or ""
@@ -1129,13 +1394,16 @@ class ToolsMixin:
         if not target:
             raise ValueError(f"chat not found: {args.get('chat') or ''}")
         if action == "bind_folder":
-            folder = (args.get("folder") or "").strip()
+            folder = self._phone_bind_ok(form, (args.get("folder") or "").strip())
             self.store.exec("update sessions set workdir=? where id=?", (folder, target["id"]))
             return f"Bound chat '{target.get('name')}' to folder: {folder or '(none)'}"
         if action == "set_permission":
             perm = (args.get("permission") or "").lower()
             if perm not in ("sandbox", "readonly", "full"):
                 raise ValueError("permission must be sandbox, readonly or full")
+            if perm == "full" and not self._phone_may_run(form):
+                raise ValueError("Full Access can only be given from the Mac: the user has not allowed the "
+                                 "phone agent to run commands (Settings > Mobile)")
             self.store.exec("update sessions set permission_mode=? where id=?", (perm, target["id"]))
             return f"Set chat '{target.get('name')}' file access to {perm}"
         if action == "set_model":
@@ -1175,6 +1443,8 @@ class ToolsMixin:
             # edits" is on, route the chat's approval prompts back to Telegram via
             # the orchestrator's live emit (set on self during the bot's run).
             perm = (target.get("permission_mode") or "sandbox").lower()
+            if perm == "full" and not self._phone_may_run(form):
+                perm = "sandbox"       # the phone cannot borrow a chat's Full Access
             sub = {"session": target["id"], "message": msg,
                    "model": target.get("model") or "", "endpoint_id": target.get("endpoint_id") or "",
                    "endpoint_url": target.get("endpoint_url") or "",
@@ -1270,6 +1540,8 @@ class ToolsMixin:
         raise ValueError(f"unsupported email tool {name}")
 
     def execute_production_tool(self, root, name, body, form, allow_outside=False):
+        if name in PHONE_TOOL_NAMES:
+            return self.phone_tool(name, body, form)
         if name in ("list_files", "read_file", "read_pdf", "create_document", "edit_document", "update_document", "suggest_document"):
             if root is None:
                 # No bound folder: only Full Access may use a scratch workspace

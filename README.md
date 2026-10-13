@@ -9,6 +9,8 @@
   Local-first. Private. Built to get things done.
 </p>
 
+**Sister repo:** the iPhone app is **[JoeBro Mobile](https://github.com/joexk1/JoeBro-Mobile)**. It talks to this app on your Mac, with no cloud in between.
+
 ---
 
 ## Why JoeBro exists
@@ -47,6 +49,7 @@ It's one window, not ten apps:
 ![The glass interface adapts to any wallpaper with your choice of colour accents](README_assets/theming.png)
 
 **Workspace tools**, all local, self-improving, and manually manageable.
+- **Inbox and phone memory**: notices from your phone agent, and the memory files it reads. See the 1.3 section below.
 - **Email** over IMAP: read, compose, reply, forward, triage. All on your machine.
 - **Calendar**: your events, add, edit and delete, all from within the app.
 - **Brain**: long-term memory that persists across sessions and improves the more you use it. Every memory is one self-contained fact — a lasting world fact, an experience, or an opinion you've expressed — filed on a topic page. Repeats merge into the page instead of piling up, and only what's relevant to the message at hand (plus anything you pin) ever reaches the model. Add, edit, search, or delete memories manually anytime. Opens as an interactive **brain map** — a live graph where lines join memories that share topics (shorter and heavier = more closely related), and the biggest nodes are the hubs the rest of your memories link back to. Drag nodes around, zoom in as deep as you like, or flip to a plain list.
@@ -57,6 +60,23 @@ It's one window, not ten apps:
 - **AI Check**: paste text to see how AI-written it reads, with the suspect sentences flagged.
 
 For a full walkthrough of every tab, control and right-click menu, see the **[User Guide](USER_GUIDE.md)**. To go from zero to your first message in under a minute, start with **[Getting Started](GETTING_STARTED.md)**.
+
+---
+
+## New in 1.3: JoeBro on your iPhone
+
+Pair a phone with your Mac and it becomes a second window into the same JoeBro. The phone app lives in its own repo, **[JoeBro Mobile](https://github.com/joexk1/JoeBro-Mobile)**. You build it yourself, so your bundle ID and your keys stay yours.
+
+- **Phone pairing.** **Settings > Mobile**, turn on **Let my phone connect**, scan the QR code. Over Tailscale or your Wi-Fi, with a token. Off until you turn it on.
+- **The phone agent.** One chat that follows your default model and hands hands-on work to chats you've bound to folders. It starts in Bound folder mode.
+- **Phone memory.** Plain Markdown files you can read and edit, under **Brain > Phone memory**. `about-me` is always in context. The rest are pulled in when they're relevant.
+- **Phone agent tasks.** **Tasks > Phone agent**. They run silently and only post the notification text.
+- **Heartbeat.** Checks your calendar, reminders and task results every 30 minutes, and only calls a model when something changed. Quiet hours and daily limits, off by default.
+- **Inbox.** A new tab for everything the agent, your tasks and your agents want to tell you.
+- **Push.** Optional. Bring your own Apple key and upload it in **Settings > Mobile**. Without it the phone still works.
+- **Cheap in the background.** Background work uses a small model, and nothing runs when nothing has changed.
+
+No MCP server is ever added for you. The phone can't add one either. The phone only works while JoeBro is open and your Mac is awake. Weather and location are opt-in, and the only hosts they touch are open-meteo.com and nominatim.openstreetmap.org. Details in the **[User Guide](USER_GUIDE.md)**.
 
 ---
 
@@ -99,6 +119,7 @@ Because the backend is bundled in the app, the bot is reachable whenever JoeBro 
 
 - **Your data stays on your Mac.** Chats, memory, notes, tasks and documents live in a local SQLite store in `~/Library/Application Support/JoeBro/`.
 - **Bring your own models.** Run local models with Ollama (or anything OpenAI-compatible) over your network, or paste an API key for DeepSeek, OpenAI, Anthropic, Groq, Gemini, OpenRouter and friends. You choose per message, and you can switch model mid-conversation without losing the thread.
+- **Phone access is off until you turn it on.** When it's on, it's a separate listener that needs a token on every request, and it can't add MCP servers or plugins.
 - **No telemetry, no middleman.** The app talks to its own local backend and to whichever model endpoints you set up. Nothing else is in the loop.
 - **You hold the keys.** API keys are stored locally. When the agent touches files or runs commands, you decide how much access it gets.
 - **Cloak Mode.** On by default: API keys, passwords, emails, card, passport and account numbers are swapped for placeholders like `[API KEY]` before any request leaves the backend — every model endpoint, local ones included. The model sees the shape of your data, never the values. One switch in Settings.
@@ -156,6 +177,11 @@ JoeBro/
     jb_memory.py               long-term memory: retain / recall / reflect over topic pages
     jb_telegram.py             the Message Bot: a long-polling Telegram orchestrator over your chats
     jb_email.py / jb_calendar.py / jb_docs.py    integrations
+    jb_agents.py / jb_fleet.py agent registry, spawned agents, pulse
+    jb_personal.py / jb_ptasks.py  plan, reminders, phone agent tasks
+    jb_muse.py                 phone memory files (plain Markdown)
+    jb_heartbeat.py            the background check that only calls a model on change
+    jb_push.py / jb_location.py / jb_vision.py / jb_transfer.py / jb_janitor.py   push, weather, image captions, file moves, cleanup
     jb_models.py               model discovery, API tools, MCP servers, plugins
     jb_files.py                workdir browsing and uploads
     jb_apkg.py                 Anki .apkg decks <-> plain Q/A text (stdlib zip + SQLite)

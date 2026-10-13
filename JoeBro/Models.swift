@@ -480,7 +480,7 @@ struct Plugin: Identifiable, Codable, Hashable {
 struct PluginsResponse: Codable { var plugins: [Plugin] }
 
 enum WorkspaceTab: String, CaseIterable, Identifiable {
-    case chat, email, calendar, brain, notes, tasks, skills, tools, aiCheck, research
+    case chat, email, calendar, brain, notes, tasks, skills, tools, aiCheck, research, inbox
 
     var id: String { rawValue }
 
@@ -496,6 +496,7 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
         case .tools: return "Tools"
         case .aiCheck: return "AI Check"
         case .research: return "Deep Research"
+        case .inbox: return "Inbox"
         }
     }
 
@@ -511,6 +512,7 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
         case .tools: return "wrench.and.screwdriver"
         case .aiCheck: return "checkmark.shield"
         case .research: return "antenna.radiowaves.left.and.right"
+        case .inbox: return "tray"
         }
     }
 }

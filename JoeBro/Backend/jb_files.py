@@ -1,5 +1,28 @@
-"""Workdir browsing, uploads, and device-bridge file routing."""
+"""Workdir browsing, uploads, and the folder picker."""
 from jb_core import *  # noqa: F401,F403
+
+# Folders a phone may never bind a chat or agent to, however it asks: credentials,
+# keychains, launch items and JoeBro's own data. Matched anywhere in the path.
+PHONE_DENY = ("/.ssh", "/.gnupg", "/.aws", "/.config", "/.joebro", "/library", "/.trash")
+
+
+def phone_folder_check(folder):
+    """A folder a phone-originated request may bind: it must resolve to somewhere
+    inside the user's home, and not through a credentials or app-data folder.
+    Returns the resolved path as a string; raises ValueError otherwise."""
+    if not folder:
+        return ""
+    p = Path(str(folder)).expanduser()
+    if not p.is_absolute():
+        raise ValueError("folder must be an absolute path")
+    real = p.resolve()
+    home = Path.home().resolve()
+    if real != home and not real.is_relative_to(home):
+        raise ValueError("the phone can only use folders inside your home folder")
+    low = str(real).lower() + "/"
+    if real == home or any(seg + "/" in low for seg in PHONE_DENY):
+        raise ValueError("that folder is off limits to the phone (credentials, app data or the whole home folder)")
+    return str(real)
 
 
 class FilesMixin:
@@ -85,11 +108,55 @@ class FilesMixin:
         except OSError:
             return False
 
+    def browse_host(self, q):
+        """GET /api/fs/browse?path= : directory names under the user's home, for the
+        phone's "bind a folder" picker. Read-only, no dotfiles, and it will not
+        follow a symlink out of the home folder."""
+        home = Path.home().resolve()
+        raw = (q.get("path") or "").strip()
+        try:
+            target = (Path(raw).expanduser() if raw else home)
+            if ".." in target.parts:
+                raise ValueError("path cannot contain '..'")
+            real = target.resolve()
+            if real != home and not real.is_relative_to(home):
+                raise ValueError("browsing is limited to your home folder")
+            if not real.is_dir():
+                return self.json({"detail": "not a folder"}, 404)
+        except (ValueError, OSError) as exc:
+            return self.json({"detail": str(exc)}, 400)
+        entries = []
+        try:
+            for p in sorted(real.iterdir(), key=lambda x: x.name.lower()):
+                if p.name.startswith("."):
+                    continue
+                try:
+                    if p.is_symlink() and not p.resolve().is_relative_to(home):
+                        continue
+                    is_dir = p.is_dir()
+                    entry = {"name": p.name, "path": str(p), "is_dir": is_dir}
+                    if not is_dir:
+                        entry["size"] = p.stat().st_size
+                except OSError:
+                    continue
+                entries.append(entry)
+                if len(entries) >= 500:
+                    break
+        except OSError as exc:
+            return self.json({"detail": str(exc)}, 403)
+        return self.json({"path": str(real), "entries": entries})
+
     def workdir_post(self, path):
         sid = path.split("/")[3]
         if path.endswith("/workdir"):
             body = self._json_body()
-            self.store.exec("update sessions set workdir=? where id=?", (body.get("workdir"), sid))
+            folder = body.get("workdir")
+            if getattr(self.server, "is_lan", False) and folder:     # phone: home only, no app data
+                try:
+                    folder = phone_folder_check(folder)
+                except ValueError as exc:
+                    return self.json({"detail": str(exc)}, 403)
+            self.store.exec("update sessions set workdir=? where id=?", (folder, sid))
             return self.json({"ok": True})
         body = self._json_body()
         session = self.store.one("select workdir from sessions where id=?", (sid,))

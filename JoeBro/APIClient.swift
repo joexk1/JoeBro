@@ -378,8 +378,8 @@ final class APIClient {
         return r.tasks
     }
 
-    func createTask(name: String, prompt: String, schedule: String, time: String, permissionMode: String = "sandbox", repeatDay: Int = 0) async throws {
-        try await sendJSON("api/tasks", body: [
+    func createTask(name: String, prompt: String, schedule: String, time: String, permissionMode: String = "sandbox", repeatDay: Int = 0, personal: Bool = false) async throws {
+        var body: [String: Any] = [
             "name": name,
             "prompt": prompt,
             "task_type": "llm",
@@ -389,7 +389,9 @@ final class APIClient {
             "repeat_day": repeatDay,
             "trigger_type": "schedule",
             "output_target": "session",
-        ])
+        ]
+        if personal { body["scope"] = "personal" }
+        try await sendJSON("api/tasks", body: body)
     }
 
     func updateTask(id: String, name: String, prompt: String, schedule: String, time: String, permissionMode: String = "sandbox", repeatDay: Int = 0) async throws {

@@ -35,6 +35,10 @@ from pathlib import Path
 
 APP_NAME = "JoeBro"
 DEFAULT_PORT = 8765
+BACKEND_VERSION = "1.3.0"     # the wire contract the phone checks via /api/mobile/hello
+# The reserved chat the phone agent lives in. One id, defined here, so a rename
+# never has to chase string literals through the other modules.
+PHONE_SESSION_ID = "phone"
 
 # Deep-research worker registry. Handler is per-request, so worker bookkeeping
 # lives at module scope: _RESEARCH_STARTED is the set of ids that already have a
@@ -224,6 +228,21 @@ def app_support_dir():
     if root:
         return Path(root)
     return Path.home() / "Library" / "Application Support" / APP_NAME
+
+
+_DATA_ROOT = []   # the live Store's root, set by Store.__init__ (last one wins)
+
+
+def data_dir(store=None):
+    """Where every JoeBro-owned file lives: the store's root
+    (~/Library/Application Support/JoeBro). Modules that have no handler to ask
+    call this instead of hardcoding a path; JOEBRO_DATA_DIR overrides it for tests."""
+    if store is not None:
+        return Path(store.root)
+    env = os.environ.get("JOEBRO_DATA_DIR")
+    if env:
+        return Path(env)
+    return Path(_DATA_ROOT[0]) if _DATA_ROOT else app_support_dir()
 
 
 def atomic_write_text(path: Path, text: str):
@@ -745,20 +764,37 @@ EMAIL_AI_TOOLS = {
     "list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email",
     "bulk_email", "delete_email", "archive_email", "mark_email_read",
 }
+TRANSFER_AI_TOOLS = {"export_to_artifact", "deliver_artifact", "move_file"}
+# The phone agent's extra tools. Offered to the phone chat (and the silent runs
+# that belong to it: personal tasks, heartbeat), never to an ordinary Mac chat,
+# so a 1.2.1 user sees no change. Each one degrades to a plain-text "here is how
+# to enable it" result when the thing it needs is not set up.
+PHONE_TOOL_NAMES = {
+    "manage_plan", "remind_me", "manage_reminders", "notify_me", "manage_pulse",
+    "spawn_agent", "spawn_subagent", "manage_agents", "get_location", "get_weather",
+    "push_status", "describe_image", "find_tools",
+    "muse_recall", "muse_remember", "muse_forget",
+    "personal_task_create", "personal_task_list", "personal_task_update",
+    "personal_task_delete", "personal_task_run_now",
+} | TRANSFER_AI_TOOLS
 PRODUCTION_AI_TOOLS = {
     "bash", "python", "web_search",
     "list_files", "read_file", "read_pdf",
     "create_document", "edit_document", "suggest_document",
     "trigger_research", "manage_research", "manage_memory", "manage_tasks", "manage_skills",
     "manage_chats", "create_event",
-} | EMAIL_AI_TOOLS
+} | EMAIL_AI_TOOLS | PHONE_TOOL_NAMES
 WRITE_SIDE_EFFECT_TOOLS = {
     "bash", "python",
     "create_document", "edit_document",
     "manage_memory", "manage_tasks", "manage_skills", "trigger_research", "manage_research",
     "manage_chats", "create_event",
     "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read",
-}
+    "remind_me", "manage_reminders", "notify_me", "manage_pulse",
+    "spawn_agent", "spawn_subagent", "manage_agents",
+    "muse_remember", "muse_forget",
+    "personal_task_create", "personal_task_update", "personal_task_delete", "personal_task_run_now",
+} | TRANSFER_AI_TOOLS
 
 
 def _fn(name, desc, props, required):
@@ -839,11 +875,98 @@ FUNCTION_TOOL_SCHEMAS = [
     _fn("python", "Run a Python snippet (only with terminal access + Full Access).", {"code": {"type": "string"}}, ["code"]),
 ]
 
+# The phone agent's tools (see PHONE_TOOL_NAMES). Kept out of FUNCTION_TOOL_SCHEMAS
+# so tools_for() only offers them where they belong.
+_ARTIFACT_OPTS = {"filename": {"type": "string", "description": "optional destination file name"},
+                  "subject": {"type": "string", "description": "email subject"},
+                  "body": {"type": "string", "description": "email body text"},
+                  "confirm_token": {"type": "string", "description": "from the needs_confirmation preview, only after the user agreed"}}
+_SCHED = {"type": "string", "enum": ["daily", "weekly", "monthly"]}
+_PTASK_FIELDS = {"title": {"type": "string"},
+                 "prompt": {"type": "string", "description": "what the background agent should check/do; its final reply is the notification"},
+                 "schedule": _SCHED,
+                 "time": {"type": "string", "description": "HH:MM local"},
+                 "weekday": {"type": "integer", "description": "weekly only: 0=Mon ... 6=Sun"},
+                 "enabled": {"type": "boolean"}}
+PHONE_TOOL_SCHEMAS = [
+    _fn("manage_plan", "The working plan for this job: your own to-do list, handed back to you every round so a long task survives compaction and model switches. Use it whenever the work is more than a couple of steps: `set` the steps first, then `done` each one AS you finish it. The user sees it too.",
+        {"action": {"type": "string", "enum": ["get", "set", "add", "done", "doing", "blocked", "clear"], "description": "default get"},
+         "steps": {"type": "string", "description": "set: the steps, one per line"},
+         "text": {"type": "string", "description": "add: the new step; done/doing/blocked: which step (text match)"},
+         "step": {"type": "string", "description": "done/doing/blocked: the step NUMBER from a previous get (or omit on `done` for the next unfinished one)"}}, ["action"]),
+    _fn("remind_me", "Set a ONE-OFF reminder that notifies the user's phone at a specific time (push when it is set up, Telegram as the fallback, the Inbox always). For 'remind me at 6 to call the bank', 'nudge me in 20 minutes'. Resolve the user's words into an absolute ISO-8601 datetime yourself. For anything RECURRING use manage_tasks or personal_task_create instead.",
+        {"text": {"type": "string", "description": "what to remind them of, in their words ('call the bank')"},
+         "at": {"type": "string", "description": "absolute ISO-8601 datetime, e.g. 2026-09-29T18:00:00"},
+         "in_minutes": {"type": "integer", "description": "alternative to `at`: fire this many minutes from now"}}, ["text"]),
+    _fn("manage_reminders", "List or cancel the user's pending one-off reminders.",
+        {"action": {"type": "string", "enum": ["list", "cancel"], "description": "default list"},
+         "id": {"type": "string"}, "text": {"type": "string", "description": "cancel by matching text instead of id"}}, ["action"]),
+    _fn("get_location", "The user's last reported phone location (place name, lat/lon, how old the fix is). Latest fix only. Needs location sharing turned on in the Mac app.", {}, []),
+    _fn("get_weather", "Weather from Open-Meteo: current conditions plus hourly and/or daily forecast. Defaults to the user's current location; pass `place` for anywhere else. Needs location sharing turned on in the Mac app.",
+        {"place": {"type": "string", "description": "optional city/place name; omit for current location"},
+         "hours": {"type": "integer", "description": "hourly forecast length, default 6, max 48"},
+         "days": {"type": "integer", "description": "daily forecast length, 0-7, default 0"}}, []),
+    _fn("push_status", "Check mobile push configuration and registered device counts without sending anything. Reports setup blockers; never exposes device tokens.", {}, []),
+    _fn("notify_me", "Send the user a requested phone notification now. auto uses push when configured, otherwise Telegram. mobile requires push; inbox only saves a message. Check the delivery result: APNs acceptance does not guarantee display on the device.",
+        {"message": {"type": "string", "description": "the message, written to be read on a phone"},
+         "title": {"type": "string", "description": "optional short heading"},
+         "channel": {"type": "string", "enum": ["auto", "mobile", "telegram", "inbox"]}}, ["message"]),
+    _fn("manage_pulse", "The user's proactive background check: it runs on its own every so often, works through a plain-English checklist, and messages them only if something needs them. `set` with `add` is how a standing instruction ('tell me if an email from the bank arrives') gets added.",
+        {"action": {"type": "string", "enum": ["get", "set", "run", "pause", "resume"], "description": "default get"},
+         "add": {"type": "string", "description": "set: append one new standing instruction to the checklist"},
+         "checklist": {"type": "string", "description": "set: replace the whole checklist (markdown bullets)"},
+         "interval_minutes": {"type": "integer", "description": "set: how often it runs (minimum 5)"},
+         "quiet_hours": {"type": "string", "description": "set: e.g. '23:00-07:30', it stays silent in this window"}}, ["action"]),
+    _fn("spawn_agent", "Run work in the BACKGROUND as a separate agent with its own session, and carry on. Use it for something genuinely separable and slow. Each agent reports back to the user on its own when it finishes. Costs a full agent run each, so don't spawn where one tool call would do.",
+        {"prompt": {"type": "string", "description": "the complete task, written so it can run without you"},
+         "title": {"type": "string", "description": "short label shown to the user"},
+         "folder": {"type": "string", "description": "absolute path to bind the agent to, if it needs files"},
+         "permission_mode": {"type": "string", "enum": ["readonly", "sandbox", "full"], "description": "default sandbox"}}, ["prompt"]),
+    _fn("spawn_subagent", "Dispatch a SUBAGENT: a worker with its own session that runs one self-contained task independently while you carry on, then reports its result back. Subagents cannot spawn further subagents, and only a few can run at once (you get an error when the limit is hit). Use for separable work (research a topic, review a file, draft something); not for what one tool call does. Check on it with manage_agents.",
+        {"prompt": {"type": "string", "description": "the complete task, written so it can run without you"},
+         "title": {"type": "string", "description": "short label shown to the user"},
+         "model": {"type": "string", "description": "model id to use for this subagent"},
+         "folder": {"type": "string", "description": "absolute path to bind the subagent to, if it needs files"},
+         "permission_mode": {"type": "string", "enum": ["readonly", "sandbox", "full"], "description": "default sandbox"}}, ["prompt"]),
+    _fn("manage_agents", "Check on background agents: list them, get one's full result, or stop one.",
+        {"action": {"type": "string", "enum": ["list", "status", "result", "stop", "clear"], "description": "default list"},
+         "id": {"type": "string"}}, ["action"]),
+    _fn("describe_image", "Look at an image and get a text description including any visible text. Read-only. Give artifact_id (from export_to_artifact), a url, or an artifact-folder path. Needs an image caption model chosen in the Mac app (Settings > Mobile).",
+        {"artifact_id": {"type": "string"}, "path": {"type": "string"}, "url": {"type": "string"},
+         "source": {"type": "string", "description": "transfer URI, e.g. upload:up_<id>"}}, []),
+    _fn("find_tools", "Find and enable a built-in capability or a connected integration you need but don't currently have listed. Call this the moment a job needs something you can't see; do not assume you lack it.",
+        {"query": {"type": "string", "description": "the capability you need, e.g. 'create a github issue'"}}, ["query"]),
+    _fn("muse_recall", "Look up the user's saved personal memory (markdown files: preferences, people, projects, routines). Pass keywords; returns the matching dated lines. Use before saying you don't know something about the user.",
+        {"query": {"type": "string", "description": "keywords; empty with `file` lists that whole file with line numbers"},
+         "file": {"type": "string", "description": "optional: search one file only"}}, []),
+    _fn("muse_remember", "Save ONE durable fact about the user (a preference, person, project, routine) as a short line in a memory file. Not one-off chatter, not secrets. Near-duplicates are skipped.",
+        {"file": {"type": "string", "description": "one of: about-me, preferences, people, projects, routines (or an existing file name)"},
+         "fact": {"type": "string", "description": "one short self-contained line"}}, ["file", "fact"]),
+    _fn("muse_forget", "DELETE saved memory. Use whenever the user says forget/delete/remove/clear. `match` = a few words of the line (fuzzy), a line number from muse_recall (\"3\", \"2-4\"), or \"*\" to clear a whole file (never about-me). Omit `file` to search every file by words. Returns the exact lines removed; report them.",
+        {"file": {"type": "string", "description": "memory file; optional when matching by words"},
+         "match": {"type": "string", "description": "words, line number(s), or * for the whole file"}}, ["match"]),
+    _fn("personal_task_create", "Create a background task for the phone agent (runs silently on a schedule; notifies you in this chat and by push only when there is something new).",
+        _PTASK_FIELDS, ["title", "prompt", "time"]),
+    _fn("personal_task_list", "List the phone agent's background tasks with schedule, enabled state and last run.", {}, []),
+    _fn("personal_task_update", "Edit a phone-agent task by id (title, prompt, schedule, time, weekday, enabled).",
+        dict({"id": {"type": "string"}}, **_PTASK_FIELDS), ["id"]),
+    _fn("personal_task_delete", "Delete a phone-agent task by id.", {"id": {"type": "string"}}, ["id"]),
+    _fn("personal_task_run_now", "Run a phone-agent task now in the background (returns immediately; a notice arrives only if the result is new).",
+        {"id": {"type": "string"}}, ["id"]),
+    _fn("export_to_artifact", "Fetch a file from a source into the artifact store and return its artifact_id. Sources: url:https://..., upload:up_<id> (a file attached in chat), doc:doc_<id>[?format=pdf], device:/abs/path (this Mac, Full Access only), <folder>:/rel/path (a folder from artifact_roots: documents, downloads), artifact:<id>. 50 MiB max.",
+        {"source": {"type": "string"}, "filename": {"type": "string"}}, ["source"]),
+    _fn("deliver_artifact", "Deliver a stored artifact to a destination. Destinations: <folder>:/dir/ or <folder>:/dir/name.ext (documents, downloads; never overwrites), email:<address>, doc:new/<title>, device:/abs/path (this Mac, Full Access only). Email NEVER sends on the first call: it returns a preview and confirm_token; show the user and call again with the token only after they agree.",
+        dict({"artifact_id": {"type": "string"}, "to": {"type": "string"}}, **_ARTIFACT_OPTS), ["artifact_id", "to"]),
+    _fn("move_file", "Shortcut for export_to_artifact + deliver_artifact in one call, e.g. source=upload:up_<id> to=documents:/Photos/. Same confirmation rule for outbound email: the preview returns an artifact_id, then use deliver_artifact with it and the confirm_token.",
+        dict({"source": {"type": "string", "description": "the source URI (also accepted as `from`)"}, "to": {"type": "string"}}, **_ARTIFACT_OPTS), ["source", "to"]),
+]
+
 # Every reserved/built-in function name. A user's custom API tool is sanitized to
 # a safe snake_case name and prefixed if it would collide with any of these, so a
 # custom tool can never shadow a built-in one in the dispatch loop.
 BUILTIN_TOOL_NAMES = (
     {t["function"]["name"] for t in FUNCTION_TOOL_SCHEMAS}
+    | {t["function"]["name"] for t in PHONE_TOOL_SCHEMAS}
     | PRODUCTION_AI_TOOLS | OBSOLETE_AI_TOOLS | EMAIL_AI_TOOLS | {"write_file"}
 )
 
@@ -1099,6 +1222,7 @@ class Store:
     def __init__(self, root: Path):
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
+        _DATA_ROOT[:] = [root]
         (self.root / "uploads").mkdir(exist_ok=True)
         (self.root / "previews").mkdir(exist_ok=True)
         self.db_path = self.root / "joebro.sqlite3"
@@ -1264,6 +1388,67 @@ class Store:
                     created_at text not null,
                     updated_at text not null
                 );
+                create table if not exists agents (
+                    id text primary key,
+                    title text not null,
+                    prompt text not null,
+                    status text default 'queued',
+                    result text default '',
+                    error text default '',
+                    session_id text default '',
+                    model text default '',
+                    endpoint_id text default '',
+                    workdir text default '',
+                    permission_mode text default 'sandbox',
+                    notify integer default 1,
+                    created_at text not null,
+                    started_at text default '',
+                    finished_at text default ''
+                );
+                create table if not exists inbox (
+                    id text primary key,
+                    kind text default 'note',
+                    title text default '',
+                    body text not null,
+                    source text default '',
+                    read integer default 0,
+                    created_at text not null
+                );
+                create table if not exists plans (
+                    session_id text primary key,
+                    steps text default '[]',
+                    updated_at text not null
+                );
+                create table if not exists reminders (
+                    id text primary key,
+                    text text not null,
+                    due_at text not null,
+                    status text default 'pending',
+                    created_at text not null,
+                    fired_at text default ''
+                );
+                create table if not exists push_devices (
+                    install_id text primary key,
+                    token text not null,
+                    environment text not null,
+                    bundle_id text not null,
+                    enabled integer not null default 1,
+                    hide_previews integer not null default 1,
+                    updated_at real not null,
+                    last_success_at real,
+                    last_error text
+                );
+                create table if not exists push_activities (
+                    token text primary key,
+                    environment text not null,
+                    updated_at real not null
+                );
+                create table if not exists heartbeat_seen (
+                    source_key text not null,
+                    revision text not null,
+                    notified_at text not null,
+                    primary key (source_key, revision)
+                );
                 """
             )
             # plugins.permission_mode = the file-access level the plugin's tools run at.
@@ -1345,10 +1530,22 @@ class Store:
                          "alter table tasks add column last_run text default ''",
                          "alter table tasks add column permission_mode text default 'sandbox'",
                          "alter table tasks add column repeat_day integer default 0",
+                         "alter table tasks add column scope text default 'general'",
+                         "alter table tasks add column last_hash text default ''",
                          "alter table sessions add column permission_mode text default 'sandbox'",
                          "alter table mcp_servers add column permission_mode text default 'sandbox'"):
                 try:
                     db.execute(stmt)
+                except sqlite3.OperationalError:
+                    pass
+            # The agents table is the one run registry (jb_agents): kind says
+            # research / chat / task / subagent, ref_id points at the owning row.
+            for col, decl in (("kind", "text default 'chat'"), ("ref_id", "text default ''"),
+                              ("progress", "text default ''"),
+                              ("cancel_requested", "integer default 0"),
+                              ("parent_id", "text default ''")):
+                try:
+                    db.execute(f"alter table agents add column {col} {decl}")
                 except sqlite3.OperationalError:
                     pass
             db.commit()
@@ -1468,6 +1665,12 @@ class Store:
 
 __all__ = [
     "APP_NAME",
+    "BACKEND_VERSION",
+    "PHONE_SESSION_ID",
+    "PHONE_TOOL_NAMES",
+    "PHONE_TOOL_SCHEMAS",
+    "TRANSFER_AI_TOOLS",
+    "data_dir",
     "BUILTIN_TOOL_NAMES",
     "BaseHTTPRequestHandler",
     "DEFAULT_PORT",

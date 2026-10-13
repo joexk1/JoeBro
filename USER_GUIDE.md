@@ -178,6 +178,8 @@ Two built-in housekeeping tasks ship by default: a weekly **skill audit** (prune
 - **Pause / Resume**
 - **Delete**
 
+**Phone agent tasks.** The switch at the top of the tab flips between **Tasks** and **Phone agent**. Phone agent tasks are scheduled the same way (daily, weekly or monthly, with **Agent access**), but they run silently. Each run ends with the text to notify you about, or nothing. Only that text goes to your phone chat and your Inbox. A result that hasn't changed isn't sent twice. The sparkle menu adds a **Morning briefing** or **Evening wrap-up** starter. Nothing is created until you press it.
+
 The agent can create and manage tasks for you with its task tool, so "remind me each Monday morning to plan the week" actually becomes a real scheduled task.
 
 ---
@@ -278,6 +280,51 @@ Paste text and get an estimate of how AI-written it reads, with the suspect sent
 
 ---
 
+## Mobile (your iPhone)
+
+JoeBro on your phone is a second window into the JoeBro on your Mac. The app is [JoeBro Mobile](https://github.com/joexk1/JoeBro-Mobile), built from source. Nothing goes through a cloud. The phone only works while JoeBro is open and your Mac is awake.
+
+### Pair
+
+Open **Settings > Mobile**.
+
+1. Turn on **Let my phone connect**.
+2. Pick **Reachable over**: **Tailscale only (recommended)**, **Wi-Fi and Tailscale**, or **This Wi-Fi network only**. On Wi-Fi, anyone on the network who gets the token can read your chats, so Tailscale is the safer pick.
+3. Scan the QR code in the app. No camera? **Copy link**, or paste the URL and **Token** by hand.
+4. **Test from this Mac** checks the listener answers. If it says blocked, look at System Settings > Network > Firewall.
+
+Paired phones show under **Connected phones**, with **Remove** next to each. **Rotate token…** disconnects every phone until it scans again. Do that if you lose one.
+
+The phone can't add MCP servers or plugins on your Mac. Do that in **Tools**.
+
+### Phone agent
+
+The **Phone agent** section has:
+
+- **Agent name**
+- **Let the phone agent run commands** (off by default; it works in Bound folder mode until you turn this on)
+- **Show the phone chat in my sidebar**
+- **Use my phone's location for weather** (off by default; weather comes from open-meteo.com and place names from nominatim.openstreetmap.org, only while it's on)
+- **Learn durable facts into phone memory**
+- **Background checks (heartbeat)** and **Check every N min**
+- **Pulse** and **Pulse every N min**
+
+The heartbeat collects what changed (calendar, reminders, task results) and only calls the model when something did. It is off until you turn it on. Quiet hours are 23:00 to 08:00, it sends at most 2 notices a day (at least 3 hours apart), and background checks stop for the day after 40 model calls. When it has something to say, it posts it into the phone chat like a normal message. Reply yes or no there.
+
+### Phone memory
+
+In the **Brain** tab, flip the switch at the top from **Brain** to **Phone memory**. These are plain Markdown files. Pick one to edit it, **New file** to add one, the bin to delete one (`about-me` can't be deleted). It saves as you type. The phone agent reads `about-me` every time and the other files only when your message touches them. It is separate from the Brain.
+
+### Inbox
+
+The **Inbox** tab collects notices from the phone agent, tasks and agents. A dot on the tab means unread. Click a notice to mark it read, right-click to **Delete**, or use **Select all** and **Clear all**.
+
+### Push
+
+Optional. Under **Notifications (push)**, enter your **Team ID**, **Key ID** and **Bundle ID**, choose your **.p8 key**, then **Save**. **Send test notification** checks it. The key stays on your Mac and is used only to talk to Apple. Without push, notices still land in the Inbox. The full steps are in the [JoeBro Mobile README](https://github.com/joexk1/JoeBro-Mobile).
+
+---
+
 ## Message Bot (Telegram)
 
 Control JoeBro from your phone over Telegram. The bot is your orchestrator: it manages and drives all your chats and agents, and delegates the hands-on work to them.
@@ -322,6 +369,7 @@ Open with the gear in the sidebar footer.
 - **Documents:** "Require approval for AI edits", the **tool-use limit per turn** (leave "Unlimited tool use" on, or cap how many tools the agent may call before it must answer), and "Ask before running commands."
 - **Updates:** check for updates automatically, check now, and see which version you're on.
 - **Message Bot:** connect a Telegram bot to run JoeBro from your phone (see Message Bot above).
+- **Mobile:** pair an iPhone, set up push, and switch the phone agent's background features on or off (see Mobile above).
 - **Glass / Background / Wallpaper:** appearance (see Theming).
 
 ---
@@ -347,6 +395,8 @@ The padlock in the composer sets the agent's file access:
 Two extra safety nets in Settings:
 - **Ask before running commands:** the agent pauses for your approval before any terminal command.
 - **Require approval before applying document edits:** the agent's changes to an open document wait for you to accept them.
+
+The phone agent starts in Bound folder mode. It only gets Full access if you turn on **Let the phone agent run commands** in **Settings > Mobile**.
 
 The terminal toggle in the composer must also be on before the agent can run shell commands at all, and that only applies in Agent mode.
 

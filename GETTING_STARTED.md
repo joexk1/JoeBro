@@ -29,6 +29,7 @@ Close Settings, type into the composer at the bottom of the window, and press Re
 
 - **Theme it** — click the **◐** button in the sidebar footer to tune the glass effect, or set a wallpaper in Settings.
 - **Connect email & calendar** — in Settings, add your IMAP and CalDAV accounts so the agent can work with them.
+- **Use it from your phone:** open **Settings > Mobile**, turn on **Let my phone connect**, and scan the QR code with [JoeBro Mobile](https://github.com/joexk1/JoeBro-Mobile). Your Mac has to be awake with JoeBro open.
 - **Bind a folder** — click **Bind to a folder** in the sidebar to give the agent a real project directory to work inside.
 
 ---
