@@ -9,7 +9,7 @@
   Local-first. Private. Built to get things done.
 </p>
 
-<p align="center"><a href="https://joexk1.github.io/joebro/"><b>joexk1.github.io/joebro</b></a></p>
+<p align="center"><a href="https://joebro.pages.dev/"><b>joebro.pages.dev</b></a></p>
 
 **Sister repo:** the iPhone app is **[JoeBro Mobile](https://github.com/joexk1/JoeBro-Mobile)**. It talks to this app on your Mac, with no cloud in between.
 
