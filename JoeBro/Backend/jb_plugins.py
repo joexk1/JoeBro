@@ -175,7 +175,7 @@ class PluginsMixin:
 
     # ------------------------------------------------------------------ install / sync
     def plugin_install(self, body):
-        """body: {files: {relpath: text}, enable?: bool} or {path: "/abs/dir"} (on the Pi).
+        """body: {files: {relpath: text}, enable?: bool} or {path: "/abs/dir"} (on the backend machine).
         Validates, stages, swaps, registers, discovers tools. Returns the plugin."""
         self._plugins_schema()
         _root().mkdir(parents=True, exist_ok=True)

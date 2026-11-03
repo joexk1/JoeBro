@@ -43,6 +43,14 @@ def _clip(v, n):
     return v if len(v) <= n else v[: n - 1] + "…"
 
 
+
+def _where(host):
+    """' on the Mac' / ' on the PC' / ' on studio' for a host slug."""
+    host = str(host or "")
+    if host in ("pc", "mac"):
+        return " on the " + ("PC" if host == "pc" else "Mac")
+    return (" on " + host) if host else ""
+
 class CodingAgentsMixin:
     def _coding_table(self):
         self.store.exec("""CREATE TABLE IF NOT EXISTS coding_agents(id TEXT PRIMARY KEY, host TEXT NOT NULL,
@@ -147,7 +155,7 @@ class CodingAgentsMixin:
             recs.append({
                 "id": n["id"], "kind": "coding", "title": "%s · %s" % (label, n["name"]),
                 "status": n["status"] if n["status"] != "idle" else "done", "live": live,
-                "progress": ("Needs you — " if n["waiting"] else "") + (n["detail"][-1] if n["detail"] else ("on the " + n["host"].upper())),
+                "progress": ("Needs you — " if n["waiting"] else "") + (n["detail"][-1] if n["detail"] else _where(n["host"]).strip()),
                 "session_id": "", "model": n["model"], "ref_id": "", "parent_id": "",
                 "created_at": n["started"], "started_at": n["started"],
                 "finished_at": "" if live else n["last_activity"], "error": "",
@@ -172,7 +180,7 @@ class CodingAgentsMixin:
             return json.dumps(n, ensure_ascii=False) if n else "No coding agent with that id."
         nodes = self.coding_nodes()
         if not nodes:
-            return "No coding agents active on the PC or Mac in the last few hours."
+            return "No linked coding agents active in the last few hours."
         lines = []
         for n in nodes:
             term = n["terminal"]
@@ -376,7 +384,7 @@ class CodingAgentsMixin:
         actionable = bool(term.get("kitty_window_id") or term.get("tmux_pane"))
         detail = json.loads(row.get("detail_json") or "[]")
         what = next((d[2:] for d in reversed(detail) if d.startswith("⏸")), "") or "needs your approval"
-        title = "%s on the %s needs you" % (SOURCES.get(row["source"], row["source"]), row["host"].upper())
+        title = "%s%s needs you" % (SOURCES.get(row["source"], row["source"]), _where(row["host"]))
         body = "%s · %s" % (row.get("name") or "", what)
         try:
             from jb_push import send_push
@@ -470,7 +478,7 @@ class CodingAgentsMixin:
         if n >= self.PING_DAILY:
             return {"ok": False, "delivered": False, "detail": "daily ping limit reached for this agent"}
         who = SOURCES.get(source, source.capitalize() if source != "agent" else "A coding agent")
-        where = (" on the " + host.upper()) if host in ("pc", "mac") else ((" on " + host) if host else "")
+        where = _where(host)
         title = _clip(body.get("title"), 80) or ("%s%s%s" % (who, where, (" · " + project) if project else ""))
         self.store.exec("INSERT INTO coding_pings(sender,title,message,created_at) VALUES(?,?,?,?)", (sender, title, message, now))
         self.store.exec("DELETE FROM coding_pings WHERE created_at<?", (now - 7 * 86400,))
