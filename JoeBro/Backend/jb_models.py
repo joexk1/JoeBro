@@ -232,7 +232,12 @@ class ModelsMixin:
                 "insert into plugins(id,name,kind,repo_path,description,is_enabled,source,permission_mode,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?)",
                 (pid, name, kind, repo_path, description, is_enabled, source, pmode, now, now),
             )
-        return {"ok": True, "plugin": self.plugin_json(self.store.one("select * from plugins where id=?", (pid,)))}
+        try:
+            self._plugin_mirror_mcp(pid)   # managed plugin: switch/permission also gate its tools
+        except Exception:
+            pass
+        row = self.store.one("select * from plugins where id=?", (pid,))
+        return {"ok": True, "plugin": self.plugin_public(row) if hasattr(self, "plugin_public") else self.plugin_json(row)}
 
     @staticmethod
     def plugin_json(r):

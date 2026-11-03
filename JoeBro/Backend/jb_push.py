@@ -262,7 +262,7 @@ def push_status(store):
 
 # ---- sending ------------------------------------------------------------------------
 
-def send_push(store, title, body, session=None):
+def send_push(store, title, body, session=None, category=None, data=None):
     if not isinstance(title, str) or len(title) > 150 or not isinstance(body, str) or not body.strip() or len(body) > 3000:
         raise PushError("Push title/body invalid (title <=150, nonempty body <=3000 characters)")
     if session is not None and (not isinstance(session, str) or len(session) > 100):
@@ -290,6 +290,10 @@ def send_push(store, title, body, session=None):
         payload = {"aps": {"alert": alert, "sound": "default"}, "joebro": {"kind": "inbox"}}
         if session:
             payload["joebro"]["session"] = session
+        if category:   # actionable notification (e.g. CODING_APPROVAL -> Approve / Deny buttons)
+            payload["aps"]["category"] = str(category)[:40]
+        if isinstance(data, dict):
+            payload["joebro"].update({str(k)[:20]: str(v)[:200] for k, v in list(data.items())[:6]})
         raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
         if len(raw) > 4096:
             failures.append("payload_too_large")

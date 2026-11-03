@@ -94,7 +94,13 @@ class AssistantMixin:
 
     def _active_background_plugins(self):
         """Enabled background (guardrail) plugins applied to every turn."""
-        return self.store.rows("select * from plugins where kind='background' and is_enabled=1 order by name")
+        rows = self.store.rows("select * from plugins where kind='background' and is_enabled=1 "
+                               "and coalesce(source,'')<>'manifest' order by name")
+        try:
+            rows += self.plugin_guardrails()   # joebro.plugin/1 guardrail contributions
+        except Exception:
+            pass
+        return rows
 
     # Words too generic to make a skill "relevant" on their own — they show up in
     # lots of skill descriptions and used to drag UI/design skills into plain chat.

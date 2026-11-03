@@ -22,6 +22,10 @@ from jb_mobile import MobileMixin, lan_denied, clamp_form, start_lan_if_enabled,
 from jb_push import register_device, push_status, PushError, register_activity, list_devices, remove_device
 from jb_janitor import janitor_loop
 from jb_xlsx import xlsx_to_csv, csv_to_xlsx
+from jb_proactive import ProactiveMixin, proactive_loop
+from jb_desktop import DesktopUseMixin
+from jb_coding import CodingAgentsMixin, coding_loop
+from jb_plugins import PluginsMixin, PluginError
 import gzip
 import hmac
 
@@ -35,6 +39,7 @@ _AUTH_FAILS = {"n": 0}      # a count in memory only: how many bad tokens this r
 class Handler(PromptMixin, ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, ModelsMixin,
               AssistantMixin, MemoryMixin, FilesMixin, FleetMixin, PersonalMixin, MuseMixin,
               PersonalTasksMixin, AgentsMixin, HeartbeatMixin, LocationMixin, MobileMixin,
+              ProactiveMixin, DesktopUseMixin, CodingAgentsMixin, PluginsMixin,
               BaseHTTPRequestHandler):
     server_version = "JoeBroLocal/1.0"
 
@@ -201,9 +206,42 @@ class Handler(PromptMixin, ChatMixin, ToolsMixin, EmailMixin, DocsMixin, Calenda
         if path == "/api/heartbeat":
             return self.json(self.heartbeat_config())
         if path == "/api/agents":
-            return self.json(self.agents_payload(
+            payload = self.agents_payload(
                 kind=(q.get("kind") or "").strip(), status=(q.get("status") or "").strip(),
-                limit=int(q.get("limit") or 100)))
+                limit=int(q.get("limit") or 100))
+            # Opt-in, so clients that collect coding agents themselves never double-count.
+            if "coding" in (q.get("include") or "").split(",") and (q.get("kind") or "coding") == "coding":
+                try:
+                    coding = self.coding_agent_records()
+                except Exception:
+                    coding = []
+                payload["agents"] = coding + payload.get("agents", [])
+                payload["count"] = payload.get("count", 0) + len(coding)
+                live = sum(1 for r in coding if r.get("live"))
+                for k in ("active", "live"):
+                    if k in payload:
+                        payload[k] += live
+                payload.setdefault("by_kind", {})["coding"] = len(coding)
+            return self.json(payload)
+        if path == "/api/coding-agents":
+            return self.json({"ok": True, "nodes": self.coding_nodes()})
+        if path == "/api/coding-agents/inbox":
+            return self.json(self.coding_inbox_pull(q))
+        if path.startswith("/api/coding-agents/") and path.endswith("/screen"):
+            try:
+                return self.json(self.coding_screen(urllib.parse.unquote(path.split("/")[3]), q.get("lines") or 60))
+            except ValueError as exc:
+                return self.json({"ok": False, "detail": str(exc)}, 400)
+        if path == "/api/proactive":
+            return self.json(self.proactive_status())
+        if path == "/api/shopping":
+            return self.json(self.shopping_items())
+        if path == "/api/personal/health":
+            return self.json({"ok": True, "summary": self.health_summary(int(q.get("days") or 14)),
+                              "days": self.health_rows(int(q.get("days") or 14))})
+        if path.startswith("/api/agents/code:"):
+            rec = self.coding_agent_detail(path[len("/api/agents/"):].strip("/"))
+            return self.json({"ok": True, "agent": rec} if rec else {"ok": False, "detail": "no such agent"}, 200 if rec else 404)
         # Exact match above, so this only catches /api/agents/<id>: the detail
         # view, with the FULL result text and the session_id to open its transcript.
         if path.startswith("/api/agents/"):
@@ -369,11 +407,32 @@ class Handler(PromptMixin, ChatMixin, ToolsMixin, EmailMixin, DocsMixin, Calenda
             rows = self.store.rows("select * from api_tools order by datetime(created_at) desc")
             return self.json({"tools": [self.api_tool_json(r) for r in rows]})
         if path == "/api/mcp":
-            rows = self.store.rows("select * from mcp_servers order by datetime(created_at) desc")
+            # plugin-owned servers are managed (and switched) through their plugin
+            rows = self.store.rows("select * from mcp_servers where id not like 'mcp\\_plugin\\_%' escape '\\' order by datetime(created_at) desc")
             return self.json({"servers": [self.mcp_server_json(r) for r in rows]})
         if path == "/api/plugins":
-            rows = self.store.rows("select * from plugins order by case when source='bundled' then 0 else 1 end, datetime(created_at) desc")
-            return self.json({"plugins": [self.plugin_json(r) for r in rows]})
+            return self.json(self.plugins_list())
+        if path == "/api/plugins/spec":
+            return self.json({"ok": True, "schema": "joebro.plugin/1", "spec": self.plugin_spec()})
+        if path.startswith("/api/plugins/") and path.endswith("/source"):
+            try:
+                return self.json(self.plugin_source(urllib.parse.unquote(path.split("/")[3])))
+            except PluginError as exc:
+                return self.json({"ok": False, "detail": str(exc)}, 404)
+        if path.startswith("/api/plugins/") and path.split("/")[4:5] == ["ui"]:
+            parts = path.split("/")
+            got = self.plugin_ui_file(urllib.parse.unquote(parts[3]), urllib.parse.unquote("/".join(parts[5:])))
+            if not got:
+                return self.json({"ok": False, "detail": "not found (or plugin is off)"}, 404)
+            data, mime = got
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Content-Security-Policy", "default-src 'self' 'unsafe-inline' data: blob: joebro-plugin:; connect-src 'none'")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return None
         return self.not_found()
 
     def do_POST(self):
@@ -714,6 +773,55 @@ class Handler(PromptMixin, ChatMixin, ToolsMixin, EmailMixin, DocsMixin, Calenda
             return self.json(self.upsert_api_tool(self._form_body()))
         if path == "/api/mcp":
             return self.json(self.upsert_mcp_server(self._form_body()))
+        if path in ("/api/plugins/install", "/api/plugins/reload") or (
+                path.startswith("/api/plugins/") and path.rsplit("/", 1)[-1] in ("call", "rollback")):
+            try:
+                b = self._json_body() or {}
+                if path == "/api/plugins/install":
+                    return self.json(self.plugin_install(b))
+                if path == "/api/plugins/reload":
+                    return self.json(self.plugin_reload())
+                ident = urllib.parse.unquote(path.split("/")[3])
+                if path.endswith("/rollback"):
+                    return self.json(self.plugin_rollback(ident))
+                return self.json(self.plugin_call(ident, b.get("tool"), b.get("arguments") or {}))
+            except (PluginError, ValueError) as exc:
+                return self.json({"ok": False, "detail": str(exc)}, 400)
+        if path.startswith("/api/coding-agents/") and path.rsplit("/", 1)[-1] in ("send", "keys", "reconcile", "decide") \
+                or path == "/api/coding-agents/launch":
+            try:
+                b = self._json_body() or {}
+                if path == "/api/coding-agents/launch":
+                    return self.json(self.coding_launch(b.get("host"), b.get("harness"), b.get("cwd") or "", b.get("prompt") or ""))
+                if path.endswith("/reconcile"):
+                    return self.json(self.coding_reconcile_open())
+                aid = urllib.parse.unquote(path.split("/")[3])
+                if path.endswith("/send"):
+                    return self.json(self.coding_send(aid, b.get("text"), b.get("sender") or "joebro", b.get("mode") or "auto"))
+                if path.endswith("/decide"):
+                    return self.json(self.coding_decide(aid, b.get("decision")))
+                return self.json(self.coding_keys(aid, b.get("keys")))
+            except ValueError as exc:
+                return self.json({"ok": False, "detail": str(exc)}, 400)
+        if path in ("/api/coding-agents/event", "/api/coding-agents/ping", "/api/proactive", "/api/shopping",
+                    "/api/personal/health") or path.startswith(("/api/proactive/undo/", "/api/proactive/approve/")):
+            try:
+                b = self._json_body() or {}
+                if path == "/api/coding-agents/event":
+                    return self.json(self.coding_event(b))
+                if path == "/api/coding-agents/ping":
+                    return self.json(self.coding_ping(b))
+                if path == "/api/proactive":
+                    return self.json(self.set_proactive_mode(b.get("mode")))
+                if path.startswith("/api/proactive/undo/"):
+                    return self.json(self.proactive_undo(path.rsplit("/", 1)[-1]))
+                if path.startswith("/api/proactive/approve/"):
+                    return self.json(self.proactive_approve(path.rsplit("/", 1)[-1]))
+                if path == "/api/shopping":
+                    return self.json(self.shopping_update(b))
+                return self.json(self.health_ingest(b))
+            except (ValueError, KeyError) as exc:
+                return self.json({"ok": False, "detail": str(exc)}, 400)
         if path == "/api/plugins":
             return self.json(self.upsert_plugin(self._form_body()))
         return self.not_found()
@@ -839,7 +947,7 @@ class Handler(PromptMixin, ChatMixin, ToolsMixin, EmailMixin, DocsMixin, Calenda
             self.store.exec("delete from mcp_servers where id=?", (path.rsplit("/", 1)[-1],))
             return self.json({"ok": True})
         if path.startswith("/api/plugins/"):
-            self.store.exec("delete from plugins where id=?", (path.rsplit("/", 1)[-1],))
+            self.plugin_delete(urllib.parse.unquote(path.rsplit("/", 1)[-1]))
             return self.json({"ok": True})
         if path.startswith("/api/research/"):
             self.store.exec("delete from research where id=?", (path.rsplit("/", 1)[-1],))
@@ -903,6 +1011,10 @@ def main():
     root = Path(args.data_dir) if args.data_dir else app_support_dir()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.store = Store(root)
+    # joebro.plugin/1: installed plugins and their private data live in the app's data folder.
+    os.environ.setdefault("JOEBRO_PLUGINS_DIR", str(Path(root) / "plugins"))
+    os.environ.setdefault("JOEBRO_PLUGIN_DATA_ROOT", str(Path(root) / "plugin-data"))
+    os.environ.setdefault("JOEBRO_URL", "http://127.0.0.1:%d" % args.port)
     # Anti-rebinding: on the normal loopback bind, only loopback Hosts are real.
     # A non-loopback bind (Tailscale) legitimately sees any Host, so it swaps the
     # Host check for an opt-in bearer token instead — see Handler._guard.
@@ -917,6 +1029,8 @@ def main():
     threading.Thread(target=reminder_loop, args=(server,), daemon=True).start()
     threading.Thread(target=pulse_loop, args=(server,), daemon=True).start()   # heartbeat + pulse, both off until enabled
     threading.Thread(target=janitor_loop, args=(server,), daemon=True).start()  # deletes only if enabled
+    threading.Thread(target=proactive_loop, args=(server,), daemon=True).start()  # off until enabled
+    threading.Thread(target=coding_loop, args=(server,), daemon=True).start()     # linked coding agents
     try:
         _h = Handler.__new__(Handler); _h.server = server
         _h.reconcile_agents_on_boot()      # a restart killed any run still marked live

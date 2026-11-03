@@ -131,7 +131,7 @@ class HeartbeatMixin:
                         title="Background limit", kind="background", source="bg_cap", channel="inbox")
         return False
 
-    def bg_complete(self, system, user):
+    def bg_complete(self, system, user, max_tokens=BG_MAX_TOKENS):
         """ONE slim model call: two messages, no tools, ~300 tokens out. Counted
         against the daily cap. Returns text, or None when no model is available."""
         ep, model = self.bg_model()
@@ -140,7 +140,7 @@ class HeartbeatMixin:
         u = self.bg_usage()
         u["n"] += 1
         self.set_pref("bg_usage", u)
-        return self._complete(ep, model, system, user, max_tokens=BG_MAX_TOKENS)
+        return self._complete(ep, model, system, user, max_tokens=max(50, min(int(max_tokens), 1000)))
 
     # ---- gating --------------------------------------------------------------
 

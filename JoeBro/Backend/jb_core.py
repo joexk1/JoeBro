@@ -783,6 +783,7 @@ PRODUCTION_AI_TOOLS = {
     "create_document", "edit_document", "suggest_document",
     "trigger_research", "manage_research", "manage_memory", "manage_tasks", "manage_skills",
     "manage_chats", "create_event",
+    "shopping_list", "health_data", "coding_agents", "proactive_actions",
 } | EMAIL_AI_TOOLS | PHONE_TOOL_NAMES
 WRITE_SIDE_EFFECT_TOOLS = {
     "bash", "python",
@@ -874,6 +875,12 @@ FUNCTION_TOOL_SCHEMAS = [
     _fn("bash", "Run a shell command (only with terminal access + Full Access). NOT for email or web.", {"command": {"type": "string"}}, ["command"]),
     _fn("python", "Run a Python snippet (only with terminal access + Full Access).", {"code": {"type": "string"}}, ["code"]),
 ]
+
+# Personal-agent tools that live in their own modules (shopping list, Apple
+# Health, proactive actions, coding agents). Deferred like the rest (DEFERRED_GROUPS).
+from jb_proactive import SHOPPING_TOOL as _SHOP, HEALTH_TOOL as _HEALTH, PROACTIVE_TOOL as _PROACTIVE  # noqa: E402
+from jb_coding import CODING_AGENTS_TOOL as _CODING  # noqa: E402
+FUNCTION_TOOL_SCHEMAS += [_SHOP, _HEALTH, _PROACTIVE, _CODING]
 
 # The phone agent's tools (see PHONE_TOOL_NAMES). Kept out of FUNCTION_TOOL_SCHEMAS
 # so tools_for() only offers them where they belong.
@@ -1458,18 +1465,19 @@ class Store:
                 pass
             # Bundled dependency-free computer-use plugin (osascript / macOS
             # Accessibility). Runs at full access by default.
-            _macos_use_blurb = ("Dependency-free macOS computer use: the agent can open apps, read "
-                                "the on-screen UI, click buttons and menus, type, and take screenshots "
-                                "via macOS Accessibility.")
+            _macos_use_blurb = ("Computer use through Vercel's agent-desktop: the agent reads apps as an "
+                                "accessibility tree and clicks, types and presses keys without moving your "
+                                "mouse. Install it with `npm i -g agent-desktop`; until then the built-in "
+                                "osascript version is used.")
             db.execute("delete from plugins where id='plugin_osaurus_macos_use'")
             db.execute(
                 "insert or ignore into plugins"
                 "(id,name,kind,repo_path,description,is_enabled,source,permission_mode,created_at,updated_at) "
-                "values('plugin_macos_use','JoeBro macOS Use','foreground','',?,1,'bundled','full',?,?)",
+                "values('plugin_macos_use','Agent Desktop','foreground','',?,1,'bundled','full',?,?)",
                 (_macos_use_blurb, now_iso(), now_iso()),
             )
             # Migrate any earlier bundled row to drop the old external link + blurb.
-            db.execute("update plugins set repo_path='', description=? where id='plugin_macos_use'",
+            db.execute("update plugins set repo_path='', name='Agent Desktop', description=? where id='plugin_macos_use'",
                        (_macos_use_blurb,))
 
             # Bundled Advisor plugin: the everyday model may consult a stronger

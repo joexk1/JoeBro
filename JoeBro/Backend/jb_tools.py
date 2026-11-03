@@ -1,5 +1,6 @@
 """Tool dispatch, execution, web/image search, tool parsing."""
 from jb_core import *  # noqa: F401,F403
+from jb_desktop import DESKTOP_USE_TOOL, agent_desktop_bin
 
 # AI tools that write a document to disk. When the app has "ask before editing"
 # on it sends ask_doc_edit and these are gated behind explicit approval BEFORE
@@ -44,6 +45,14 @@ DEFERRED_GROUPS = {
     "reminders": ({"remind_me", "manage_reminders", "manage_pulse", "push_status"},
                   r"\b(?:remind|reminders?|pulse|checklist|standing instruction|alert me|let me know|tell me (when|if)|"
                   r"ping me|nudge|keep an eye|monitor|watch for|watchlist|routines?|push|notifications?|weekly|daily|don.t forget|\bin \d+ ?(min|minutes|hours?|h)\b)"),
+    "shopping": ({"shopping_list"},
+                 r"\b(?:shop\w*|groceries|grocery|buy|supermarket|need (some|more)|run out|ran out|out of|\blist\b|tick)"),
+    "health": ({"health_data"},
+               r"\b(?:health|sleep|slept|steps|workout|exercise|heart|hrv|resting|weight|fitness|calories|kcal|tired|energy|\brun\b|gym|apple health|recovery)"),
+    "coding": ({"coding_agents"},
+               r"\b(?:agents?|claude|codex|opencode|coding|session|terminal|running|working on|build|deploy|repo|pr\b|project)"),
+    "proactive": ({"proactive_actions"},
+                  r"\b(?:proactive|spotted|background|you added|did you add|undo|suggest\w*|approve)"),
     "transfer": ({"export_to_artifact", "deliver_artifact", "move_file", "describe_image"},
                  r"\b(?:save (it|this|that|the)|move (it|this|that|the)|copy (it|this|that|the)|download|upload|forward|attach\w*|"
                  r"send (it|this|that|them|the|her|him|over)|export|photos?|pictures?|images?|pdf|files?|artifact|document)"),
@@ -115,7 +124,9 @@ class ToolsMixin:
             schemas += self.custom_tool_schemas()
             schemas += self.mcp_tool_schemas(f)
         if self._plugin_allowed("plugin_macos_use", f):
-            schemas.append(MACOS_USE_TOOL)
+            # Agent Desktop (Vercel's agent-desktop) when it's installed; the
+            # dependency-free osascript version otherwise.
+            schemas.append(DESKTOP_USE_TOOL if agent_desktop_bin() else MACOS_USE_TOOL)
         if self._plugin_allowed("plugin_advisor", f) and (self.pref("advisor_model") or ""):
             schemas.append(advisor_tool_schema(self.pref("advisor_description") or ""))
         return schemas
@@ -659,6 +670,32 @@ class ToolsMixin:
                     args = {}
                 return self.run_mcp_tool(mrow, real_tool, args)
             # Unknown/disabled MCP name — fall through (returns None below).
+        if name == "shopping_list":
+            if readonly and (self.parse_tool_args(body) or {}).get("action", "list") != "list":
+                return {"tool": name, "command": name, "exit_code": 1, "output": "Read-only access: can only list the shopping list."}
+            return {"tool": name, "command": "shopping_list", "exit_code": 0, "output": self.shopping_list_tool(body)}
+        if name == "health_data":
+            return {"tool": name, "command": "health_data", "exit_code": 0, "output": self.health_tool(body)}
+        if name == "coding_agents":
+            return {"tool": name, "command": "coding_agents", "exit_code": 0, "output": self.coding_agents_tool(body)}
+        if name == "proactive_actions":
+            if readonly and (self.parse_tool_args(body) or {}).get("action", "list") != "list":
+                return {"tool": name, "command": name, "exit_code": 1, "output": "Read-only access: can only list proactive actions."}
+            return {"tool": name, "command": "proactive_actions", "exit_code": 0, "output": self.proactive_tool(body)}
+        if name == "desktop_use" or (name == "macos_use" and agent_desktop_bin()):
+            if not self._plugin_allowed("plugin_macos_use", form):
+                return {"tool": "desktop_use", "command": "desktop_use", "exit_code": 1,
+                        "output": "The Agent Desktop plugin is switched off (or needs a higher agent access level) — tell the user; do not retry."}
+            try:
+                args = json.loads(body) if body else {}
+                if not isinstance(args, dict):
+                    args = {}
+            except Exception:
+                args = {}
+            if readonly and args.get("action") not in ("list_apps", "snapshot", "find"):
+                return {"tool": "desktop_use", "command": "desktop_use", "exit_code": 1,
+                        "output": "Read-only access: desktop_use can only observe (list_apps, snapshot, find)."}
+            return self.run_desktop_use(form, args)
         if name == "macos_use":
             if not self._plugin_allowed("plugin_macos_use", form):
                 return {"tool": "macos_use", "command": "macos_use", "exit_code": 1,
