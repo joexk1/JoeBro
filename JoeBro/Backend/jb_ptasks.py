@@ -34,7 +34,9 @@ STARTERS = {
         "Morning briefing for the user. Cover whichever of these you can reach: the weather for their "
         "current location (get_weather, if a location exists), today's calendar events, today's pending "
         "reminders (manage_reminders), and unread email that looks important (skip newsletters and "
-        "promotions) if email is connected. Skip any source that is not connected and do not mention "
+        "promotions) if email is connected, and, if coding agents are linked (coding_agents), a short "
+        "'your agents' line: which are waiting on the user, which finished overnight and which are still "
+        "working. Skip any source that is not connected and do not mention "
         "that it is missing. Lead with what matters soonest. If nothing is available at all, reply NOTHING.",
         "daily", "08:00"),
     "evening": (
