@@ -468,19 +468,153 @@ struct Plugin: Identifiable, Codable, Hashable {
     var isEnabled: Bool?
     var source: String?
     var permissionMode: String?
+    // joebro.plugin/1 fields (absent on older backends -> nil)
+    var slug: String?
+    var version: String?
+    var managed: Bool?
+    var error: String?
+    var contributes: PluginContributes?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, kind, description, source
+        case id, name, kind, description, source, slug, version, managed, error, contributes
         case repoPath = "repo_path"
         case isEnabled = "is_enabled"
         case permissionMode = "permission_mode"
     }
+
+    /// "v1.0.0 · 2 tools · 1 panel · guardrail"
+    var summary: String {
+        var bits: [String] = []
+        if let v = version, !v.isEmpty { bits.append("v" + v) }
+        let t = contributes?.tools.count ?? 0
+        if t > 0 { bits.append(t == 1 ? "1 tool" : "\(t) tools") }
+        let p = contributes?.panels.count ?? 0
+        if p > 0 { bits.append(p == 1 ? "1 panel" : "\(p) panels") }
+        if contributes?.guardrail == true { bits.append("guardrail") }
+        return bits.joined(separator: " · ")
+    }
 }
+
+struct PluginContributes: Codable, Hashable {
+    var tools: [String] = []
+    var guardrail: Bool = false
+    var panels: [PluginPanel] = []
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        tools = ((try? c.decode([String?].self, forKey: .tools)) ?? []).compactMap { $0 }
+        guardrail = (try? c.decode(Bool.self, forKey: .guardrail)) ?? false
+        panels = (try? c.decode([PluginPanel].self, forKey: .panels)) ?? []
+    }
+}
+
+struct PluginPanel: Codable, Hashable, Identifiable {
+    var id: String
+    var title: String
+    var icon: String?
+    var url: String
+    var surfaces: [String]?
+}
+
+// MARK: - Agents (the backend's unified run registry: research / chat / task)
+
+struct AgentRun: Decodable, Identifiable, Hashable {
+    var id: String
+    var kind: String
+    var title: String
+    var status: String
+    var live: Bool
+    var progress: String
+    var sessionID: String
+    var model: String
+    var refID: String
+    var parentID: String
+    var createdAt: String
+    var startedAt: String
+    var finishedAt: String
+    var error: String
+    var result: String
+    var resultChars: Int
+    var resultTruncated: Bool
+    var messages: [AgentMessage]?
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, title, status, live, progress, model, error, result, messages
+        case sessionID = "session_id", refID = "ref_id", parentID = "parent_id"
+        case createdAt = "created_at", startedAt = "started_at", finishedAt = "finished_at"
+        case resultChars = "result_chars", resultTruncated = "result_truncated"
+    }
+
+    // Decoded defensively: this shape is also the iOS client's contract, so a
+    // field added or missing server-side must not break the whole list.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        kind = (try? c.decode(String.self, forKey: .kind)) ?? "chat"
+        title = (try? c.decode(String.self, forKey: .title)) ?? ""
+        status = (try? c.decode(String.self, forKey: .status)) ?? "queued"
+        live = (try? c.decode(Bool.self, forKey: .live)) ?? false
+        progress = (try? c.decode(String.self, forKey: .progress)) ?? ""
+        sessionID = (try? c.decode(String.self, forKey: .sessionID)) ?? ""
+        model = (try? c.decode(String.self, forKey: .model)) ?? ""
+        refID = (try? c.decode(String.self, forKey: .refID)) ?? ""
+        parentID = (try? c.decode(String.self, forKey: .parentID)) ?? ""
+        createdAt = (try? c.decode(String.self, forKey: .createdAt)) ?? ""
+        startedAt = (try? c.decode(String.self, forKey: .startedAt)) ?? ""
+        finishedAt = (try? c.decode(String.self, forKey: .finishedAt)) ?? ""
+        error = (try? c.decode(String.self, forKey: .error)) ?? ""
+        result = (try? c.decode(String.self, forKey: .result)) ?? ""
+        resultChars = (try? c.decode(Int.self, forKey: .resultChars)) ?? 0
+        resultTruncated = (try? c.decode(Bool.self, forKey: .resultTruncated)) ?? false
+        messages = try? c.decode([AgentMessage].self, forKey: .messages)
+    }
+
+    var kindLabel: String {
+        switch kind {
+        case "research": return "Research"
+        case "task": return "Task"
+        case "subagent": return "Subagent"
+        case "briefing": return "Briefing"
+        case "coding": return "Coding"
+        case "chat", "": return "Chat"
+        default: return kind.capitalized      // unknown future kind: show it, don't break
+        }
+    }
+
+    var kindIcon: String {
+        switch kind {
+        case "research": return "antenna.radiowaves.left.and.right"
+        case "task": return "clock.badge.checkmark"
+        case "subagent": return "arrow.triangle.branch"
+        case "briefing": return "newspaper"
+        case "coding": return "chevron.left.forwardslash.chevron.right"
+        default: return "bubble.left.and.bubble.right"
+        }
+    }
+}
+
+struct AgentMessage: Decodable, Hashable, Identifiable {
+    var role: String
+    var content: String
+    var createdAt: String
+    var id: String { role + createdAt + String(content.prefix(24)) }
+
+    enum CodingKeys: String, CodingKey { case role, content, createdAt = "created_at" }
+}
+
+struct AgentsEnvelope: Decodable {
+    var agents: [AgentRun]
+    var count: Int
+    var live: Int
+    var kinds: [String]
+}
+
+struct AgentDetailEnvelope: Decodable { var agent: AgentRun }
 
 struct PluginsResponse: Codable { var plugins: [Plugin] }
 
 enum WorkspaceTab: String, CaseIterable, Identifiable {
-    case chat, email, calendar, brain, notes, tasks, skills, tools, aiCheck, research, inbox
+    case chat, email, calendar, brain, notes, agents, tasks, skills, tools, plugins, aiCheck, research, inbox
 
     var id: String { rawValue }
 
@@ -493,7 +627,9 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
         case .notes: return "Notes"
         case .tasks: return "Tasks"
         case .skills: return "Skills"
+        case .agents: return "Agents"
         case .tools: return "Tools"
+        case .plugins: return "Plugins"
         case .aiCheck: return "AI Check"
         case .research: return "Deep Research"
         case .inbox: return "Inbox"
@@ -509,7 +645,9 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
         case .notes: return "note.text"
         case .tasks: return "clock.badge.checkmark"
         case .skills: return "graduationcap"
+        case .agents: return "person.3.sequence"
         case .tools: return "wrench.and.screwdriver"
+        case .plugins: return "puzzlepiece.extension"
         case .aiCheck: return "checkmark.shield"
         case .research: return "antenna.radiowaves.left.and.right"
         case .inbox: return "tray"

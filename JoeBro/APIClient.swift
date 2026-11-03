@@ -880,6 +880,53 @@ final class APIClient {
 
     // MARK: Generic JSON helpers
 
+    // MARK: Agents (unified registry)
+
+    /// Every run the backend knows about. `kind` filters to research/chat/task.
+    func agents(kind: String = "", status: String = "") async throws -> AgentsEnvelope {
+        // include=coding: Claude Code / Codex / OpenCode sessions on the PC and Mac (hook-fed)
+        var q: [String: String] = ["include": "coding"]
+        if !kind.isEmpty { q["kind"] = kind }
+        if !status.isEmpty { q["status"] = status }
+        return try await getJSON("api/agents", query: q)
+    }
+
+    /// One run with its FULL result text and its chat transcript.
+    func agentDetail(id: String) async throws -> AgentRun {
+        let env: AgentDetailEnvelope = try await getJSON("api/agents/\(id)")
+        return env.agent
+    }
+
+    /// Ask a run to stop. The reply's `detail` says what that actually does for
+    /// this kind — surface it rather than assuming it died instantly.
+    @discardableResult
+    func cancelAgent(id: String) async throws -> String {
+        let out = try await sendJSON("api/agents/\(id)/cancel")
+        return (out["detail"] as? String) ?? ""
+    }
+
+    /// Answer a coding agent's pending permission prompt (approve / deny).
+    @discardableResult
+    func decideCoding(id: String, approve: Bool) async throws -> [String: Any] {
+        try await sendJSON("api/coding-agents/\(id)/decide", body: ["decision": approve ? "approve" : "deny"])
+    }
+
+    // MARK: Plugins (joebro.plugin/1)
+
+    /// Call one of a plugin's own tools (used by its panel's joebro.call bridge).
+    func callPlugin(slug: String, tool: String, arguments: [String: Any]) async throws -> [String: Any] {
+        try await sendJSON("api/plugins/\(slug)/call", body: ["tool": tool, "arguments": arguments])
+    }
+
+    /// Raw bytes of a plugin panel file (authenticated), with its MIME type.
+    func pluginUIFile(slug: String, path: String) async throws -> (Data, String) {
+        var req = request("api/plugins/\(slug)/ui/\(path)")
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        let (data, resp) = try await session.data(for: req)
+        try check(data, resp)
+        return (data, (resp as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? "application/octet-stream")
+    }
+
     func getJSON<T: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> T {
         var comps = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         if !query.isEmpty {

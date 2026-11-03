@@ -141,6 +141,17 @@ struct ToolsPanel: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
+                if !plugin.summary.isEmpty {
+                    Text(plugin.summary)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                }
+                if let e = plugin.error, !e.isEmpty {
+                    Text(e)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.red)
+                        .lineLimit(3)
+                }
             }
 
             Spacer()
@@ -156,7 +167,7 @@ struct ToolsPanel: View {
                     Image(systemName: "gearshape")
                 }
                 .buttonStyle(.borderless)
-                .help("Computer Use settings — permissions and blocked apps")
+                .help("Agent Desktop settings — permissions and blocked apps")
             } else if plugin.id == "plugin_advisor" {
                 Button { configuringAdvisor = true } label: {
                     Image(systemName: "gearshape")
@@ -657,7 +668,7 @@ struct PluginEditSheet: View {
     }
 }
 
-/// Settings for the bundled Computer Use plugin: explains the access it has and
+/// Settings for the bundled Agent Desktop (computer use) plugin: explains the access it has and
 /// lets the user bar apps it must never open, click, type into or read (e.g.
 /// banking apps). Blocked names persist in the `macos_blocked_apps` pref, which
 /// the backend enforces inside every AppleScript it runs.
@@ -669,7 +680,7 @@ struct ComputerUseSettingsSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Label("Computer Use", systemImage: "cpu")
+                Label("Agent Desktop", systemImage: "cpu")
                     .font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Button("Done") { save(); dismiss() }
@@ -684,7 +695,10 @@ struct ComputerUseSettingsSheet: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("What it can do")
                             .font(.system(size: 12, weight: .semibold))
-                        Text("In Agent mode (Full access), JoeBro can drive this Mac: read the frontmost app's windows, menus and buttons as text, open apps, click elements, type, press shortcuts and use menus. It reads the screen as text first and only takes a picture when it must, so it stays fast and cheap.")
+                        Text("In Agent mode (Full access), JoeBro can drive this Mac: read an app's windows, menus and buttons as an accessibility tree, open apps, click, type and press shortcuts. With Vercel's agent-desktop installed it works headless: it doesn't move your mouse or steal focus. It reads the screen as text first and only takes a picture when it must, so it stays fast and cheap.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        Text("Install agent-desktop with `npm i -g agent-desktop`. Until it's installed, JoeBro uses its built-in osascript version.")
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                         Text("It needs Accessibility access (System Settings > Privacy & Security > Accessibility). Turn the plugin off above to revoke all of this at once.")

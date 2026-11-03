@@ -121,9 +121,14 @@ struct SidebarView: View {
                             navRow(.email)
                             navRow(.calendar)
                             navRow(.brain)
+                            navRow(.agents)
                             navRow(.tasks)
                             navRow(.skills)
                             navRow(.tools)
+                        }
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                        Group {
+                            navRow(.plugins)
                             navRow(.research)
                             navRow(.inbox)
                             navRow(.aiCheck)

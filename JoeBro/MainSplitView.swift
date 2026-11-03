@@ -54,8 +54,12 @@ struct MainSplitView: View {
             TasksPanel()
         case .skills:
             SkillsPanel()
+        case .agents:
+            AgentsPanel()
         case .tools:
             ToolsPanel()
+        case .plugins:
+            PluginPanelsView()
         case .aiCheck:
             AICheckPanel()
         case .research:
