@@ -139,12 +139,12 @@ class Lists(unittest.TestCase):
 class Coding(unittest.TestCase):
     def test_state_machine_and_records(self):
         f = F()
-        base = {"source": "claude", "host": "pc", "session_id": "abc", "cwd": "/home/joe/projects/wudland", "kitty_window_id": "3"}
+        base = {"source": "claude", "host": "pc", "session_id": "abc", "cwd": "/home/me/projects/garden", "kitty_window_id": "3"}
         f.coding_event(dict(base, event="start"))
         f.coding_event(dict(base, event="prompt", text="fix the island"))
         f.coding_event(dict(base, event="tool", tool="Edit", text="Island.swift"))
         recs = f.coding_agent_records()
-        self.assertEqual(recs[0]["kind"], "coding"); self.assertTrue(recs[0]["live"]); self.assertIn("wudland", recs[0]["title"])
+        self.assertEqual(recs[0]["kind"], "coding"); self.assertTrue(recs[0]["live"]); self.assertIn("garden", recs[0]["title"])
         f.coding_event(dict(base, event="waiting", text="Bash: rm -rf build"))
         self.assertTrue(f.coding_nodes()[0]["waiting"])
         f.coding_event(dict(base, event="stop", text="done"))
