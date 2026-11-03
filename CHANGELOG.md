@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.4.0 - 2026-11-03
+
+Upgrading: nothing to do. Proactive mode is off, and nothing changes until you link an agent or install a plugin.
+
+### Added
+
+- **Coding agents.** Link Claude Code, Codex and opencode with [joebro-plugins](https://github.com/joexk1/joebro-plugins). They show up in the new **Agents** panel, on the phone and in the Dynamic Island: working, waiting for you, finished. JoeBro can check on them and queue a follow-up that they pick up when their turn ends.
+- **Approve from anywhere.** An agent waiting on a permission prompt gets **Approve** and **Deny** in the Agents panel and on the iPhone lock screen (Face ID to approve). This needs the agent to run in kitty or tmux.
+- **Pings.** Any linked agent can ping your phone when it's done or stuck: at most one a minute and 30 a day per agent.
+- **Plugins (`joebro.plugin/1`).** A plugin is a folder with a manifest that can add tools, a guardrail and its own panel in the new **Plugins** tab. Installs are checked and staged, the previous version is kept for rollback, and a new plugin arrives switched off. Panels have no network access. Your coding agents can build them through the joebro MCP server. The standard is in `JoeBro/Backend/PLUGINS.md`.
+- **Proactive mode** (**off** by default, then read only or full). JoeBro reads your email subjects, recent documents and calendar in the background. In read only it tells you about confirmed plans; in full it adds them to your calendar, with undo. Email is read without marking anything as read.
+- **Shopping list.** Only you, or JoeBro from your own words, add to it.
+- **Apple Health.** The phone can send daily totals (steps, sleep, heart rate, workouts) to your own backend, with a Sunday-evening recap while proactive mode is on.
+- The morning briefing starter mentions your agents when any are linked.
+
+### Changed
+
+- **Computer use is now Agent Desktop.** With Vercel's agent-desktop installed (`npm i -g agent-desktop`), JoeBro reads apps as an accessibility tree and acts without moving your mouse or stealing focus. Without it, the built-in osascript version is used as before. Blocked apps stay blocked.
+- Tools shows each plugin's version, tools, panels and any install error.
+
 ## 1.3.0 - 2026-10-13
 
 Upgrading: nothing to do. Mobile access is off until you turn it on.
