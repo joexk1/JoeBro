@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Long documents in parts.** `create_document` takes `append=true`, so a long file is written in several calls at the same path. Each part is saved, and shows in the editor, as it lands. If a tool call is cut off at the model's output limit, JoeBro now says so and the model retries in smaller parts instead of failing with a misleading error.
+- **Safer edits.** `edit_document` find/replace refuses an ambiguous match, says how many it found and where, and takes `replace_all` or `occurrence`.
+- **Paged reads.** `read_file` takes `lines` and `read_pdf` takes `pages`. A long file or PDF comes back one window at a time with a footer saying what was shown and how to ask for the next.
+- **Word text.** Word files are read with their tables, lists, headers, footers, footnotes, endnotes and comments. A Word document attached to a chat shows its first part in the turn, and the new `read_attachment` tool reads the rest.
+- A reply that ran several tools shows one **steps** row with a plain-language summary. Expand it to see each call.
+
+### Changed
+
+- The documents list returns every document unless a limit is asked for. It used to stop at 50.
+
 ## 1.4.0 - 2026-11-03
 
 Upgrading: nothing to do. Proactive mode is off, and nothing changes until you link an agent or install a plugin.
