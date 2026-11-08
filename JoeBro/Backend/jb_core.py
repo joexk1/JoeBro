@@ -330,20 +330,68 @@ def is_docx(path) -> bool:
 
 
 def docx_to_text(path: Path) -> str:
-    """Plain text of a .docx (one line per paragraph), for AI context. No
-    Markdown, no formatting markers — just the words."""
+    """Read Word body text in document order, including tables and controls."""
     try:
         with zipfile.ZipFile(path) as z:
-            root = ET.fromstring(z.read("word/document.xml"))
-    except (KeyError, zipfile.BadZipFile, ET.ParseError):
-        return ""
-    body = root.find(_W + "body")
-    lines = []
-    for p in (list(body) if body is not None else []):
-        if p.tag != _W + "p":
-            continue
-        lines.append("".join(t.text or "" for t in p.iter(_W + "t")))
-    return "\n".join(lines).strip() + "\n"
+            info=z.getinfo("word/document.xml")
+            if info.file_size > 32 * 1024 * 1024:
+                raise ValueError("DOCX document XML is too large to read")
+            root=ET.fromstring(z.read(info))
+    except (KeyError, zipfile.BadZipFile, ET.ParseError) as exc:
+        raise ValueError("Cannot read DOCX: damaged, encrypted, or missing Word document XML") from exc
+
+    def paragraph(node):
+        parts=[]
+        def visit(n):
+            if n.tag == _W + "del": return
+            if n.tag in (_W+"t", "{http://schemas.openxmlformats.org/officeDocument/2006/math}t"):
+                parts.append(n.text or "")
+            elif n.tag == _W+"tab": parts.append("\t")
+            elif n.tag in (_W+"br", _W+"cr"): parts.append("\n")
+            elif n.tag in (_W+"footnoteReference", _W+"endnoteReference"):
+                parts.append("[note " + n.get(_W+"id", "") + "]")
+            else:
+                for child in n: visit(child)
+        visit(node)
+        text="".join(parts)
+        if node.find(_W+"pPr/"+_W+"numPr") is not None and text.strip(): text="• " + text
+        return text
+
+    def blocks(node):
+        lines=[]
+        for child in node:
+            if child.tag == _W+"p": lines.append(paragraph(child))
+            elif child.tag == _W+"tbl":
+                for row in child:
+                    if row.tag != _W+"tr": continue
+                    cells=[" / ".join(blocks(cell)) for cell in row if cell.tag == _W+"tc"]
+                    if cells: lines.append("\t".join(cells))
+            elif child.tag not in (_W+"del", _W+"sectPr", _W+"pPr", _W+"tcPr"):
+                lines.extend(blocks(child))
+        return lines
+    body=root.find(_W+"body")
+    text="\n".join(blocks(body) if body is not None else []).strip()
+    return text + "\n" if text else ""
+
+
+def read_doc_context(path: Path) -> str:
+    """Agent read context; keep ancillary Word text separate from the body."""
+    text=read_doc_text(path)
+    if not is_docx(path): return text
+    extras=docx_extras(path)
+    for key,label in (("header","Headers"),("footer","Footers"),("footnotes","Footnotes")):
+        if extras.get(key): text += "\n["+label+"]\n"+extras[key]+"\n"
+    with zipfile.ZipFile(path) as z:
+        for name,tag,label in (("word/endnotes.xml","endnote","Endnotes"),("word/comments.xml","comment","Comments")):
+            if name not in z.namelist(): continue
+            root=ET.fromstring(z.read(name));rows=[]
+            for node in root.iter(_W+tag):
+                ident=node.get(_W+"id", "")
+                if ident.startswith('-') or (tag=='endnote' and ident=='0'):continue
+                body="\n".join("".join(t.text or "" for t in p.iter(_W+"t")) for p in node.iter(_W+"p"))
+                if body.strip():rows.append(ident+": "+body.strip())
+            if rows:text += "\n["+label+"]\n"+"\n".join(rows)+"\n"
+    return text or "[This DOCX has no extractable text. Images/scans need a visual or OCR reader.]"
 
 
 def docx_extras(path: Path) -> dict:
@@ -612,6 +660,41 @@ def text_to_docx(path: Path, text: str):
             os.unlink(tmp)
 
 
+def apply_find_replace(text, find, replace, replace_all=False, occurrence=None, name="the file"):
+    """One precise edit, or a refusal that says how to fix it.
+
+    The old behaviour was `text.replace(find, replace, 1)`: a `find` that
+    appeared three times silently edited the first one, which is how an agent
+    changes the wrong function and reports success. Ambiguity is now an error
+    the model can act on — it says how many matches and on which lines."""
+    if not find:
+        raise ValueError("edit_document needs `find` (or `content` to rewrite the file)")
+    hits = text.count(find)
+    if hits == 0:
+        loose = find.strip()
+        hint = ""
+        if loose and loose != find and loose in text:
+            hint = " — it matches if you trim the surrounding whitespace, so copy the line exactly as read_file returned it"
+        elif " ".join(find.split()) in " ".join(text.split()):
+            hint = " — the text is there but your whitespace/indentation differs; copy it exactly from read_file"
+        raise ValueError(f"`find` does not appear in {name}{hint}. Read the file and copy the exact text.")
+    if hits > 1 and not replace_all and occurrence is None:
+        lines = [i + 1 for i, ln in enumerate(text.splitlines()) if find.split("\n")[0] in ln][:8]
+        raise ValueError(
+            f"`find` matches {hits} places in {name} (around line(s) {', '.join(map(str, lines))}) — "
+            "refusing to guess which. Include more surrounding text to make it unique, or pass "
+            "replace_all: true to change every one.")
+    if replace_all:
+        return text.replace(find, replace), f"replaced {hits} occurrence(s)"
+    n = int(occurrence or 1)
+    if n < 1 or n > hits:
+        raise ValueError(f"occurrence {n} is out of range — there are {hits}")
+    before, after = text.split(find)[:n], text.split(find)[n:]
+    updated = find.join(before) + replace + find.join(after)
+    line = text[:text.find(find) if n == 1 else len(find.join(before))].count("\n") + 1
+    return updated, f"replaced 1 occurrence (line ~{line})"
+
+
 def read_doc_text(path: Path) -> str:
     """Document text for the AI — plain text for .docx, CSV for .xlsx, raw otherwise."""
     if is_docx(path):
@@ -779,7 +862,7 @@ PHONE_TOOL_NAMES = {
 } | TRANSFER_AI_TOOLS
 PRODUCTION_AI_TOOLS = {
     "bash", "python", "web_search",
-    "list_files", "read_file", "read_pdf",
+    "list_files", "read_file", "read_pdf", "read_attachment",
     "create_document", "edit_document", "suggest_document",
     "trigger_research", "manage_research", "manage_memory", "manage_tasks", "manage_skills",
     "manage_chats", "create_event",
@@ -807,18 +890,26 @@ def _fn(name, desc, props, required):
 # STRUCTURED tool calls when given these, instead of guessing a text format and
 # dumping raw markup / ```markdown blocks into the chat.
 FUNCTION_TOOL_SCHEMAS = [
+    _fn("read_attachment", "Read a document uploaded into this chat by its attachment_id. DOCX includes paragraphs, tables, headers and notes. No folder binding is needed. Use lines to continue a long attachment; never claim the unseen remainder was read.",
+        {"attachment_id": {"type": "string"}, "lines": {"type": "string", "description": "1-based line range, e.g. 100-200 or 201-"}}, ["attachment_id"]),
     _fn("list_files", "List the files and folders in the bound folder, one level at a time. Pass `path` to look INSIDE a sub-folder (folders are shown with a trailing /). Use before read_file/read_pdf, and drill into sub-folders by listing them with their path.",
         {"path": {"type": "string", "description": "relative sub-folder to list, e.g. 'assets' or 'assets/PRODUCTIONSCROTS' (omit for the top level)"}}, []),
-    _fn("read_file", "Read a file from the bound folder. Text files come back as text; IMAGE files (png, jpg, gif, webp, heic) are shown to you visually so you can actually look at them. Read-only, works in the lowest agent permission mode.",
-        {"path": {"type": "string", "description": "relative path inside the bound folder"}}, ["path"]),
-    _fn("read_pdf", "Extract text from a PDF in the bound folder. This is read-only and works in the lowest agent permission mode; use it to summarize or answer questions about local PDFs.",
-        {"path": {"type": "string", "description": "relative PDF path inside the bound folder"}}, ["path"]),
-    _fn("create_document", "Create a brand-new file in the bound folder. Works for any editable type, including .docx (Word).",
+    _fn("read_file", "Read a file from the bound folder. Text files come back as text; IMAGE files (png, jpg, gif, webp, heic) are shown to you visually so you can actually look at them. Long files come back one window at a time with a footer saying which lines you got and how to ask for the next — read the part you need rather than the whole file. Read-only, works in the lowest agent permission mode.",
+        {"path": {"type": "string", "description": "relative path inside the bound folder"},
+         "lines": {"type": "string", "description": "only this line window of a text file: '40', '200-400' or '900-' (from 900 to the end). Omit for the start of the file."},
+         "pages": {"type": "string", "description": "if the file is a PDF: only these pages — '7', '3-9' or '12-'"}}, ["path"]),
+    _fn("read_pdf", "Extract text from a PDF in the bound folder. Pass `pages` to read one part of a long PDF at a time — the reply ends with which pages you got, out of how many, and how to ask for the next. Read-only, works in the lowest agent permission mode.",
+        {"path": {"type": "string", "description": "relative PDF path inside the bound folder"},
+         "pages": {"type": "string", "description": "only these pages: '7', '3-9' or '12-' (from 12 to the end). Omit to start at page 1."}}, ["path"]),
+    _fn("create_document", "Create a document in the bound folder. For a long document, write the first part normally, then continue with the same path and append=true; each call is saved and shown in the editor. Works for any editable type, including .docx (Word).",
         {"path": {"type": "string", "description": "relative path, e.g. notes.md or report.docx"},
-         "content": {"type": "string", "description": "full file content"}}, ["path", "content"]),
+         "content": {"type": "string", "description": "document text for this part"},
+         "append": {"type": "boolean", "description": "true only for later chunks; append this content to the existing document instead of replacing it"}}, ["path", "content"]),
     _fn("edit_document", "Edit an existing file. EITHER make a small in-place change with exact find/replace (quote the existing text verbatim), OR rewrite the whole file by passing `content` with the COMPLETE new text (use this to append to / change the open document). For a .docx header/footer set region.",
         {"path": {"type": "string"}, "find": {"type": "string"}, "replace": {"type": "string"},
          "content": {"type": "string", "description": "the COMPLETE new file content — pass this INSTEAD of find/replace to rewrite the whole file"},
+         "replace_all": {"type": "boolean", "description": "replace every occurrence of `find` instead of refusing when it matches more than once"},
+         "occurrence": {"type": "integer", "description": "which occurrence of `find` to replace (1-based) when it matches more than once"},
          "region": {"type": "string", "enum": ["body", "header", "footer"], "description": ".docx only: which part to edit (default body)"}}, ["path"]),
     _fn("suggest_document", "Suggest an edit to a file without applying it.",
         {"path": {"type": "string"}, "find": {"type": "string"}, "replace": {"type": "string"}, "reason": {"type": "string"}}, ["path", "find", "replace"]),
@@ -1753,7 +1844,7 @@ __all__ = [
     "now_iso",
     "os",
     "re",
-    "read_doc_text",
+    "read_doc_text", "read_doc_context", "apply_find_replace",
     "sanitize_tool_name",
     "shlex",
     "shutil",

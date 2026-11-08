@@ -12,6 +12,7 @@ from jb_desktop import DESKTOP_USE_TOOL, agent_desktop_bin
 _DOC_PARAM_ALIASES = {
     "file": "path", "file_path": "path", "filepath": "path", "filename": "path",
     "file_name": "path", "document": "path", "doc": "path", "target": "path",
+    "page": "pages", "page_number": "pages", "page_range": "pages", "line": "lines", "line_range": "lines",
     "text": "content", "body": "content", "new_content": "content",
     "full_content": "content", "markdown": "content",
     "old_text": "find", "old_string": "find", "old_str": "find",
@@ -834,9 +835,27 @@ class ToolsMixin:
             return body.strip().splitlines()[0][:160]
         return name
 
-    def read_pdf_text(self, target: Path):
-        """Extract text from a local PDF without shell/Pi dependencies."""
-        pieces = []
+    @staticmethod
+    def _parse_range(spec, total, unit="page"):
+        """'7', '3-9', '12-' -> inclusive 1-based (first, last), clamped to total."""
+        text = str(spec or "").strip().replace("\u2013", "-").replace(" ", "")
+        m = re.fullmatch(r"(\d+)(?:-(\d*))?", text)
+        if not m:
+            raise ValueError(f"bad {unit} range '{spec}' — use '7', '3-9' or '12-'")
+        first = int(m.group(1))
+        if first > total:
+            raise ValueError(f"{unit} {first} is past the end — there are only {total}")
+        if m.group(2) is None:
+            last = first
+        elif m.group(2) == "":
+            last = total
+        else:
+            last = int(m.group(2))
+        return max(1, first), min(total, max(first, last))
+
+    def _pdf_page_texts(self, target: Path):
+        """Per-page text, page 1 at index 0 — blank pages kept so the numbering
+        the agent pages by matches the numbering in the actual PDF."""
         errors = []
         try:
             from pypdf import PdfReader
@@ -846,39 +865,92 @@ class ToolsMixin:
                     reader.decrypt("")
                 except Exception:
                     pass
-            for i, page in enumerate(reader.pages, start=1):
-                text = page.extract_text() or ""
-                if text.strip():
-                    pieces.append(f"--- Page {i} ---\n{text.strip()}")
+            pages = [(page.extract_text() or "").strip() for page in reader.pages]
+            if any(pages):
+                return pages
         except Exception as exc:
             errors.append(f"pypdf: {exc}")
-        if not pieces:
-            try:
-                from Foundation import NSURL
-                from Quartz import PDFDocument
-                doc = PDFDocument.alloc().initWithURL_(NSURL.fileURLWithPath_(str(target)))
-                count = int(doc.pageCount()) if doc else 0
-                for i in range(count):
-                    page = doc.pageAtIndex_(i)
-                    text = str(page.string() or "") if page else ""
-                    if text.strip():
-                        pieces.append(f"--- Page {i + 1} ---\n{text.strip()}")
-            except Exception as exc:
-                errors.append(f"Quartz: {exc}")
-        if not pieces:
-            try:
-                proc = subprocess.run(
-                    ["/usr/bin/mdls", "-raw", "-name", "kMDItemTextContent", str(target)],
-                    text=True, capture_output=True, timeout=12)
-                text = (proc.stdout or "").strip()
-                if text and text != "(null)":
-                    pieces.append(text)
-            except Exception as exc:
-                errors.append(f"Spotlight: {exc}")
-        text = "\n\n".join(pieces).strip()
-        if not text:
-            raise ValueError("Could not extract text from PDF" + (": " + "; ".join(errors) if errors else ""))
-        return text   # no char cap — compaction handles context if it grows
+        try:
+            from Foundation import NSURL
+            from Quartz import PDFDocument
+            doc = PDFDocument.alloc().initWithURL_(NSURL.fileURLWithPath_(str(target)))
+            count = int(doc.pageCount()) if doc else 0
+            pages = []
+            for i in range(count):
+                page = doc.pageAtIndex_(i)
+                pages.append(str(page.string() or "").strip() if page else "")
+            if any(pages):
+                return pages
+        except Exception as exc:
+            errors.append(f"Quartz: {exc}")
+        try:
+            proc = subprocess.run(
+                ["/usr/bin/mdls", "-raw", "-name", "kMDItemTextContent", str(target)],
+                text=True, capture_output=True, timeout=12)
+            text = (proc.stdout or "").strip()
+            if text and text != "(null)":
+                # ponytail: Spotlight hands back one blob with no page breaks, so
+                # it is one "page". Only ever reached when both real extractors fail.
+                return [text]
+        except Exception as exc:
+            errors.append(f"Spotlight: {exc}")
+        raise ValueError("Could not extract text from PDF" + (": " + "; ".join(errors) if errors else ""))
+
+    def _read_budget(self):
+        return getattr(self, "MAX_TOOL_OUTPUT_CHARS", 24000) - 400   # room for the footer
+
+    def read_pdf_text(self, target: Path, pages=None):
+        """Text from a local PDF. `pages` ('7', '3-9', '12-') reads just that
+        slice. With no `pages` we send whole pages up to the tool-output cap and
+        say where to resume — a long PDF gets worked through page by page instead
+        of having its middle silently clipped out."""
+        page_texts = self._pdf_page_texts(target)
+        total = len(page_texts)
+        first, last = self._parse_range(pages, total) if str(pages or "").strip() else (1, total)
+        budget, out, used, shown = self._read_budget(), [], 0, first - 1
+        for n in range(first, last + 1):
+            body = page_texts[n - 1]
+            shown = n
+            if not body:
+                continue
+            chunk = f"--- Page {n} ---\n{body}"
+            if out and used + len(chunk) > budget:
+                shown = n - 1          # whole pages only — never cut one in half
+                break
+            out.append(chunk)
+            used += len(chunk) + 2
+        if not out:
+            raise ValueError(f"no text on pages {first}-{last} of {total} in {target.name}")
+        text = "\n\n".join(out)
+        if (first, shown) != (1, total):
+            text += f"\n\n--- shown: pages {first}-{shown} of {total}. " + (
+                f'Call read_pdf again with pages: "{shown + 1}-" for the rest. ---'
+                if shown < total else "End of document. ---")
+        return text
+
+    def _slice_lines(self, text, spec):
+        """The `lines` window for a text file — what `pages` is for a PDF. Same
+        deal: no spec means whole lines up to the cap plus where to resume."""
+        lines = text.splitlines()
+        total = len(lines)
+        budget = self._read_budget()
+        if str(spec or "").strip():
+            first, last = self._parse_range(spec, total, unit="line")
+        elif len(text) <= budget:
+            return text
+        else:
+            first, last, used = 1, 0, 0
+            for i, line in enumerate(lines, start=1):
+                used += len(line) + 1
+                if used > budget and last:
+                    break
+                last = i
+        body = "\n".join(lines[first - 1:last])
+        if (first, last) == (1, total):
+            return body
+        return body + f"\n\n--- shown: lines {first}-{last} of {total}. " + (
+            f'Call read_file again with lines: "{last + 1}-" for the rest. ---'
+            if last < total else "End of file. ---")
 
     def execute_file_tool(self, root, name, body, allow_outside=False, form=None):
         root = Path(root).expanduser().resolve()
@@ -913,13 +985,13 @@ class ToolsMixin:
             if not target.is_file():
                 raise ValueError(f"file not found: {rel}")
             if target.suffix.lower() == ".pdf":
-                return self.read_pdf_text(target)
+                return self.read_pdf_text(target, fields.get("pages"))
             if target.suffix.lower() in IMAGE_EXTS:
                 # The actual image is attached to the conversation by run_agent so
                 # the model can see it; this is just the tool's text acknowledgement.
                 return f"[image {rel} is shown to you below — look at it directly]"
-            text = read_doc_text(target)
-            return text   # no char cap — compaction handles context if it grows
+            # `pages` on a text file means lines — the model reaches for it out of habit.
+            return self._slice_lines(read_doc_context(target), fields.get("lines") or fields.get("pages"))
         if name == "read_pdf":
             fields = self.parse_tool_fields(body)
             rel = (fields.get("path") or body.strip()).strip()
@@ -930,13 +1002,21 @@ class ToolsMixin:
                 raise ValueError(f"PDF not found: {rel}")
             if target.suffix.lower() != ".pdf":
                 raise ValueError(f"not a PDF: {rel}")
-            return self.read_pdf_text(target)
+            return self.read_pdf_text(target, fields.get("pages"))
         if name == "create_document":
             fields = self.parse_tool_fields(body)
-            rel = (fields.get("path") or fields.get("title") or "Untitled.md").strip()
             content = fields.get("content") or ""
+            append = str(fields.get("append") or "").lower() in ("1", "true", "yes")
+            if not (fields.get("path") or fields.get("title") or "").strip() and not content.strip():
+                # A mangled tool call arrives with neither — that is what leaves
+                # empty Untitled.md files behind.
+                raise ValueError("create_document got no path and no content — nothing was written; "
+                                 "call it again with both")
+            rel = (fields.get("path") or fields.get("title") or "Untitled.md").strip()
             target = self.resolve_tool_path(root, rel, allow_outside)
             with lock_for_path(target):
+                if append and target.is_file():
+                    content = self._join_chunk(read_doc_text(target), content, target.suffix.lower())
                 backup_existing(target)
                 write_doc_text(target, content)
             language = fields.get("language") or target.suffix.lstrip(".") or "markdown"
@@ -992,16 +1072,14 @@ class ToolsMixin:
                     updated = read_doc_text(target)
                 else:
                     text = read_doc_text(target)
+                    note = ""
                     if "content" in fields:
                         updated = fields["content"]
                     else:
-                        find = fields.get("find")
-                        replace = fields.get("replace", "")
-                        if find is None:
-                            raise ValueError("edit_document requires find/replace or content")
-                        if find not in text:
-                            raise ValueError(f"could not find text in {target.name}")
-                        updated = text.replace(find, replace, 1)
+                        updated, note = apply_find_replace(
+                            text, fields.get("find"), fields.get("replace", ""),
+                            replace_all=str(fields.get("replace_all") or "").lower() in ("1", "true", "yes"),
+                            occurrence=fields.get("occurrence"), name=target.name)
                     backup_existing(target)
                     write_doc_text(target, updated)
             row = self.store.one("select id from documents where file_path=?", (str(target),))
@@ -1010,7 +1088,7 @@ class ToolsMixin:
                     "update documents set current_content=?, updated_at=? where id=?",
                     (updated, now_iso(), row["id"]),
             )
-            return f"File edited: {target}"
+            return f"File edited: {target}" + (f" — {note}" if note else "")
         raise ValueError(f"unsupported tool {name}")
 
     def require_full_terminal(self, form, tool):
@@ -1579,6 +1657,16 @@ class ToolsMixin:
         raise ValueError(f"unsupported email tool {name}")
 
     def execute_production_tool(self, root, name, body, form, allow_outside=False):
+        if name == "read_attachment":
+            args = self.parse_tool_args(body)
+            row = self.store.one("select * from uploads where id=?", (str(args.get("attachment_id") or ""),))
+            if not row:
+                raise ValueError("Unknown uploaded attachment")
+            path = Path(row["path"])
+            if path.suffix.lower() not in (".docx", ".pdf", ".txt", ".md", ".csv", ".json", ".xml", ".html", ".htm", ".log", ".xlsx", ".apkg"):
+                raise ValueError("This attachment needs a compatible visual or binary reader")
+            text = self.read_pdf_text(path) if path.suffix.lower() == ".pdf" else read_doc_context(path)
+            return self._slice_lines(text, args.get("lines")).replace("Call read_file again", "Call read_attachment again")
         if name in PHONE_TOOL_NAMES:
             return self.phone_tool(name, body, form)
         if name in ("list_files", "read_file", "read_pdf", "create_document", "edit_document", "update_document", "suggest_document"):
@@ -1667,6 +1755,35 @@ class ToolsMixin:
             return {}
 
     @staticmethod
+    def _join_chunk(existing, chunk, suffix=""):
+        """Join the next part of a chunked create_document onto what is already
+        saved. Tool arguments arrive with their trailing newlines trimmed, so
+        without a separator two parts would run together; parts start at a
+        paragraph or heading boundary, so a blank line is the natural join
+        (a single newline for row-based files like CSV/XLSX)."""
+        if not existing or existing.endswith("\n") or chunk.startswith("\n"):
+            return existing + chunk
+        return existing + ("\n" if suffix in (".csv", ".xlsx", ".tsv", ".apkg") else "\n\n") + chunk
+
+    @staticmethod
+    def _tool_call_truncated(fn):
+        """True when a native tool_call's arguments are non-empty but not valid
+        JSON — the reply hit max_tokens mid-call (typically an edit_document
+        `content` rewrite of a long file), so the params would silently parse
+        as {} and the tool would fail with a misleading "requires path"."""
+        raw = (fn or {}).get("arguments")
+        if isinstance(raw, dict) or not str(raw or "").strip():
+            return False
+        text = str(raw).strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text).strip()
+        try:
+            json.loads(text)
+            return False
+        except Exception:
+            return True
+
+    @staticmethod
     def _tool_body_from_params(name, params, fallback=""):
         """Serialize a {param: value} dict into the body text each executor
         expects. Mirrors the Pi's function_call_to_tool_block shaping."""
@@ -1683,8 +1800,9 @@ class ToolsMixin:
                     params[canon] = params[alias]
             # `key: value` inline (even multi-line) — parse_tool_fields re-splits
             # the body, so an inline first line avoids a spurious leading newline.
-            keys = ("path",) if name in ("list_files", "read_file", "read_pdf") else (
-                "path", "title", "language", "region", "find", "replace", "reason", "content")
+            keys = ("path", "pages", "lines") if name in ("list_files", "read_file", "read_pdf") else (
+                "path", "title", "language", "region", "find", "replace", "reason",
+                "replace_all", "occurrence", "append", "content")
             lines = [f"{key}: {str(params[key] if params[key] is not None else '').strip(chr(10))}"
                      for key in keys
                      if key in params]
@@ -1756,7 +1874,8 @@ class ToolsMixin:
         for line in body.splitlines():
             m = key_re.match(line)
             if m and m.group(1).strip().lower().replace(" ", "_") in {
-                "path", "title", "language", "region", "content", "find", "replace", "reason"
+                "path", "title", "language", "region", "content", "find", "replace", "reason",
+                "pages", "lines", "replace_all", "occurrence", "append"
             }:
                 if current is not None:
                     fields[current] = flush()
