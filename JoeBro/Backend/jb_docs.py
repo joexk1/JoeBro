@@ -6,7 +6,13 @@ class DocsMixin:
 
     def documents_library(self, q):
         search = (q.get("search") or "").strip()
-        limit = int(q.get("limit") or 50)
+        # No limit given = the whole library (a hardcoded 50 hid documents from
+        # the apps); an explicit ?limit=N is still honoured.
+        try:
+            limit = int(q.get("limit") or 0)
+        except (TypeError, ValueError):
+            limit = 0
+        limit = limit if limit > 0 else -1   # sqlite: negative LIMIT = no limit
         if search:
             rows = self.store.rows(
                 "select * from documents where archived=0 and title like ? order by datetime(updated_at) desc limit ?",
@@ -133,6 +139,7 @@ class DocsMixin:
             "title": r.get("title") or "Untitled",
             "language": r.get("language") or "markdown",
             "updated_at": r.get("updated_at"),
+            "created_at": r.get("created_at"),
             "version_count": int(r.get("version_count") or 1),
             "archived": bool(r.get("archived")),
         }
