@@ -302,6 +302,25 @@ struct ChatView: View {
         }
     }
 
+    private var groupedMessages: [Message] {
+        var rows: [Message] = []
+        var activityIndex: Int?
+        for message in store.messages {
+            if message.isUser || message.kind == .compacted { activityIndex = nil }
+            if message.kind == .tool {
+                if let index = activityIndex {
+                    rows[index].activityTools.append(message)
+                } else {
+                    var activity = message
+                    activity.activityTools = [message]
+                    activityIndex = rows.count
+                    rows.append(activity)
+                }
+            } else { rows.append(message) }
+        }
+        return rows
+    }
+
     private var messageList: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -311,18 +330,18 @@ struct ChatView: View {
                 VStack(spacing: 12) {
                     // Big chats render only the recent tail — eager-rendering
                     // hundreds of markdown bubbles at once was the open-chat lag.
-                    if store.messages.count > visibleCount {
+                    if groupedMessages.count > visibleCount {
                         Button {
                             visibleCount += 100
                         } label: {
-                            Label("Show earlier messages (\(store.messages.count - visibleCount) more)",
+                            Label("Show earlier messages (\(groupedMessages.count - visibleCount) more)",
                                   systemImage: "arrow.up.circle")
                                 .font(.system(size: 12, weight: .medium))
                         }
                         .buttonStyle(.borderless)
                         .padding(.top, 6)
                     }
-                    ForEach(store.messages.suffix(visibleCount)) { message in
+                    ForEach(groupedMessages.suffix(visibleCount)) { message in
                         MessageBubbleView(message: message)
                             .equatable()
                             .id(message.id)

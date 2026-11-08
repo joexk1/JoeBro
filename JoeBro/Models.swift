@@ -190,6 +190,8 @@ struct Message: Identifiable, Equatable {
     var toolOutput: String?
     var exitCode: Int?
     var toolDone = false
+    var groupedToolCount = 1
+    var activityTools: [Message] = []
     // Text extras
     var attachments: [Attachment] = []
     var webSources: [WebSource] = []

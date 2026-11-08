@@ -67,7 +67,7 @@ struct MessageBubbleView: View, Equatable {
         case .compacted:
             compactedPill
         case .tool:
-            ToolRowView(message: message)
+            ToolActivityView(calls: message.activityTools.isEmpty ? [message] : message.activityTools)
         case .text:
             if message.isUser {
                 userBubble
@@ -424,7 +424,7 @@ struct ToolRowView: View {
                     Image(systemName: toolIcon)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Color.accentColor)
-                    Text(toolLabel.uppercased())
+                    Text((toolLabel + (message.groupedToolCount > 1 ? " (\(message.groupedToolCount))" : "")).uppercased())
                         .font(.system(size: 10.5, weight: .bold, design: .rounded))
                         .tracking(0.6)
                     if message.toolDone {
@@ -465,7 +465,7 @@ struct ToolRowView: View {
                     }
                     if let out = message.toolOutput, !out.isEmpty {
                         ScrollView {
-                            Text(out.count > 4000 ? String(out.prefix(4000)) + "\n…" : out)
+                            Text(message.groupedToolCount > 1 ? out : (out.count > 4000 ? String(out.prefix(4000)) + "\n…" : out))
                                 .font(.system(size: 11, design: .monospaced))
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -703,4 +703,112 @@ struct CopyResponseButton: View {
         .buttonStyle(.plain)
         .help("Copy full response")
     }
+}
+
+
+/// The same turn-level steps drawer as iOS and the Ctrl–Alt–J widget.
+private struct ToolActivityView: View {
+    let calls: [Message]
+    @State private var expanded = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var running: Bool { calls.contains { !$0.toolDone } }
+    private var failed: Bool { calls.contains { ($0.exitCode ?? 0) != 0 } }
+    private var summary: String {
+        if failed && !running { return "Finished with an issue" }
+        return toolActivityText(calls.last(where: { !$0.toolDone })?.toolName ?? calls.last?.toolName ?? "", running: running)
+    }
+    private var groups: [Message] {
+        var rows: [Message] = []
+        for message in calls {
+            if let prior = rows.last, prior.toolName == message.toolName {
+                var group = prior
+                group.groupedToolCount += 1
+                if prior.groupedToolCount == 1 {
+                    group.toolOutput = [prior.command, prior.toolOutput].compactMap { $0 }.joined(separator: "\n")
+                }
+                group.command = nil
+                group.toolOutput = (group.toolOutput ?? "") + "\n\nCall \(group.groupedToolCount)\n" + [message.command, message.toolOutput].compactMap { $0 }.joined(separator: "\n")
+                group.toolDone = prior.toolDone && message.toolDone
+                if (message.exitCode ?? 0) != 0 { group.exitCode = message.exitCode }
+                rows[rows.count - 1] = group
+            } else { rows.append(message) }
+        }
+        return rows
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 10) {
+                    HStack(spacing: 6) {
+                        if running { ProgressView().controlSize(.mini) }
+                        else { Image(systemName: failed ? "exclamationmark.circle" : "wrench.and.screwdriver").font(.system(size: 10)) }
+                        Text("\(calls.count) \(calls.count == 1 ? "step" : "steps")").font(.system(size: 11, weight: .medium))
+                        Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).rotationEffect(.degrees(expanded ? 180 : 0))
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(.primary.opacity(expanded ? 0.12 : 0.06), in: Capsule())
+                    Text(summary).font(.system(size: 12, weight: .medium)).foregroundStyle(.primary).lineLimit(2)
+                    Spacer(minLength: 0)
+                }.foregroundStyle(.primary.opacity(0.85)).frame(maxWidth: .infinity, minHeight: 28, alignment: .leading).contentShape(Rectangle())
+            }.buttonStyle(.plain)
+                .accessibilityLabel("\(summary), \(calls.count) steps")
+                .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            if expanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(groups) { message in ToolActivityStep(message: message) }
+                }
+                .padding(.leading, 10)
+                .overlay(alignment: .leading) { Rectangle().fill(.primary.opacity(0.12)).frame(width: 1) }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .joeCard(14)
+    }
+}
+
+private struct ToolActivityStep: View {
+    let message: Message
+    @State private var expanded = false
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 6) {
+                if let command = message.command, !command.isEmpty { Text(command).font(.system(size: 11, design: .monospaced)).textSelection(.enabled) }
+                if let output = message.toolOutput, !output.isEmpty {
+                    ScrollView { Text(output).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 220)
+                }
+            }.padding(.vertical, 6)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: !message.toolDone ? "ellipsis" : (message.exitCode ?? 0) != 0 ? "xmark" : "checkmark")
+                    .foregroundStyle((message.exitCode ?? 0) != 0 ? Color.red : Color.secondary).font(.system(size: 10)).frame(width: 12)
+                Text(prettyToolName(message.toolName) + (message.groupedToolCount > 1 ? " (\(message.groupedToolCount))" : ""))
+                    .font(.system(size: 12, weight: .medium)).lineLimit(2)
+            }.padding(.vertical, 3)
+        }.tint(.secondary)
+    }
+}
+
+/// Human activity text beside the steps disclosure; never expose raw arguments.
+private func toolActivityText(_ raw: String, running: Bool) -> String {
+    let name = raw.components(separatedBy: "__").last!.lowercased()
+    if name.contains("spotify") && name.contains("search") { return running ? "Searching Spotify" : "Searched Spotify" }
+    if name.contains("email") || name.contains("mail") {
+        if name.contains("send") || name.contains("reply") { return running ? "Sending email" : "Sent email" }
+        return running ? "Reading email" : "Checked email"
+    }
+    if name.contains("weather") { return running ? "Checking the weather" : "Checked the weather" }
+    if name.contains("plan") { return running ? "Updating the plan" : "Updated the plan" }
+    if name.contains("reminder") { return running ? "Working with reminders" : "Checked reminders" }
+    if name.contains("calendar") || name.contains("event") { return running ? "Working with the calendar" : "Checked the calendar" }
+    if name.contains("memory") || name.hasPrefix("muse_") { return running ? "Working with memory" : "Finished memory steps" }
+    if name.contains("read") || name.contains("inspect") { return running ? "Reading information" : "Read information" }
+    if name.contains("search") || name.contains("find") { return running ? "Searching" : "Finished searching" }
+    if name.contains("create") || name.contains("write") || name.contains("edit") { return running ? "Working on changes" : "Finished change steps" }
+    if name.contains("agent") { return running ? "Working with agents" : "Checked agents" }
+    if name == "bash" || name == "python" { return running ? "Running a command" : "Finished command steps" }
+    return running ? "Working" : "Finished steps"
 }
