@@ -46,7 +46,7 @@ Night Shift never pushes. Agents run with pushing switched off, and you decide w
 
 ## Shared Memory
 
-Every agent used to keep its own notes: CLAUDE.md, AGENTS.md, rules files. They drift, they repeat each other and they get loaded in full every session.
+Agents learn things as they work: a decision, a gotcha, what was tried and didn't work. Usually that's lost when the session ends, or it gets pasted into CLAUDE.md until the file is mostly old notes. And Codex never sees what Claude Code learned.
 
 Shared Memory is one store per project. Claude Code, Codex and OpenCode read and write it over MCP. Each session starts with a short brief, capped at about 400 tokens, and agents can search for more when they need it. It holds what agents learn as they work (decisions, gotchas, what was tried), so that stops piling up in CLAUDE.md. Instructions such as build commands and conventions stay in CLAUDE.md and AGENTS.md. `joebro-agents memory import --write` moves Claude Code's learned memory across, backs it up, and adds a short pointer to CLAUDE.md and AGENTS.md without touching what's already there. Add `--include-instructions` to also copy facts out of those files; they still aren't changed.
 

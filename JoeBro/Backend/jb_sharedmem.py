@@ -1,9 +1,10 @@
 """Shared Memory: one JoeBro-owned memory that every linked coding agent reads and
 writes (MCP tools in `joebro-agents mcp`) and the apps browse (/api/shared-memory).
 
-It replaces the per-agent memory files (CLAUDE.md, AGENTS.md, Claude Code memory):
-those are imported once, deduplicated, and from then on each agent gets a brief of
-at most BRIEF_TOKENS tokens at session start; everything else is pull-only (recall).
+It holds what agents learn (decisions, gotchas), not their instructions: CLAUDE.md and
+AGENTS.md keep build commands and conventions and only gain a short pointer block.
+Claude Code's learned memory is imported once and deduplicated; each agent gets a
+brief of at most BRIEF_TOKENS tokens at session start; the rest is pull-only (recall).
 
 Rules:
 - Scopes: `project` (key = normalised git remote, else repo path), `global`, and
