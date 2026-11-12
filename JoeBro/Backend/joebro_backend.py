@@ -195,6 +195,7 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
         path = self._path().path
         if jb_ext.route(self, "GET", path, self._query()):
             return
+        path = self._path().path          # an extension may have rewritten an alias to its canonical route
         q = self._query()
         if path in ("/api/ping", "/api/health"):
             return self.json({"ok": True, "local": True})
@@ -223,7 +224,14 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
         if path == "/api/pulse":
             return self.json({"pulse": self.pulse_config()})
         if path == "/api/heartbeat":
-            return self.json(self.heartbeat_config())
+            out = self.heartbeat_config()
+            try:      # what the phone's heartbeat card also shows: proactive mode + recent suggested actions
+                pro = self.proactive_status()
+                out["proactive_mode"] = pro["mode"]
+                out["suggestions"] = [a for a in pro["recent_actions"] if a.get("status") == "suggested"]
+            except Exception:
+                pass
+            return self.json(out)
         if path == "/api/agents":
             payload = self.agents_payload(
                 kind=(q.get("kind") or "").strip(), status=(q.get("status") or "").strip(),
@@ -423,7 +431,8 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
             return self.json({"active": [{"session_id": r["id"], "id": r["id"], "query": r["query"]} for r in rows]})
         if path == "/api/research/library":
             rows = self.store.rows("select * from research where archived=0 order by datetime(created_at) desc")
-            return self.json({"research": [self.research_json(r) for r in rows]})
+            items = [self.research_json(r) for r in rows]
+            return self.json({"research": items, "items": items})
         if path.startswith("/api/research/status/"):
             row = self.store.one("select * from research where id=?", (path.rsplit("/", 1)[-1],))
             if not row:
@@ -493,6 +502,7 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
         path = self._path().path
         if jb_ext.route(self, "POST", path, self._query()):
             return
+        path = self._path().path          # an extension may have rewritten an alias to its canonical route
         if path == "/api/mobile/enable":
             out, code = self.mobile_enable(self._json_body() or {})
             return self.json(out, code)
@@ -914,6 +924,7 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
         path = self._path().path
         if jb_ext.route(self, "PUT", path, self._query()):
             return
+        path = self._path().path          # an extension may have rewritten an alias to its canonical route
         if path.startswith("/api/muse/"):
             try:
                 self.muse_write(path.split("/")[3], (self._json_body() or {}).get("content") or "")
@@ -990,6 +1001,7 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
         path = self._path().path
         if jb_ext.route(self, "DELETE", path, self._query()):
             return
+        path = self._path().path          # an extension may have rewritten an alias to its canonical route
         if path.startswith("/api/mobile/devices/"):
             return self.json(remove_device(self.store, path.rsplit("/", 1)[-1]))
         if path == "/api/mobile/apns":
@@ -1170,6 +1182,14 @@ def main():
         except Exception:
             pass
     threading.Thread(target=_warm_models, daemon=True).start()
+    # Hold a warm IMAP session per account so the first inbox open is instant.
+    def _warm_email():
+        h = Handler.__new__(Handler); h.server = server
+        try:
+            h.email_keepalive_start()
+        except Exception:
+            pass
+    threading.Thread(target=_warm_email, daemon=True).start()
     print(f"JoeBro backend listening on http://{args.host}:{args.port}", flush=True)
     server.serve_forever()
 

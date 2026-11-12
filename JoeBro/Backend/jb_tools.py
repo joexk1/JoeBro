@@ -97,6 +97,7 @@ class ToolsMixin:
                     drop = drop | WRITE_SIDE_EFFECT_TOOLS
                     schemas = [t for t in schemas if t["function"]["name"] not in drop]
                 schemas = self._phone_schemas(f, drop) + schemas
+                schemas = jb_ext.first("route_tool_schemas", self, f, schemas) or schemas   # e.g. a router that trims the list
                 hidden = self.deferred_tool_names(f)
                 schemas = [t for t in schemas if t["function"]["name"] not in hidden]
                 return (schemas + [t for t in self.custom_tool_schemas() if t["function"]["name"] not in hidden]

@@ -1093,6 +1093,7 @@ FUNCTION_TOOL_SCHEMAS += [_SHOP, _HEALTH, _PROACTIVE, _CODING]
 _ARTIFACT_OPTS = {"filename": {"type": "string", "description": "optional destination file name"},
                   "subject": {"type": "string", "description": "email subject"},
                   "body": {"type": "string", "description": "email body text"},
+                  "caption": {"type": "string", "description": "caption for messaging destinations an extension adds"},
                   "confirm_token": {"type": "string", "description": "from the needs_confirmation preview, only after the user agreed"}}
 _SCHED = {"type": "string", "enum": ["once", "daily", "weekly", "monthly"]}
 _PTASK_FIELDS = {"title": {"type": "string"},

@@ -353,7 +353,7 @@ def deliver_artifact(h, artifact_id, to, a):
                     "confirm_token": issue_token(artifact_id, ref["sha256"], dest, extra),
                     "next": "NOTHING WAS SENT. Show the user the recipient, file and text and ask. Only after they say yes, call again with the same arguments plus this confirm_token (valid 10 min, single use)."}
     path = store.resolve_artifact(artifact_id)
-    out = jb_ext.first("transfer_deliver", h, p, ref, path.read_bytes() if k not in ("artifact", "folder") else b"", filename)
+    out = jb_ext.first("transfer_deliver", h, p, ref, path.read_bytes() if k not in ("artifact", "folder") else b"", filename, a)
     if out is not None:                                          # an extension's own sink, asked first
         return out
     if k == "artifact":
@@ -361,7 +361,8 @@ def deliver_artifact(h, artifact_id, to, a):
     if k == "folder":
         folder, name = split_folder_target(p, filename)
         r = store.copy_to_folder(artifact_id, p["root"], folder, name)
-        return {"delivered": "folder", "root": p["root"], "path": r["path"], "size_bytes": r["size_bytes"]}
+        return {"delivered": "folder", "root": p["root"], "path": r["path"], "size_bytes": r["size_bytes"],
+                **(jb_ext.first("transfer_folder_written", p["root"], folder) or {})}
     data = path.read_bytes()
     if k == "device":
         return deliver_device(h, p, ref, data, filename)

@@ -180,13 +180,6 @@ final class APIClient {
         try await getJSON("api/calendar/status")
     }
 
-    func connectEmail(email: String, password: String) async throws {
-        try await sendJSON("api/email/connect", body: [
-            "email": email,
-            "password": password,
-        ])
-    }
-
     func connectIMAP(email: String, imapHost: String, imapPort: Int, imapPassword: String,
                      smtpHost: String, smtpPort: Int, smtpPassword: String) async throws {
         try await sendJSON("api/email/connect-imap", body: [
@@ -200,10 +193,6 @@ final class APIClient {
             "smtp_user": email,
             "smtp_password": smtpPassword,
         ])
-    }
-
-    func disconnectEmail() async throws {
-        try await sendJSON("api/email/disconnect")
     }
 
     func connectCalDAV(url: String, principal: String, password: String) async throws {
@@ -401,7 +390,9 @@ final class APIClient {
             "repeat_day": repeatDay,
             "trigger_type": "schedule",
             "output_target": "session",
-        ])
+        ]
+        if personal { body["scope"] = "personal" }
+        try await sendJSON("api/tasks", body: body)
     }
 
     func updateTask(id: String, name: String, prompt: String, schedule: String, time: String, permissionMode: String = "sandbox", repeatDay: Int = 0) async throws {
@@ -982,7 +973,10 @@ final class APIClient {
         var req: URLRequest
         if path.contains("?") {
             // appendingPathComponent escapes '?' — build query URLs properly
-            req = URLRequest(url: URL(string: baseURL.absoluteString + "/" + path)!)
+            guard let url = URL(string: baseURL.absoluteString + "/" + path) else {
+                throw URLError(.badURL)
+            }
+            req = URLRequest(url: url)
             req.httpMethod = method
             BackendToken.authorize(&req)
         } else {
@@ -1221,10 +1215,6 @@ final class APIClient {
         if !search.isEmpty { q["search"] = search }
         let r: DocsLibraryResponse = try await getJSON("api/documents/library", query: q)
         return r.documents
-    }
-
-    func document(id: String) async throws -> DocDetail {
-        try await getJSON("api/document/\(id)")
     }
 
     func updateDocument(id: String, content: String) async throws {
