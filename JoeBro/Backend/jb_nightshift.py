@@ -30,6 +30,8 @@ EDITABLE = ("title", "repo", "prompt", "agent", "model", "host", "window_start",
 DEFAULTS = {"enabled": True, "window_start": "23:00", "window_end": "07:00", "on_approve": "keep", "parallel": 1,
             "default_agent": "claude", "max_minutes": 60, "budget_usd": 5.0}
 MAX_MINUTES, MAX_BUDGET = 240, 50.0
+NODE_WAIT = 45             # seconds the start tool waits for a node to pick a session up
+_NODES = {}              # node/host name -> last time it polled (a node that polls every ~30 s is "up")
 _RUNNING = {}            # task id -> threading.Event (set = stop the agent)
 _LOCK = threading.Lock()
 
@@ -50,6 +52,34 @@ START_SESSION_TOOL = {"type": "function", "function": {
         "prompt": {"type": "string"},
         "resume": {"type": "boolean", "description": "true = resume the latest session in that project (native resume)"}},
         "required": ["prompt"]}}}
+
+
+def _local_hosts():
+    from jb_core import LOCAL_HOST_IDS      # late: jb_core imports this module
+    return LOCAL_HOST_IDS
+
+
+def note_node(name):
+    name = re.sub(r"[^A-Za-z0-9_.-]", "", str(name or ""))[:40]
+    if name:
+        _NODES[name] = time.time()
+
+
+def node_seen(name, within=180):
+    return time.time() - _NODES.get(str(name or ""), 0) < within
+
+
+SEND_SESSION_TOOL = {"type": "function", "function": {
+    "name": "send_to_coding_session",
+    "description": ("Tell a coding session what to do next (a follow-up, an answer, 'carry on', 'run the tests'). If the session is open "
+                    "and idle in a terminal it is typed in now; if it is busy it gets it the moment its turn ends; if it is not open "
+                    "any more it is resumed (in tmux, on the computer that has it) with your text as the prompt. "
+                    "Use `id` from coding_agents or recent_coding_sessions."),
+    "parameters": {"type": "object", "properties": {
+        "id": {"type": "string", "description": "agent id (code:host:agent:session) or resume id from the lists"},
+        "project": {"type": "string", "description": "or: project name; picks its most recent session"},
+        "text": {"type": "string", "description": "what the agent should do"}},
+        "required": ["text"]}}}
 
 
 def _iso(t):
@@ -278,6 +308,8 @@ class NightShiftMixin:
                     continue
                 if not self._night_due(r, cfg, now) or not os.path.isdir(r["repo"]):
                     continue        # a repo that is not on this machine waits for a node that has it
+                if r["host"] and r["host"] not in _local_hosts() and node_seen(r["host"]):
+                    continue        # pinned to another computer whose node is polling: it is theirs
                 stop = threading.Event()
                 if r["kind"] == "task":
                     _RUNNING[r["id"]] = stop
@@ -443,6 +475,7 @@ class NightShiftMixin:
         node = re.sub(r"[^A-Za-z0-9_.-]", "", str(body.get("node") or ""))[:40]
         if not node:
             raise ValueError("node is required")
+        note_node(node)
         r = self.night_task(tid)
         if r["host"] and r["host"] != node:
             raise PermissionError("that task is pinned to " + r["host"])
@@ -577,11 +610,13 @@ class NightShiftMixin:
 
     def start_coding_session_tool(self, body):
         args = self.parse_tool_args(body) if isinstance(body, str) else (body or {})
-        repo, agent, resume_id = str(args.get("repo") or "").strip(), args.get("agent") or "", ""
+        repo, agent, resume_id, host = str(args.get("repo") or "").strip(), args.get("agent") or "", "", str(args.get("host") or "").strip()
         p = self._night_find_project(args.get("project") or repo)
         sessions = jb_sharedmem.recent_sessions(self.store, p["key"], 10) if p else []
         if agent:
             sessions = [s for s in sessions if s["agent"] == agent]
+        if host:
+            sessions = [s for s in sessions if s["host"] == host]
         if isinstance(args.get("resume"), str) and args["resume"].strip() not in ("", "true", "false"):
             # exact session: a recorded session id, or a coding-agent id (code:host:source:session)
             rid = args["resume"].strip()
@@ -589,25 +624,36 @@ class NightShiftMixin:
             if not hit:
                 self._coding_table()
                 row = self.store.one("SELECT * FROM coding_agents WHERE id=?", (rid,)) if rid.startswith("code:") else None
+                if not row:       # a bare native session id
+                    row = self.store.one("SELECT * FROM coding_agents WHERE session_id=? ORDER BY last_activity DESC", (rid,))
                 if row and row["cwd"]:
-                    hit = {"repo": row["cwd"], "agent": row["source"], "resume_id": row["session_id"]}
+                    hit = {"repo": row["cwd"], "agent": row["source"], "resume_id": row["session_id"], "host": row["host"]}
             if not hit:
                 return "No recorded session with that id to resume."
-            repo, agent, resume_id = hit["repo"], hit["agent"], hit["resume_id"]
+            repo, agent, resume_id, host = hit["repo"], hit["agent"], hit["resume_id"], hit.get("host") or host
         elif args.get("resume"):
             if not sessions:
                 return "No earlier session to resume there. Call again with resume=false to start a fresh one."
             last = sessions[0]
-            repo, agent, resume_id = last["repo"], last["agent"], last["resume_id"]
-        repo = repo or (sessions[0]["repo"] if sessions else (p["paths"][-1] if p and p["paths"] else ""))
+            repo, agent, resume_id, host = last["repo"], last["agent"], last["resume_id"], last["host"] or host
+        elif not repo and sessions:                 # fresh start: use the folder this project has on the (asked-for or latest) computer
+            repo, host = sessions[0]["repo"], host or sessions[0]["host"]
+        repo = repo or (p["paths"][-1] if p and p["paths"] else "")
         if not repo:
             return "I don't know where that project lives. Give me the repo path."
         try:
             r = self.night_add({"repo": repo, "prompt": args.get("prompt") or ("Continue where you left off." if resume_id else ""), "agent": agent or "any",
-                                "title": (args.get("title") or "Session: " + str(args.get("prompt") or ""))[:60]}, kind="session", run_now=True, resume_id=resume_id)
+                                "host": host, "title": (args.get("title") or "Session: " + str(args.get("prompt") or ""))[:60]},
+                               kind="session", run_now=True, resume_id=resume_id)
             for _, t in self.night_tick():
                 t.join(25)
             t = self.night_out(self.night_task(r["id"]))
+            # not on this computer: a node on the right one claims it within its poll interval (~30 s)
+            end = time.time() + NODE_WAIT
+            watch = [t["host"]] if t["host"] else list(_NODES)
+            while t["status"] in ("queued", "running") and time.time() < end and (t["status"] == "running" or any(node_seen(n) for n in watch)):
+                time.sleep(2)
+                t = self.night_out(self.night_task(r["id"]))
         except (ValueError, LookupError) as exc:
             return "Could not start it: %s" % exc
         if t["status"] == "launched":
@@ -616,8 +662,49 @@ class NightShiftMixin:
                 "Resumed" if resume_id else "Started", worker.NAMES.get(t["agent"], t["agent"]), t["repo"],
                 (" (%s)" % launch["attach"]) if launch.get("attach") else "")
         if t["status"] == "queued":
-            return "Queued: that repo is not on this computer, so it waits for a linked computer that has it."
+            if t["host"] and not node_seen(t["host"]):
+                return ("Queued, but no JoeBro node is running on %s (needed: that is where the session and repo are). "
+                        "Start `joebro-agents node run` there; it picks this up on its next poll." % t["host"])
+            return "Queued: that repo is not on this computer, so it waits for a linked computer that has it%s." % (
+                (" (%s)" % t["host"]) if t["host"] else "")
+        if t["status"] == "running":
+            return "Handed to %s; it is starting. Check the Agents list in a minute." % (t["runner"] or "a node")
         return "Could not start it: %s" % (t["error"] or t["status"])
+
+    def send_to_coding_session_tool(self, body):
+        """Give a coding session an instruction: type it into the live terminal, queue it for the agent's hooks, or - when the session
+        is no longer open - resume it (tmux, on its own computer) with the text as the prompt."""
+        args = self.parse_tool_args(body) if isinstance(body, str) else (body or {})
+        text, sid = str(args.get("text") or args.get("prompt") or "").strip(), str(args.get("id") or args.get("resume") or "").strip()
+        if not text:
+            return "Nothing to send: give me the text."
+        self._coding_table()
+        row = None
+        if sid:
+            row = self.store.one("SELECT * FROM coding_agents WHERE id=?", (sid,)) or self.store.one(
+                "SELECT * FROM coding_agents WHERE session_id=? AND kind<>'subagent' ORDER BY last_activity DESC", (sid,))
+            if not row and sid.startswith("code:"):          # a recorded session id has the same shape
+                sid = sid.split(":", 3)[-1]
+        else:
+            p = self._night_find_project(args.get("project"))
+            last = (jb_sharedmem.recent_sessions(self.store, p["key"], 1) if p else [])
+            if not last:
+                return "Which session? Give me an id from coding_agents or recent_coding_sessions."
+            sid = last[0]["resume_id"] or last[0]["id"]
+            row = self.store.one("SELECT * FROM coding_agents WHERE id=?", (last[0]["id"],))
+        if row and row["status"] != "ended":
+            try:
+                r = self.coding_send(row["id"], text)
+            except ValueError as exc:
+                return "Could not send it: %s" % exc
+            if r.get("delivered") == "terminal":
+                return "Sent to %s on %s (typed into its terminal)." % (row["name"], row["host"])
+            if row["status"] in ("running", "waiting"):
+                return "%s on %s is busy; it gets this the moment its current turn ends." % (row["name"], row["host"])
+            return ("%s on %s is idle in a terminal I cannot type into, so the message is queued: it reaches the agent with your next "
+                    "prompt there. To continue it right now instead, resume it (start_coding_session resume=%s)." % (row["name"], row["host"], row["id"]))
+        # not open: resume it where it lives
+        return self.start_coding_session_tool({"resume": (row["id"] if row else sid), "prompt": text})
 
 
 def route(h, method, path, q):
@@ -632,6 +719,7 @@ def route(h, method, path, q):
             raise ValueError("body must be a JSON object")
         one = lambda r: {"ok": True, "task": h.night_out(r)}
         if method == "GET":
+            note_node(q.get("node"))
             if not head:
                 tasks = h.night_list(q.get("status") or "")
                 out = {"ok": True, "tasks": tasks, "reviews": h.night_review_cards(), "config": h.night_config(),

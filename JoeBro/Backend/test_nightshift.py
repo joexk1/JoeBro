@@ -253,6 +253,66 @@ class Sessions(Base):
         self.assertIn("start_coding_session", WRITE_SIDE_EFFECT_TOOLS)              # hidden from read-only chats
 
 
+class SendToSession(Base):
+    def setUp(self):
+        super().setUp()
+        import jb_nightshift
+        self.ns = jb_nightshift
+        self.ns.NODE_WAIT = 0
+        self.ns._NODES.clear()
+        self.addCleanup(self.ns._NODES.clear)
+        bindir = os.path.join(self.tmp, "bin"); os.makedirs(bindir)
+        self.rec = os.path.join(self.tmp, "tmux-args.json")
+        Path(bindir, "tmux").write_text("#!%s\nimport json, sys\njson.dump(sys.argv[1:], open(%r, 'w'))\n" % (sys.executable, self.rec))
+        os.chmod(os.path.join(bindir, "tmux"), 0o755)
+        old = os.environ["PATH"]; os.environ["PATH"] = bindir + os.pathsep + old
+        self.addCleanup(os.environ.__setitem__, "PATH", old)
+
+    def event(self, sid, ev, text="x", host="pc"):
+        self.h.coding_event({"source": "claude", "host": host, "session_id": sid, "event": ev, "cwd": self.repo, "text": text})
+
+    def test_send_queues_for_an_open_agent_and_the_hook_pulls_it(self):
+        h = self.h
+        self.event("s1", "prompt"); self.event("s1", "tool")
+        out = h.send_to_coding_session_tool({"id": "code:pc:claude:s1", "text": "also run the tests"})
+        self.assertIn("busy", out)
+        pulled = h.coding_inbox_pull({"host": "pc", "source": "claude", "session_id": "s1"})["messages"]
+        self.assertEqual(pulled[0]["text"], "also run the tests")
+        self.event("s1", "stop", "done")
+        out = h.send_to_coding_session_tool({"id": "s1", "text": "and lint"})            # a bare native session id works too
+        self.assertIn("queued", out)
+        self.assertIn("Nothing to send", h.send_to_coding_session_tool({"id": "s1", "text": " "}))
+
+    def test_send_to_a_session_that_is_not_open_resumes_it_with_the_text(self):
+        h = self.h
+        self.event("s2", "prompt"); self.event("s2", "stop", "half way")
+        h.store.exec("UPDATE coding_agents SET status='ended' WHERE id='code:pc:claude:s2'")
+        out = h.send_to_coding_session_tool({"id": "code:pc:claude:s2", "text": "carry on"})
+        self.assertIn("Resumed Claude Code", out)
+        self.assertEqual(json.load(open(self.rec))[-4:], ["claude", "--resume", "s2", "carry on"])
+        self.assertIn("No recorded session", h.send_to_coding_session_tool({"id": "nope", "text": "hi"}))
+
+    def test_resume_is_pinned_to_the_sessions_computer_and_waits_for_its_node(self):
+        h = self.h
+        self.event("s3", "prompt", host="mac"); self.event("s3", "stop", "left off", host="mac")
+        self.ns.note_node("mac")                       # the Mac's node is polling: this backend leaves the job to it
+        out = h.start_coding_session_tool({"project": "proj", "prompt": "go on", "resume": True})
+        self.assertIn("Queued", out)
+        t = h.night_list()[0]
+        self.assertEqual((t["host"], t["status"], t["resume_id"]), ("mac", "queued", "s3"))
+        self.assertFalse(os.path.exists(self.rec))
+        self.assertEqual(h.night_claim(t["id"], {"node": "mac"})["task"]["host"], "mac")
+        with self.assertRaises(PermissionError):
+            h.night_claim(h.night_add({"repo": self.repo, "prompt": "p", "host": "mac"}, kind="session")["id"], {"node": "pc"})
+
+    def test_no_node_for_that_computer_says_so(self):
+        h = self.h
+        out = h.start_coding_session_tool({"repo": "/nonexistent/elsewhere", "host": "ghost", "prompt": "go"})
+        self.assertIn("no JoeBro node is running on ghost", out)
+        self.assertIn("send_to_coding_session", [t["function"]["name"] for t in __import__("jb_core").FUNCTION_TOOL_SCHEMAS])
+        self.assertIn("send_to_coding_session", WRITE_SIDE_EFFECT_TOOLS)
+
+
 class NodeRunner(Base):
     def test_claim_report_park_decision_and_timeout(self):
         h = H()

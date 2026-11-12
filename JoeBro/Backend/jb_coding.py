@@ -407,7 +407,12 @@ class CodingAgentsMixin:
         self._coding_inbox_table()
         live = row["status"] in ("running", "waiting")
         if mode in ("auto", "terminal") and not live:
-            term = self._coding_terminal(row)
+            try:
+                term = self._coding_terminal(row)
+            except ValueError:          # Agent Control is off or unreachable: queue for the hooks instead
+                if mode == "terminal":
+                    raise
+                term = None
             if term:
                 r = self._agent_control("agent_send_input", {"session_id": term["session_id"], "host": row["host"], "text": text, "press_enter": True})
                 if not r.get("error"):
