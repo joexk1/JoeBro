@@ -39,7 +39,7 @@ struct AgentsPanel: View {
                 .frame(maxWidth: 420)
 
                 Toggle("Active only", isOn: $activeOnly)
-                    .toggleStyle(.switch)
+                    .toggleStyle(.switch).tint(.green)
                     .controlSize(.small)
                     .help("Show only agents working right now")
 

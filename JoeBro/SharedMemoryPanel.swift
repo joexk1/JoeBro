@@ -40,7 +40,7 @@ struct SharedMemoryPanel: View {
                         Text("Every project").tag("__all")
                         ForEach(projects.filter { $0.key != "global" && $0.key != "user" }) { Text($0.label).tag($0.key) }
                     }.frame(maxWidth: 220)
-                    Toggle("Archived", isOn: $showArchived).toggleStyle(.switch).controlSize(.small)
+                    Toggle("Archived", isOn: $showArchived).toggleStyle(.switch).tint(.green).controlSize(.small)
                 }
                 if let note { Text(note).font(.system(size: 11.5)).foregroundStyle(.secondary) }
                 HStack(spacing: 12) {
@@ -97,6 +97,7 @@ struct SharedMemoryPanel: View {
             if projects.isEmpty { projects = try await APIClient.shared.memoryProjects() }
             facts = try await APIClient.shared.memoryFacts(project: project, status: showArchived ? "all" : "active", query: search)
             note = nil
+        } catch where error.isNotFound { facts = []; note = nil
         } catch { note = error.localizedDescription }
     }
 }

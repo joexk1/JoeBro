@@ -1,12 +1,10 @@
 import SwiftUI
 
 /// Night Shift: queue coding tasks for your agents overnight, review the results in the morning.
-/// Also lists recent coding sessions from every linked agent, with Resume.
 struct NightShiftPanel: View {
-    private enum Page: String, CaseIterable { case review = "Morning review", queue = "Queue", sessions = "Coding sessions" }
+    private enum Page: String, CaseIterable { case review = "Morning review", queue = "Queue" }
     @State private var page = Page.review
     @State private var tasks: [NightTask] = []
-    @State private var sessions: [AgentRun] = []
     @State private var enabled = true
     @State private var composing = false
     @State private var followUp: NightTask?
@@ -21,7 +19,7 @@ struct NightShiftPanel: View {
     var body: some View {
         PanelChrome(title: "Night Shift", icon: "moon.stars") {
             Toggle("Run overnight", isOn: Binding(get: { enabled }, set: { v in enabled = v; Task { try? await APIClient.shared.nightConfig(enabled: v) } }))
-                .toggleStyle(.switch).controlSize(.small)
+                .toggleStyle(.switch).tint(.green).controlSize(.small)
             Button { composing = true } label: { Image(systemName: "plus") }.buttonStyle(.borderless).help("Queue a task")
             Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.borderless).help("Refresh")
         } content: {
@@ -38,9 +36,6 @@ struct NightShiftPanel: View {
                         case .queue:
                             if queue.isEmpty { emptyState("moon.zzz", "Nothing queued", "Queue a task with + and your agents work on it overnight in separate git worktrees.") }
                             ForEach(Array(queue.enumerated()), id: \.element.id) { i, t in queueRow(t, index: i) }
-                        case .sessions:
-                            if sessions.isEmpty { emptyState("chevron.left.forwardslash.chevron.right", "No coding sessions yet", "Claude Code, Codex and OpenCode sessions appear here once linked.") }
-                            ForEach(sessions) { sessionRow($0) }
                         }
                     }.padding(14)
                 }
@@ -122,22 +117,6 @@ struct NightShiftPanel: View {
         .padding(10).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
     }
 
-    private func sessionRow(_ r: AgentRun) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: r.kindIcon).foregroundStyle(Color.accentColor).frame(width: 20)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(r.title).font(.system(size: 12.5, weight: .medium)).lineLimit(2)
-                Text([r.model, r.live ? "running" : r.status].filter { !$0.isEmpty }.joined(separator: " · ")).font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-            Spacer()
-            if !r.live {
-                Button("Resume") { Task { do { try await APIClient.shared.resumeCoding(r); note = "Resuming on your computer." } catch { note = error.localizedDescription } } }
-                    .controlSize(.small)
-            }
-        }
-        .padding(10).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
-    }
-
     private func move(_ index: Int, _ delta: Int) {
         var ids = queue.filter { $0.state == "queued" }.map(\.id)
         let running = queue.count - ids.count
@@ -151,9 +130,8 @@ struct NightShiftPanel: View {
     }
     private func load() async {
         do { let r = try await APIClient.shared.nightShift(); tasks = r.tasks; enabled = r.config?.enabled ?? true; note = nil }
+        catch where error.isNotFound { tasks = []; note = nil }
         catch { note = error.localizedDescription }
-        let all = (try? await APIClient.shared.agents(kind: "coding").agents) ?? []
-        sessions = all.filter { $0.kind == "coding" }
     }
     private func act(_ work: () async throws -> Void) async {
         do { try await work(); await load() } catch { note = error.localizedDescription }

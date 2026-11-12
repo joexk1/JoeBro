@@ -114,7 +114,6 @@ func relativeDateISO(_ iso: String?) -> String {
 extension APIClient {
     /// Route that resumes a coding session on a linked machine (start_coding_session).
     /// Not in reports/feature-api.md yet: change this one constant when the backend names it.
-    static let resumeCodingRoute = "api/coding-agents/start"
 
     private struct TasksEnv: Decodable { let tasks: [NightTask]; let config: NightConfig? }
     private struct DiffEnv: Decodable { let diff: String? }
@@ -139,9 +138,6 @@ extension APIClient {
     }
     func nightDiff(_ id: String) async throws -> String {
         let r: DiffEnv = try await getJSON("api/night-shift/\(seg(id))/diff"); return r.diff ?? ""
-    }
-    func resumeCoding(_ run: AgentRun) async throws {
-        _ = try await sendJSON(Self.resumeCodingRoute, body: ["resume": run.id, "session_id": run.sessionID, "title": run.title])
     }
 
     func memoryProjects() async throws -> [MemProject] { let r: ProjectsEnv = try await getJSON("api/shared-memory/projects"); return r.projects }

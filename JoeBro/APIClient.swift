@@ -1375,3 +1375,12 @@ final class APIClient {
             .data(using: .utf8) ?? Data()
     }
 }
+
+
+extension Error {
+    /// A 404 from a list/load route: nothing there (or an older backend). Show the empty state.
+    var isNotFound: Bool {
+        if let e = self as? APIError, case .http(404, _) = e { return true }
+        return false
+    }
+}
