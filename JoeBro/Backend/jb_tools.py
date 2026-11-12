@@ -1,6 +1,8 @@
 """Tool dispatch, execution, web/image search, tool parsing."""
+import jb_ext
 from jb_core import *  # noqa: F401,F403
 from jb_desktop import DESKTOP_USE_TOOL, agent_desktop_bin
+from jb_reach import AGENT_REACH_TOOL
 
 # AI tools that write a document to disk. When the app has "ask before editing"
 # on it sends ask_doc_edit and these are gated behind explicit approval BEFORE
@@ -28,12 +30,28 @@ DOC_WRITE_TOOLS = {"create_document", "edit_document", "update_document"}
 # so e.g. an iPhone-control server can require Full access.
 _PERM_RANK = {"sandbox": 0, "readonly": 1, "full": 2}
 
+
+def _perm_allows(item_mode, session_mode):
+    """Whether an MCP server / plugin tagged `item_mode` may be offered to (and
+    called from) a session whose permission_mode is `session_mode`.
+    An item's 'readonly' means it CANNOT write anything, so it is safe in every
+    session, sandbox included. Anything else ('sandbox', 'full') must not exceed the
+    session's own level on the _PERM_RANK scale. Do not compare the two with a raw
+    rank inequality: that ranks a harmless read-only server ABOVE a sandbox session
+    and hides it."""
+    item_mode = item_mode or "sandbox"
+    if item_mode == "readonly":
+        return True
+    return _PERM_RANK.get(item_mode, 0) <= _PERM_RANK.get(session_mode or "sandbox", 0)
+
 # Built-in tools that are LOADED ON DEMAND rather than sent on every round, for the
 # phone agent (and any chat with pref `lazy_tools` on). Email, calendar and
 # reminder schemas are a couple of thousand tokens that every round of every turn
 # would otherwise pay. A group is offered when the latest message (or the last few
 # turns, so "yes, send it" still works) mentions it; otherwise find_tools pulls it
 # in. Nothing is removed, only not advertised until relevant. Fails open.
+_SCHOLAR_RE = (r"\b(?:papers?|journals?|\bdoi\b|citations?|scholar|academic|literature|publications?|"
+               r"\bstudies\b|research|books?|authors?|pubmed|arxiv|crossref|openalex|doaj|isbn|dataset|cite)")
 DEFERRED_GROUPS = {
     "email": ({"list_email_accounts", "list_emails", "read_email", "send_email", "archive_email",
                "delete_email", "mark_email_read", "reply_to_email", "bulk_email"},
@@ -128,6 +146,8 @@ class ToolsMixin:
             # Agent Desktop (Vercel's agent-desktop) when it's installed; the
             # dependency-free osascript version otherwise.
             schemas.append(DESKTOP_USE_TOOL if agent_desktop_bin() else MACOS_USE_TOOL)
+        if self._plugin_allowed("plugin_agent_reach", f):
+            schemas.append(AGENT_REACH_TOOL)
         if self._plugin_allowed("plugin_advisor", f) and (self.pref("advisor_model") or ""):
             schemas.append(advisor_tool_schema(self.pref("advisor_description") or ""))
         return schemas
@@ -157,12 +177,17 @@ class ToolsMixin:
                      "personal_task_delete", "personal_task_run_now"}
         if self._truthy_flag(f.get("subagent")):
             skip |= {"spawn_subagent", "spawn_agent"}
+        # An extension can replace a phone schema by name or add its own (hook
+        # `phone_tool_schemas` -> list of function schemas).
+        extra = {t["function"]["name"]: t for group in jb_ext.call("phone_tool_schemas") for t in group}
         out = []
         for t in PHONE_TOOL_SCHEMAS:
             name = t["function"]["name"]
             if name in skip:
                 continue
+            t = extra.pop(name, t)
             out.append(self.subagent_schema(t) if name == "spawn_subagent" else t)
+        out += [t for n, t in extra.items() if n not in skip]
         return out
 
     def phone_tool(self, name, body, form):
@@ -173,6 +198,9 @@ class ToolsMixin:
             raise ValueError(name + " is only available to the phone agent")
         if getattr(self, "_turn_form", None) is None:
             self._turn_form = form
+        taken = jb_ext.first("phone_tool", self, name, body, form)     # an extension may implement or override a tool
+        if taken is not None:
+            return taken
         if name == "manage_plan":
             return self.manage_plan_tool(body)
         if name == "remind_me":
@@ -242,6 +270,14 @@ class ToolsMixin:
             for names, rx in DEFERRED_GROUPS.values():
                 if not re.search(rx, text):
                     hidden |= names
+            # Custom API tools (Crossref, OpenAlex, PubMed...) are deferred the same way:
+            # shown when the conversation is about papers or shares a word with the tool name.
+            if not re.search(_SCHOLAR_RE, text):
+                words = {w for w in re.findall(r"[a-z0-9]+", text) if len(w) > 3}
+                for t in self.custom_tool_schemas():
+                    fn = t["function"]
+                    if not (words & set(re.findall(r"[a-z0-9]+", fn["name"].lower()))):
+                        hidden.add(fn["name"])
             return hidden
         except Exception:
             return set()
@@ -445,7 +481,7 @@ class ToolsMixin:
         except Exception:
             return out
         for r in rows:
-            if _PERM_RANK.get(r.get("permission_mode") or "sandbox", 0) > sess_rank:
+            if not _perm_allows(r.get("permission_mode"), (f or {}).get("permission_mode")):
                 continue   # needs a higher agent-access level than this session has
             try:
                 tools = json.loads(r.get("tools_json") or "[]")
@@ -456,6 +492,8 @@ class ToolsMixin:
             sname = r.get("name") or "MCP"
             for t in tools:
                 if not isinstance(t, dict) or not t.get("name"):
+                    continue
+                if (f or {}).get("permission_mode") == "readonly" and (t.get("annotations") or {}).get("readOnlyHint") is False:
                     continue
                 fname = self.mcp_func_name(r["id"], t["name"])
                 schema = t.get("inputSchema") if isinstance(t.get("inputSchema"), dict) else None
@@ -524,9 +562,16 @@ class ToolsMixin:
         # is already pinned to one repo via --repository, so force repo_path to it
         # — there's no other repo it would accept anyway.
         arguments = self._mcp_inject_repo_path(row.get("args") or "", arguments)
+        taken = jb_ext.first("mcp_call", self, row, real_tool, arguments)   # an extension may serve this tool itself
+        if taken is not None:
+            return taken
         try:
             text, is_error = mcp_call_tool(row.get("command") or "", row.get("args") or "",
                                            real_tool, arguments)
+            if not is_error:
+                filtered = jb_ext.first("mcp_output", row, real_tool, text or "")   # e.g. shrink an oversized result
+                if filtered is not None:
+                    text = filtered
             return {"tool": name, "command": label,
                     "output": (text or "")[:60000], "exit_code": 1 if is_error else 0}
         except Exception as exc:
@@ -591,8 +636,7 @@ class ToolsMixin:
         row = self.store.one("select is_enabled, permission_mode from plugins where id=?", (plugin_id,))
         if not row or not row.get("is_enabled"):
             return False
-        return _PERM_RANK.get(row.get("permission_mode") or "sandbox", 0) <= \
-            _PERM_RANK.get((f or {}).get("permission_mode") or "sandbox", 0)
+        return _perm_allows(row.get("permission_mode"), (f or {}).get("permission_mode"))
 
     def _macos_blocked_apps(self):
         """User's blocked-apps list (macos_blocked_apps pref) - names the plugin
@@ -664,8 +708,13 @@ class ToolsMixin:
             # params); parse it back so we pass the real arguments to tools/call.
             mrow, real_tool = self.mcp_server_for_func(name)
             if mrow:
-                if _PERM_RANK.get(mrow.get("permission_mode") or "sandbox", 0) > \
-                   _PERM_RANK.get((form or {}).get("permission_mode") or "sandbox", 0):
+                if readonly:
+                    definitions = json.loads(mrow.get("tools_json") or "[]")
+                    definition = next((t for t in definitions if t.get("name") == real_tool), {})
+                    if (definition.get("annotations") or {}).get("readOnlyHint") is False:
+                        return {"tool": name, "command": real_tool, "exit_code": 1,
+                                "output": "This MCP tool writes files or changes an account; read-only agent access cannot run it."}
+                if not _perm_allows(mrow.get("permission_mode"), (form or {}).get("permission_mode")):
                     return {"tool": name, "command": real_tool or name, "exit_code": 1,
                             "output": f"'{mrow.get('name') or 'This MCP server'}' requires a higher agent access level — switch the chat's access to use it."}
                 try:
@@ -713,6 +762,11 @@ class ToolsMixin:
             except Exception:
                 args = {}
             return self.run_macos_use(form, args)
+        if name == "agent_reach":
+            if not self._plugin_allowed("plugin_agent_reach", form):
+                return {"tool": "agent_reach", "command": "agent_reach", "exit_code": 1,
+                        "output": "The agent_reach plugin is switched off (or needs a higher agent access level) — tell the user; do not retry."}
+            return self.run_agent_reach(form, self.parse_tool_args(body))
         if name == "advisor":
             if not self._plugin_allowed("plugin_advisor", form):
                 return {"tool": "advisor", "command": "advisor", "exit_code": 1,

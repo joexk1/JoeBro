@@ -17,6 +17,7 @@ ponytail: threads, not a queue/worker service. A handful of concurrent agents
 on one Mac is what a semaphore is for; reach for a real queue when you want
 them surviving a restart.
 """
+import jb_ext
 from jb_core import *  # noqa: F401,F403
 from jb_agents import request_cancel
 
@@ -64,33 +65,57 @@ Skip any source that is not connected. Never mention that a source is missing.
 class FleetMixin:
     # ---- inbox / delivery ------------------------------------------------
 
-    def notify(self, body, title="", kind="note", source="", channel="auto", session=None):
-        """Deliver a message to the user: inbox row, then push, then Telegram.
+    # Notice kinds that live in the phone agent's chat rather than as bare Inbox rows.
+    # An extension can add more (hook `notify_chat_kinds` -> iterable of kinds).
+    PHONE_CHAT_KINDS = frozenset({"personal_task", "personal_reply"})
+
+    def notify(self, body, title="", kind="note", source="", channel="auto", session=None, message_id=None, metadata=None):
+        """Deliver a message to the user: inbox row (or a phone-chat message), then push, then Telegram.
 
         The inbox is the record (the apps read it); push and Telegram are the
         delivery. A failed delivery never loses the message, because the row is
-        written first. With no push key and no bot, the message just stays here."""
+        written first. With no push key and no bot, the message just stays here.
+        A notice that belongs to the phone agent's chat is saved there instead
+        (pass `message_id` when the caller already saved it) and pushed once per device."""
         body = (body or "").strip()
         if channel not in ("auto", "mobile", "telegram", "inbox"):
             raise ValueError("Notification channel must be auto, mobile, telegram or inbox")
         if not body:
             return {"ok": False, "detail": "empty message"}
-        nid = "inb_" + os.urandom(6).hex()
-        self.store.exec(
-            "insert into inbox(id,kind,title,body,source,read,created_at) values(?,?,?,?,?,0,?)",
-            (nid, kind, title or "", body, source or "", now_iso()))
-        # The inbox is a record, not an archive: keep the newest INBOX_CAP rows.
-        self.store.exec(
-            "delete from inbox where id not in "
-            "(select id from inbox order by datetime(created_at) desc, rowid desc limit ?)", (INBOX_CAP,))
-        delivery = {"channel": "inbox", "delivered": False, "detail": "Saved to the JoeBro inbox"}
+        coding = kind == "coding" or kind.startswith("coding_")
+        chat_kinds = set(self.PHONE_CHAT_KINDS).union(*[set(k) for k in jb_ext.call("notify_chat_kinds")])
+        personal = not coding and (message_id is not None or session == PHONE_SESSION_ID and kind in chat_kinds)
+        if coding:
+            session = None
+        if personal:
+            session = PHONE_SESSION_ID
+            if message_id is None:
+                self.ensure_phone_session()
+                message_id = self.add_message(session, "assistant", body,
+                                              {"notice": True, "source": kind, "task_title": title, **(metadata or {})})
+            nid = "msg_" + str(message_id or "")
+            push_data = {"message_id": str(message_id), "kind": kind, "session": session}
+        else:
+            nid = "inb_" + os.urandom(6).hex()
+            self.store.exec(
+                "insert into inbox(id,kind,title,body,source,read,created_at) values(?,?,?,?,?,0,?)",
+                (nid, kind, title or "", body, source or "", now_iso()))
+            # The inbox is a record, not an archive: keep the newest INBOX_CAP rows.
+            self.store.exec(
+                "delete from inbox where id not in "
+                "(select id from inbox order by datetime(created_at) desc, rowid desc limit ?)", (INBOX_CAP,))
+            push_data = {"inbox_id": nid, "kind": kind}
+        delivery = {"channel": "inbox", "delivered": False,
+                    "detail": "Saved to the phone chat" if personal else "Saved to the JoeBro inbox"}
         if channel in ("auto", "mobile"):
             try:
-                from jb_push import send_push
-                delivery = send_push(self.store, (title or "JoeBro")[:150], body[:3000], session=session)
+                from jb_push import send_push, notification_text
+                heading = notification_text(title or "JoeBro", limit=150).replace("\n", " ")
+                delivery = send_push(self.store, heading, notification_text(body, limit=450), session=session,
+                                     category="PERSONAL_MESSAGE" if personal else None, data=push_data)
             except Exception:
                 delivery = {"channel": "mobile", "delivered": False, "detail": "Mobile push unavailable"}
-        if channel == "telegram" or (channel == "auto" and not delivery.get("delivered")):
+        if channel == "telegram" or (channel == "auto" and not personal and not delivery.get("delivered")):
             mobile_detail = delivery.get("detail")
             delivery = {"channel": "telegram", "delivered": self.push_telegram(body, title)}
             if not delivery["delivered"]:
@@ -560,6 +585,10 @@ def pulse_loop(server):
                 h.run_heartbeat()
             except Exception:
                 pass  # a heartbeat failure must not prevent the pulse
+            try:
+                h.run_autonomy_due()    # extension-supplied no-model routines (none in core)
+            except Exception:
+                pass
             h.run_pulse()           # gated inside: off, quiet hours, backoff, daily cap
         except Exception:
             pass

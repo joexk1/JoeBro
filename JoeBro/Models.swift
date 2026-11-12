@@ -430,6 +430,8 @@ struct EditorDoc: Identifiable {
     var docHeader: String?         // .docx header text (rendered around the page)
     var docFooter: String?         // .docx footer text
     var docFootnotes: String?      // .docx footnotes text (display-only band)
+    var remoteSub: String?         // bound-folder file on a remote host — saves go via the backend
+    var remoteSession: String?
     var reloadNonce = 0            // bumped to force the rich .docx editor to re-read from disk after an AI edit
     var spreadsheet = false        // .csv/.xlsx — content is CSV, rendered as an editable grid
     var xlsxURL: URL?              // .xlsx-backed: saves convert CSV->xlsx and write here
@@ -448,6 +450,11 @@ struct DocSuggestion: Identifiable, Hashable {
 
 struct WorkdirInfo: Decodable {
     var workdir: String?
+}
+
+struct WorkdirListResponse: Decodable {
+    var entries: [WorkdirEntry]
+    var path: String?
 }
 
 struct WorkdirEntry: Decodable, Identifiable, Hashable {
@@ -848,13 +855,25 @@ private let isoFallbacks: [DateFormatter] = ["yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-d
     return f
 }
 
+/// True when the string ends in Z or a +hh:mm / -hhmm style UTC offset.
+func hasExplicitOffset(_ s: String) -> Bool {
+    s.range(of: #"(Z|[+-]\d{2}:?\d{2})$"#, options: .regularExpression) != nil
+}
+
 /// Backend dates come in several flavours: full ISO with/without Z,
-/// or bare "yyyy-MM-dd" for all-day events.
-func parseISO(_ s: String) -> Date? {
+/// or bare "yyyy-MM-dd" for all-day events. `zone` is used ONLY for strings with
+/// no offset (legacy naive times); an explicit offset always wins. nil keeps this
+/// device's zone.
+func parseISO(_ s: String, in zone: TimeZone? = nil) -> Date? {
     if let d = isoFractional.date(from: s) { return d }
     if let d = isoPlain.date(from: s) { return d }
     for df in isoFallbacks {
-        if let d = df.date(from: s) { return d }
+        if let zone {
+            // The shared formatters are never mutated; use a copy for a custom zone.
+            let copy = DateFormatter()
+            copy.locale = df.locale; copy.dateFormat = df.dateFormat; copy.timeZone = zone
+            if let d = copy.date(from: s) { return d }
+        } else if let d = df.date(from: s) { return d }
     }
     return nil
 }
@@ -1114,7 +1133,7 @@ func extractThinking(_ content: String) -> ThinkingSplit {
         var bestClose: Range<String.Index>?
         for tag in closeTags {
             if let close = body.range(of: tag, range: afterOpen..<body.endIndex),
-               bestClose.map({ close.lowerBound < $0.lowerBound }) ?? true {
+               bestClose == nil || close.lowerBound < bestClose!.lowerBound {
                 bestClose = close
             }
         }
@@ -1210,6 +1229,14 @@ struct TaskItem: Decodable, Identifiable, Hashable {
         case permissionMode = "permission_mode"
         case repeatDay = "repeat_day"
     }
+}
+
+// MARK: - Filesystem browse (folder picker)
+
+struct FSEntry: Identifiable, Hashable {
+    var name: String
+    var isDir: Bool
+    var id: String { name }
 }
 
 // MARK: - Endpoint model visibility

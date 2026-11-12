@@ -9,6 +9,7 @@ So: a short operating protocol that is always present, plus per-tool advice that
 is included only when that tool is actually in this turn's schema list. Ordinary
 Mac chats keep the prompts in jb_chat; this module serves the phone agent.
 """
+import jb_ext
 from jb_core import *  # noqa: F401,F403
 
 # The method, not the trivia. This is what makes long tasks survive: a model
@@ -24,7 +25,9 @@ How you work:
 5. WHEN A TOOL FAILS, READ THE ERROR. It usually says exactly what to fix. Change your approach: do not retry the same call unchanged, and never quietly give up and describe what you would have done.
 6. FINISH WITH THE OUTCOME. A couple of lines: what changed, where, and anything that did not work. No tool syntax, no narration of your own process."""
 
-EVIDENCE = """CRITICAL: never claim an action you did not take. Saying "done", "created", "saved", "updated", "sent" or "added" is only allowed when the matching tool ran in THIS turn and returned success. If you have not called it yet, call it now instead of claiming completion. If a tool is unavailable, errored, or returned a non-zero exit, say plainly that it did not happen and why."""
+EVIDENCE = """CRITICAL: never claim an action you did not take. Saying "done", "created", "saved", "updated", "sent" or "added" is only allowed when the matching tool ran in THIS turn and returned success. If you have not called it yet, call it now instead of claiming completion. If a tool is unavailable, errored, or returned a non-zero exit, say plainly that it did not happen and why.
+
+Work fast: when you need several independent lookups, request them ALL in one response as parallel tool calls, not one per round. Do only what was asked; skip optional extras unless the user asked."""
 
 JOEBRO_DEFAULT_SOUL = (
     "JoeBro is a warm, capable presence with a bit of wit. Speak plainly, notice what matters, "
@@ -98,10 +101,20 @@ TOOL_ADVICE = {
     "manage_tasks": "manage_tasks: schedule recurring work (daily/weekly/monthly at a time). It runs as a background agent.",
     "create_event": (
         "create_event: resolve the user's words into ISO-8601 start/end datetimes yourself before calling, "
-        "using today's date above."),
-    "send_email": (
-        "email: use the email tools, never bash/curl. Read before you reply. Draft and show the user "
-        "anything consequential before sending."),
+        "using today's date above, and ALWAYS pass `timezone` (IANA id, e.g. Europe/Berlin). Calendar times are "
+        "stored in that zone, not the zone of whatever device later applies them. For travel, `timezone` is the "
+        "DEPARTURE location's zone and `start` the departure clock time as printed on the ticket; set "
+        "`end_timezone` to the ARRIVAL location's zone and `end` to the arrival clock time there; never convert "
+        "to 'your time'. For other events use the zone where the event happens. If the zone is unclear, ask."),
+    "bash": (
+        "bash/python: prefer the dedicated tools over shell equivalents (file tools over cat/sed, email "
+        "tools over curl). Quote paths with spaces. Check the exit code before you believe it worked."),
+    "manage_events": (
+        "manage_events: for events ALREADY on the calendar. `list` with a filter first, then `shift` that "
+        "same filter to move them all by an offset; never move events one at a time. Say what the tool returned."),
+    "manage_autonomy": (
+        "manage_autonomy: no-model scheduled routines. `list` shows which exist on this install and their "
+        "latest report; notifications stay off unless the user asks for them."),
     "manage_chats": "manage_chats: list/search/read the user's other chats, and `send` to delegate hands-on work into one.",
     "file_transfer": (
         "File transfer: move_file(source, to), or export_to_artifact then deliver_artifact with the artifact_id. "
@@ -114,7 +127,10 @@ TOOL_ADVICE = {
 
 # Tools that share one advice block, so the dict above stays short.
 _ADVICE_ALIASES = {
-    "read_email": "send_email", "list_emails": "send_email", "reply_to_email": "send_email",
+    "list_files": "read_file", "python": "bash",
+    "edit_document": "edit_document", "suggest_document": "edit_document",
+    "read_email": "send_email", "read_email_attachment": "send_email", "save_email_attachment": "send_email",
+    "list_emails": "send_email", "reply_to_email": "send_email", "manage_events": "create_event",
     "archive_email": "send_email", "delete_email": "send_email", "mark_email_read": "send_email",
     "list_email_accounts": "send_email", "bulk_email": "send_email",
     "manage_research": "trigger_research", "manage_reminders": "remind_me",
@@ -130,17 +146,27 @@ LOADABLE_NOTE = (
     "tool it returns. Never claim you lack a capability just because it is not listed.")
 
 
+def _ext_advice():
+    """(advice, aliases) from extensions: hook `tool_advice` -> ({tool: text}, {tool: key})."""
+    advice, aliases = dict(TOOL_ADVICE), dict(_ADVICE_ALIASES)
+    for a, b in jb_ext.call("tool_advice"):
+        advice.update(a or {})
+        aliases.update(b or {})
+    return advice, aliases
+
+
 def _advice_for(tool_names):
     """The advice blocks for the tools actually on offer, in a stable order."""
     wanted, seen = [], set()
+    advice_map, alias_map = _ext_advice()
     for name in tool_names:
         # MCP names are server-id prefixed (mcp_<id>__tool_name); advise on
         # the underlying tool so connected services get the same guidance.
         base = name.split("__", 1)[-1]
-        key = _ADVICE_ALIASES.get(base, base)
-        if key in TOOL_ADVICE and key not in seen:
+        key = alias_map.get(base, base)
+        if key in advice_map and key not in seen:
             seen.add(key)
-            wanted.append(TOOL_ADVICE[key])
+            wanted.append(advice_map[key])
     return wanted
 
 

@@ -54,6 +54,7 @@ final class APIClient {
         }
         var req = URLRequest(url: url)
         req.httpMethod = method
+        BackendToken.authorize(&req)
         // Minutes west of UTC, matching JS getTimezoneOffset() — backend
         // uses this so calendar/notes tools work in the user's timezone.
         req.setValue(String(-TimeZone.current.secondsFromGMT() / 60), forHTTPHeaderField: "X-TZ-Offset")
@@ -179,6 +180,13 @@ final class APIClient {
         try await getJSON("api/calendar/status")
     }
 
+    func connectEmail(email: String, password: String) async throws {
+        try await sendJSON("api/email/connect", body: [
+            "email": email,
+            "password": password,
+        ])
+    }
+
     func connectIMAP(email: String, imapHost: String, imapPort: Int, imapPassword: String,
                      smtpHost: String, smtpPort: Int, smtpPassword: String) async throws {
         try await sendJSON("api/email/connect-imap", body: [
@@ -192,6 +200,10 @@ final class APIClient {
             "smtp_user": email,
             "smtp_password": smtpPassword,
         ])
+    }
+
+    func disconnectEmail() async throws {
+        try await sendJSON("api/email/disconnect")
     }
 
     func connectCalDAV(url: String, principal: String, password: String) async throws {
@@ -389,9 +401,7 @@ final class APIClient {
             "repeat_day": repeatDay,
             "trigger_type": "schedule",
             "output_target": "session",
-        ]
-        if personal { body["scope"] = "personal" }
-        try await sendJSON("api/tasks", body: body)
+        ])
     }
 
     func updateTask(id: String, name: String, prompt: String, schedule: String, time: String, permissionMode: String = "sandbox", repeatDay: Int = 0) async throws {
@@ -423,10 +433,30 @@ final class APIClient {
         _ = try? await sendJSON("api/tasks/\(id)", method: "DELETE")
     }
 
+    // MARK: Filesystem browse (folder picker)
+
+    func fsBrowse(path: String, device: String?) async throws -> (path: String, entries: [FSEntry]) {
+        var q: [String: String] = [:]
+        if !path.isEmpty { q["path"] = path }
+        if let device, !device.isEmpty { q["device"] = device }
+        let v: JSONValue = try await getJSON("api/fs/browse", query: q)
+        let entries = (v["entries"]?.arrayValue ?? []).compactMap { e -> FSEntry? in
+            guard let name = e["name"]?.stringValue else { return nil }
+            let isDir = e["type"]?.stringValue == "dir" || e["is_dir"]?.boolValue == true
+            return FSEntry(name: name, isDir: isDir)
+        }
+        return (v["path"]?.stringValue ?? path, entries)
+    }
+
     func bindWorkdir(sid: String, path: String, device: String?) async throws {
         var body: [String: Any] = ["workdir": path]
         if let device, !device.isEmpty { body["device"] = device }
         try await sendJSON("api/session/\(sid)/workdir", method: "PUT", body: body)
+    }
+
+    /// Raw file bytes from the bound folder (for PDFs/images QuickLook).
+    func downloadWorkdirFile(sid: String, sub: String, filename: String) async throws -> URL {
+        try await downloadToTemp("api/session/\(sid)/workdir/raw", query: ["sub": sub], filename: filename)
     }
 
     /// Header / footer / footnote text of a .docx (NSAttributedString skips them).
@@ -836,11 +866,9 @@ final class APIClient {
         return fields
     }
 
-    func stopStream(sessionID: String) async {
-        _ = try? await session.data(for: request("api/chat/stop/\(sessionID)", method: "POST"))
-        // Persist the partial assistant message with the stopped flag —
-        // without this, stopping mid-stream left the turn unsaved.
-        _ = try? await session.data(for: request("api/session/\(sessionID)/mark-stopped", method: "POST"))
+    func stopStream(sessionID: String) async throws {
+        let (data, response) = try await session.data(for: request("api/chat/stop/\(sessionID)", method: "POST"))
+        try check(data, response)
     }
 
     // MARK: Uploads / attachments
@@ -863,6 +891,13 @@ final class APIClient {
         let parsed = try JSONDecoder().decode(UploadResponse.self, from: data)
         guard let first = parsed.files.first else { throw APIError.badResponse }
         return first
+    }
+
+    /// Raw bytes of an uploaded file (authenticated; AsyncImage can't send headers).
+    func uploadData(id: String) async throws -> Data {
+        let (data, resp) = try await session.data(for: request("api/upload/\(id)"))
+        try check(data, resp)
+        return data
     }
 
     /// Download an uploaded file to a temp location (named so QuickLook
@@ -927,12 +962,18 @@ final class APIClient {
         return (data, (resp as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? "application/octet-stream")
     }
 
+    /// The latest self-scheduled briefing.
+    func latestBriefing() async throws -> BriefingEnvelope {
+        try await getJSON("api/briefing")
+    }
+
     func getJSON<T: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> T {
         var comps = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         if !query.isEmpty {
             comps.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
         }
         var req = URLRequest(url: comps.url!)
+        BackendToken.authorize(&req)
         req.setValue(String(-TimeZone.current.secondsFromGMT() / 60), forHTTPHeaderField: "X-TZ-Offset")
         let (data, resp) = try await session.data(for: req)
         try check(data, resp)
@@ -944,11 +985,9 @@ final class APIClient {
         var req: URLRequest
         if path.contains("?") {
             // appendingPathComponent escapes '?' — build query URLs properly
-            guard let url = URL(string: baseURL.absoluteString + "/" + path) else {
-                throw URLError(.badURL)
-            }
-            req = URLRequest(url: url)
+            req = URLRequest(url: URL(string: baseURL.absoluteString + "/" + path)!)
             req.httpMethod = method
+            BackendToken.authorize(&req)
         } else {
             req = request(path, method: method)
         }
@@ -977,7 +1016,9 @@ final class APIClient {
         if !query.isEmpty {
             comps.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
         }
-        let (data, resp) = try await session.data(for: URLRequest(url: comps.url!))
+        var dreq = URLRequest(url: comps.url!)
+        BackendToken.authorize(&dreq)
+        let (data, resp) = try await session.data(for: dreq)
         try check(data, resp)
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("JoeBroPreviews", isDirectory: true)
@@ -1117,6 +1158,20 @@ final class APIClient {
         try await sendJSON("api/calendar/events/\(uid)", method: "DELETE")
     }
 
+    /// Calendar writes the agent queued for EventKit. Pass the ids you applied
+    /// as `ack`; returns what is still queued.
+    func calendarPending(ack: [String]) async throws -> [[String: Any]] {
+        let out = try await sendJSON("api/calendar/pending", body: ["ack": ack])
+        return (out["ops"] as? [[String: Any]]) ?? []
+    }
+
+    /// Push this Mac's EventKit events to the backend so the agent's
+    /// manage_events tool can see (and batch-move) events it didn't create.
+    /// Replaces the backend's local mirror wholesale.
+    func syncCalendarMirror(_ events: [[String: Any]]) async throws {
+        try await sendJSON("api/calendar/mirror", body: ["events": events])
+    }
+
     // MARK: Memory (Brain)
 
     func memories() async throws -> [MemoryEntry] {
@@ -1169,6 +1224,10 @@ final class APIClient {
         if !search.isEmpty { q["search"] = search }
         let r: DocsLibraryResponse = try await getJSON("api/documents/library", query: q)
         return r.documents
+    }
+
+    func document(id: String) async throws -> DocDetail {
+        try await getJSON("api/document/\(id)")
     }
 
     func updateDocument(id: String, content: String) async throws {
@@ -1244,6 +1303,53 @@ final class APIClient {
         let r: WorkdirInfo = try await getJSON("api/session/\(sid)/workdir")
         return r.workdir
     }
+
+    func workdirList(sid: String, sub: String = "") async throws -> [WorkdirEntry] {
+        let r: WorkdirListResponse = try await getJSON("api/session/\(sid)/workdir/list",
+                                                       query: sub.isEmpty ? [:] : ["sub": sub])
+        return r.entries
+    }
+
+    /// Save text back to a bound-folder file on the backend host (remote folder).
+    func saveWorkdirFile(sid: String, sub: String, content: String) async throws {
+        try await sendJSON("api/session/\(sid)/workdir/save-file", body: ["sub": sub, "content": content])
+    }
+
+    /// Push raw bytes back to a bound-folder file (a natively-edited .doc/.docx
+    /// the app downloaded to a temp). base64 over JSON, like the extras path.
+    func saveWorkdirRaw(sid: String, sub: String, data: Data) async throws {
+        try await sendJSON("api/session/\(sid)/workdir/save-raw",
+                           body: ["sub": sub, "b64": data.base64EncodedString()])
+    }
+
+    func deleteWorkdirFile(sid: String, sub: String) async throws {
+        var req = request("api/session/\(sid)/workdir/delete-file", method: "POST")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["sub": sub])
+        let (data, resp) = try await session.data(for: req)
+        try check(data, resp)
+    }
+
+    func renameWorkdirFile(sid: String, sub: String, newName: String) async throws {
+        var req = request("api/session/\(sid)/workdir/rename-file", method: "POST")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["sub": sub, "new_name": newName])
+        let (data, resp) = try await session.data(for: req)
+        try check(data, resp)
+    }
+
+    /// Opens a workdir file as an editable Document (file_path-mirrored:
+    /// saves write back to disk). Returns the doc for the editor sheet.
+    func openWorkdirFile(sid: String, sub: String) async throws -> DocDetail {
+        var req = request("api/session/\(sid)/workdir/open-file", method: "POST")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["sub": sub])
+        let (data, resp) = try await session.data(for: req)
+        try check(data, resp)
+        return try JSONDecoder().decode(DocDetail.self, from: data)
+    }
+
+    // MARK: Local files / gallery
 
     // MARK: STT
 

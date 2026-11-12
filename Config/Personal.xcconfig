@@ -1,0 +1,8 @@
+// The owner's personal macOS build: same sources as production plus the PERSONAL
+// compilation condition (set per configuration in the project) and JoeBro/Personal/.
+// It is a CLIENT of a remote backend (no local backend is spawned) and installs next
+// to the production app as JoeBroPERSONAL.app (app.joebro.personal).
+// Put the backend address and token in Config/Secrets.xcconfig (gitignored).
+JOEBRO_BACKEND_TOKEN =
+JOEBRO_DEFAULT_SERVER =
+#include? "Secrets.xcconfig"
