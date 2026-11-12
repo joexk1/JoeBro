@@ -146,11 +146,12 @@ class Memory(unittest.TestCase):
         self.assertTrue(any("make test" in t for t in texts))       # the command in a code block survives
         self.assertTrue(any("changelog" in t.lower() for t in texts))
         self.assertLessEqual(out["brief_tokens"], sm.BRIEF_TOKENS)
-        self.assertLess(out["pointer_tokens"], 150)
-        self.assertGreater(out["tokens_before"], 1500)
-        self.assertLess(out["tokens_after"], out["tokens_before"] / 2)
-        print("\n  import: %d tokens of native memory files -> %d per session (brief %d + pointer %d)" % (
-            out["tokens_before"], out["tokens_after"], out["brief_tokens"], out["pointer_tokens"]))
+        self.assertLess(out["pointer_tokens"], 80)
+        self.assertGreater(out["per_agent_before"]["claude"], 1400)
+        self.assertLess(out["tokens_after"], out["per_agent_before"]["claude"] / 2.5)     # brief + pointer vs the CLAUDE.md it replaces
+        self.assertGreater(out["tokens_saved"]["claude"], 900)
+        print("\n  import: CLAUDE.md %d tokens per session -> %d (brief %d + pointer %d)" % (
+            out["per_agent_before"]["claude"], out["tokens_after"], out["brief_tokens"], out["pointer_tokens"]))
         again = sm.import_files(s, k, [{"path": "CLAUDE.md", "text": CLAUDE_MD + sm.slim_pointer(), "agent": "claude"}])
         self.assertEqual(again["added"], 0)                         # importing twice adds nothing
 

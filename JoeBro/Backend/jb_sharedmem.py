@@ -374,8 +374,8 @@ def brief(store, key, budget=BRIEF_TOKENS):
     _tables(store)
     budget = max(60, min(int(budget or BRIEF_TOKENS), BRIEF_TOKENS))
     info, now = project_info(store, key), time.time()
-    head = ("Shared memory (JoeBro) for %s. Top facts only; call memory_recall for more, "
-            "memory_remember for durable facts (decisions, conventions, gotchas, how to run/test)." % info["name"])
+    head = ("Shared memory (JoeBro) for %s: top facts. memory_recall finds more; memory_remember saves durable facts "
+            "(decisions, conventions, gotchas, how to run/test)." % info["name"])
     if key == "user":
         head = "What you know about the user (JoeBro memory). Use recall for more."
     lines, used, facts = [head], tokens(head), []
@@ -500,16 +500,14 @@ def split_facts(text):
 def slim_pointer(name=""):
     """What CLAUDE.md / AGENTS.md shrink to once memory is the single source of truth."""
     return ("%s\n# Project memory\n"
-            "This project's memory lives in JoeBro Shared Memory: one store shared by every coding agent. "
-            "A short brief is added at session start.\n"
-            "- Look things up with `memory_recall` before guessing a convention.\n"
-            "- Save only durable facts with `memory_remember` (decisions, conventions, gotchas, how to run and test); "
-            "use `memory_supersede` when one changes.\n"
-            "- Readable copy: `.joebro/memory/MEMORY.md`. Do not add notes to this file.\n%s\n" % (MARK_START, MARK_END))
+            "Kept in JoeBro Shared Memory, shared by every coding agent; a short brief is added at session start. "
+            "Look things up with `memory_recall`; save durable facts with `memory_remember`. "
+            "Readable copy: `.joebro/memory/MEMORY.md`.\n%s\n" % (MARK_START, MARK_END))
 
 
 def import_files(store, key, files, prov=None):
     """Import agent memory files ({path, text, agent}) into one deduplicated store."""
+    per_agent = {}
     stats = {"files": 0, "tokens_before": 0, "candidates": 0, "added": 0, "deduped": 0, "superseded": 0, "skipped": 0}
     for f in files or []:
         text = str(f.get("text") or "")
@@ -517,6 +515,7 @@ def import_files(store, key, files, prov=None):
             continue
         stats["files"] += 1
         stats["tokens_before"] += tokens(text)
+        per_agent[str(f.get("agent") or "agent")] = per_agent.get(str(f.get("agent") or "agent"), 0) + tokens(text)
         p = dict(prov or {}, agent=str(f.get("agent") or (prov or {}).get("agent") or "import"), source="import",
                  session=os.path.basename(str(f.get("path") or ""))[:100])
         for topic, fact in split_facts(text):
@@ -531,7 +530,9 @@ def import_files(store, key, files, prov=None):
     pointer = slim_pointer()
     stats.update(brief_tokens=used, pointer_tokens=tokens(pointer),
                  tokens_after=used + tokens(pointer), slim=pointer)
-    stats["tokens_saved"] = stats["tokens_before"] - stats["tokens_after"]
+    # What each agent loaded per session from its own files, against brief + pointer afterwards.
+    stats["per_agent_before"] = per_agent
+    stats["tokens_saved"] = {a: n - stats["tokens_after"] for a, n in per_agent.items()}
     return stats
 
 
