@@ -1,0 +1,1265 @@
+{
+ "GET /api/ping": {
+  "ok": true
+ },
+ "GET /api/prefs": {
+  "prefs": {
+   "default_model": "claude-sonnet-4",
+   "default_endpoint_id": "anthropic"
+  }
+ },
+ "GET /api/models": {
+  "items": [
+   {
+    "url": "https://api.anthropic.com",
+    "models": [
+     "claude-opus-4",
+     "claude-sonnet-4",
+     "claude-haiku-4"
+    ],
+    "models_display": [
+     "Claude Opus 4",
+     "Claude Sonnet 4",
+     "Claude Haiku 4"
+    ],
+    "endpoint_id": "anthropic",
+    "endpoint_name": "Anthropic",
+    "category": "cloud",
+    "offline": false
+   },
+   {
+    "url": "https://api.openai.com",
+    "models": [
+     "gpt-5",
+     "gpt-5-codex",
+     "gpt-5-mini"
+    ],
+    "models_display": [
+     "GPT-5",
+     "GPT-5 Codex",
+     "GPT-5 mini"
+    ],
+    "endpoint_id": "openai",
+    "endpoint_name": "OpenAI",
+    "category": "cloud",
+    "offline": false
+   },
+   {
+    "url": "http://127.0.0.1:11434",
+    "models": [
+     "qwen3-coder:30b",
+     "llama3.3:70b"
+    ],
+    "models_display": [
+     "Qwen3 Coder 30B",
+     "Llama 3.3 70B"
+    ],
+    "endpoint_id": "ollama",
+    "endpoint_name": "Ollama (this Mac)",
+    "category": "local",
+    "offline": false
+   },
+   {
+    "url": "https://openrouter.ai/api",
+    "models": [
+     "deepseek/deepseek-v3.2",
+     "google/gemini-2.5-pro"
+    ],
+    "models_display": [
+     "DeepSeek V3.2",
+     "Gemini 2.5 Pro"
+    ],
+    "endpoint_id": "mykey",
+    "endpoint_name": "My OpenRouter key",
+    "category": "cloud",
+    "offline": false
+   }
+  ]
+ },
+ "GET /api/model-endpoints": [
+  {
+   "id": "anthropic",
+   "name": "Anthropic",
+   "base_url": "https://api.anthropic.com",
+   "enabled": true
+  },
+  {
+   "id": "openai",
+   "name": "OpenAI",
+   "base_url": "https://api.openai.com",
+   "enabled": true
+  },
+  {
+   "id": "ollama",
+   "name": "Ollama (this Mac)",
+   "base_url": "http://127.0.0.1:11434",
+   "enabled": true,
+   "model_type": "local"
+  },
+  {
+   "id": "mykey",
+   "name": "My OpenRouter key",
+   "base_url": "https://openrouter.ai/api",
+   "enabled": true
+  }
+ ],
+ "GET /api/sessions": [
+  {
+   "id": "c1",
+   "name": "Plan the v2 launch week",
+   "model": "claude-opus-4",
+   "endpoint_id": "anthropic",
+   "mode": "agent",
+   "archived": false,
+   "folder": null,
+   "is_important": true,
+   "created_at": "{{d0:09:12}}",
+   "sort_order": 0.0
+  },
+  {
+   "id": "c2",
+   "name": "Refactor the sync engine",
+   "model": "gpt-5-codex",
+   "endpoint_id": "openai",
+   "mode": "agent",
+   "archived": false,
+   "folder": "Atlas API",
+   "is_important": false,
+   "created_at": "{{d-1:09:12}}",
+   "sort_order": 1.0
+  },
+  {
+   "id": "c3",
+   "name": "Summarise the RAG papers I saved",
+   "model": "qwen3-coder:30b",
+   "endpoint_id": "ollama",
+   "mode": "chat",
+   "archived": false,
+   "folder": "Research",
+   "is_important": false,
+   "created_at": "{{d-2:09:12}}",
+   "sort_order": 2.0
+  },
+  {
+   "id": "c4",
+   "name": "Pricing page copy, three options",
+   "model": "gemini-2.5-pro",
+   "endpoint_id": "mykey",
+   "mode": "chat",
+   "archived": false,
+   "folder": "Marketing",
+   "is_important": false,
+   "created_at": "{{d-3:09:12}}",
+   "sort_order": 3.0
+  },
+  {
+   "id": "c5",
+   "name": "Why is this query slow?",
+   "model": "claude-sonnet-4",
+   "endpoint_id": "anthropic",
+   "mode": "chat",
+   "archived": false,
+   "folder": "Atlas API",
+   "is_important": false,
+   "created_at": "{{d-5:09:12}}",
+   "sort_order": 5.0
+  },
+  {
+   "id": "c6",
+   "name": "Weekend trip: Lisbon to Porto",
+   "model": "deepseek/deepseek-v3.2",
+   "endpoint_id": "mykey",
+   "mode": "chat",
+   "archived": false,
+   "folder": null,
+   "is_important": false,
+   "created_at": "{{d-8:09:12}}",
+   "sort_order": 8.0
+  }
+ ],
+ "GET /api/history/c1": {
+  "name": "Plan the v2 launch week",
+  "model": "claude-opus-4",
+  "history": [
+   {
+    "role": "user",
+    "content": "We ship v2 on Thursday. Can you turn the open issues, my calendar and the draft changelog into a plan for the week?",
+    "metadata": {
+     "_db_id": 1
+    }
+   },
+   {
+    "role": "assistant",
+    "content": "Here is the plan I would run. I checked your calendar, the 14 open issues labelled `v2-blocker`, and the changelog draft.\n\n**Monday: freeze and verify**\n- Cut the release branch and freeze features\n- Fix the two real blockers: the sync conflict on first launch (#412) and the empty state on the agents tab (#418)\n- Ask Claude Code on the MacBook to run the full test suite overnight\n\n**Tuesday: polish**\n- Re-record the 45 second demo with the new Night Shift flow\n- Tighten the changelog: lead with linked agents, not the settings rewrite\n\n**Wednesday: dry run**\n- Build the signed release on a clean machine and install it over v1.9 to test the upgrade path\n- 14:00 call with Sam about the launch post\n\n**Thursday: ship**\n- Tag, notarise, publish the appcast, post the announcement\n\nTwo risks: notarisation has taken up to 90 minutes before, so start it by 10:00. And #418 touches the sidebar, which nothing else is blocked on, so it can slip to a point release if needed.",
+    "metadata": {
+     "_db_id": 2,
+     "tool_events": [
+      {
+       "tool": "calendar",
+       "command": "list events this week",
+       "output": "5 events found",
+       "exit_code": 0
+      },
+      {
+       "tool": "github",
+       "command": "issues --label v2-blocker --state open",
+       "output": "14 issues (2 critical)",
+       "exit_code": 0
+      }
+     ]
+    }
+   },
+   {
+    "role": "user",
+    "content": "Good. Move the dry run to Tuesday evening and add a block for the demo recording.",
+    "metadata": {
+     "_db_id": 3
+    }
+   },
+   {
+    "role": "assistant",
+    "content": "Done. Tuesday now has **Demo recording 11:00 to 12:30** and **Release dry run 17:00 to 18:30**. Wednesday morning is free for fixes that come out of the dry run.",
+    "metadata": {
+     "_db_id": 4,
+     "tool_events": [
+      {
+       "tool": "calendar",
+       "command": "create 'Demo recording' Tue 11:00-12:30",
+       "output": "created",
+       "exit_code": 0
+      },
+      {
+       "tool": "calendar",
+       "command": "move 'Release dry run' to Tue 17:00",
+       "output": "moved",
+       "exit_code": 0
+      }
+     ]
+    }
+   }
+  ]
+ },
+ "GET /api/history/c2": {
+  "name": "Refactor the sync engine",
+  "model": "gpt-5-codex",
+  "history": [
+   {
+    "role": "user",
+    "content": "The sync engine has three places that decide whether a record is stale. Can you consolidate them behind one function?",
+    "metadata": {
+     "_db_id": 1
+    }
+   },
+   {
+    "role": "assistant",
+    "content": "Yes. The three checks live in `pull.ts`, `merge.ts` and `scheduler.ts`, and they disagree on one case: a record with an equal timestamp but a different device id. `scheduler.ts` treats it as fresh, the other two as stale.\n\nI would introduce `isStale(local, remote)` in `clock.ts`, break ties by device id, and replace all three call sites. The behaviour change is intentional and matches what the docs already promise.\n\n```ts\nexport function isStale(local: Stamp, remote: Stamp): boolean {\n  if (remote.ts !== local.ts) return remote.ts > local.ts\n  return remote.device > local.device\n}\n```\n\nI have added six table-driven tests, including the tie case. All 148 tests pass.",
+    "metadata": {
+     "_db_id": 2,
+     "tool_events": [
+      {
+       "tool": "bash",
+       "command": "npm test -- --silent",
+       "output": "Tests: 148 passed, 148 total",
+       "exit_code": 0
+      }
+     ]
+    }
+   }
+  ]
+ },
+ "GET /api/history/c3": {
+  "name": "Summarise the RAG papers I saved",
+  "model": "qwen3-coder:30b",
+  "history": [
+   {
+    "role": "user",
+    "content": "Summarise the four RAG papers in my Research folder in two sentences each.",
+    "metadata": {
+     "_db_id": 1
+    }
+   },
+   {
+    "role": "assistant",
+    "content": "Running locally on this Mac, nothing left the machine.\n\n1. **Self-RAG**: trains the model to decide when to retrieve and to critique its own passages, which cuts hallucinations on open questions without hurting fluency.\n2. **RAPTOR**: builds a tree of recursive summaries over the corpus so retrieval can match both fine detail and whole-document themes.\n3. **Late chunking**: embeds the whole document first and chunks afterwards, so each chunk keeps its context and retrieval improves on long files.\n4. **GraphRAG**: extracts an entity graph and summarises its communities, which makes broad questions about a corpus answerable.\n\nIf you only read one, start with RAPTOR: it is the most practical to add to an existing pipeline.",
+    "metadata": {
+     "_db_id": 2
+    }
+   }
+  ]
+ },
+ "GET /api/history/c4": {
+  "name": "Pricing page copy, three options",
+  "model": "gemini-2.5-pro",
+  "history": [
+   {
+    "role": "user",
+    "content": "Write three headline options for the pricing page. The product is free, bring-your-own keys.",
+    "metadata": {
+     "_db_id": 1
+    }
+   },
+   {
+    "role": "assistant",
+    "content": "1. **Free, and it brings all your agents.** Claude Code, Codex, OpenCode and your own keys, in one place.\n2. **Pay your providers, not us.** JoeBro costs nothing. Your models cost what they always did.\n3. **One app. Every agent you already use.**\n\nMy pick is 1: it states the price and the benefit in one breath. Option 2 works better on a comparison table.",
+    "metadata": {
+     "_db_id": 2
+    }
+   }
+  ]
+ },
+ "GET /api/history/c5": {
+  "name": "Why is this query slow?",
+  "model": "claude-sonnet-4",
+  "history": [
+   {
+    "role": "user",
+    "content": "This takes 4 seconds: SELECT * FROM events WHERE user_id = ? ORDER BY created_at DESC LIMIT 50",
+    "metadata": {
+     "_db_id": 1
+    }
+   },
+   {
+    "role": "assistant",
+    "content": "It is almost certainly sorting. You have an index on `user_id` but not on `(user_id, created_at)`, so the database finds the rows and then sorts all of them. Add a composite index:\n\n```sql\nCREATE INDEX events_user_created ON events (user_id, created_at DESC);\n```\n\nThat lets it read the newest 50 rows straight off the index. Also replace `SELECT *` with the columns you need; the `payload` column is large and you are paying to read it 50 times.",
+    "metadata": {
+     "_db_id": 2
+    }
+   }
+  ]
+ },
+ "GET /api/history/c6": {
+  "name": "Weekend trip",
+  "model": "deepseek/deepseek-v3.2",
+  "history": [
+   {
+    "role": "user",
+    "content": "Two days in Porto after Lisbon. What should I not miss?",
+    "metadata": {
+     "_db_id": 1
+    }
+   },
+   {
+    "role": "assistant",
+    "content": "Take the morning train from Lisbon (about 3 hours), drop your bag, and walk down to the Ribeira. Saturday: Livraria Lello early, the Clerigos tower, lunch at a tasca for francesinha, and port tasting across the river in Gaia at sunset. Sunday: Serralves gardens, then the coastal tram to Foz for the Atlantic.",
+    "metadata": {
+     "_db_id": 2
+    }
+   }
+  ]
+ },
+ "GET /api/session/c1/tip": {
+  "tip": "",
+  "suggestions": [],
+  "ok": true
+ },
+ "GET /api/session/c2/tip": {
+  "tip": "",
+  "suggestions": [],
+  "ok": true
+ },
+ "GET /api/session/c3/tip": {
+  "tip": "",
+  "suggestions": [],
+  "ok": true
+ },
+ "GET /api/session/c4/tip": {
+  "tip": "",
+  "suggestions": [],
+  "ok": true
+ },
+ "GET /api/session/c5/tip": {
+  "tip": "",
+  "suggestions": [],
+  "ok": true
+ },
+ "GET /api/session/c6/tip": {
+  "tip": "",
+  "suggestions": [],
+  "ok": true
+ },
+ "GET /api/agents": {
+  "ok": true,
+  "agents": [
+   {
+    "id": "cc1",
+    "kind": "coding",
+    "title": "Claude Code: migrate auth middleware to sessions v2",
+    "status": "running",
+    "live": true,
+    "model": "claude-opus-4",
+    "created_at": "{{d0:08:41}}",
+    "started_at": "{{d0:08:41}}",
+    "progress": "Editing 6 files, 31 of 42 tests passing",
+    "node": "MacBook",
+    "agent": "claude-code",
+    "result": ""
+   },
+   {
+    "id": "cc1a",
+    "kind": "subagent",
+    "title": "Explore: every use of the legacy token cookie",
+    "status": "done",
+    "live": false,
+    "model": "claude-haiku-4",
+    "created_at": "{{d0:08:42}}",
+    "started_at": "{{d0:08:42}}",
+    "progress": "",
+    "node": "MacBook",
+    "agent": "claude-code",
+    "parent_id": "cc1",
+    "finished_at": "{{d0:10:05}}",
+    "result": "Found 14 references in 6 files. Only `session.ts` and `refresh.ts` write the cookie; the rest only read it.",
+    "result_chars": 107
+   },
+   {
+    "id": "cc1b",
+    "kind": "subagent",
+    "title": "Write tests for the refresh flow",
+    "status": "running",
+    "live": true,
+    "model": "claude-sonnet-4",
+    "created_at": "{{d0:08:50}}",
+    "started_at": "{{d0:08:50}}",
+    "progress": "3 of 5 cases written",
+    "node": "MacBook",
+    "agent": "claude-code",
+    "parent_id": "cc1",
+    "result": ""
+   },
+   {
+    "id": "cc1c",
+    "kind": "subagent",
+    "title": "Review the migration for race conditions",
+    "status": "running",
+    "live": true,
+    "model": "claude-opus-4",
+    "created_at": "{{d0:09:02}}",
+    "started_at": "{{d0:09:02}}",
+    "progress": "Reading the lock handling in refresh.ts",
+    "node": "MacBook",
+    "agent": "claude-code",
+    "parent_id": "cc1",
+    "result": ""
+   },
+   {
+    "id": "cx1",
+    "kind": "coding",
+    "title": "Codex: add retry with backoff to the uploader",
+    "status": "running",
+    "live": true,
+    "model": "gpt-5-codex",
+    "created_at": "{{d0:09:10}}",
+    "started_at": "{{d0:09:10}}",
+    "progress": "Running the integration suite on the Pi",
+    "node": "Pi",
+    "agent": "codex",
+    "result": ""
+   },
+   {
+    "id": "cx1a",
+    "kind": "subagent",
+    "title": "Benchmark backoff curves against the staging bucket",
+    "status": "running",
+    "live": true,
+    "model": "gpt-5-codex",
+    "created_at": "{{d0:09:14}}",
+    "started_at": "{{d0:09:14}}",
+    "progress": "Run 4 of 10",
+    "node": "Pi",
+    "agent": "codex",
+    "parent_id": "cx1",
+    "result": ""
+   },
+   {
+    "id": "oc1",
+    "kind": "coding",
+    "title": "OpenCode: upgrade to React 19 and fix the type errors",
+    "status": "running",
+    "live": true,
+    "model": "qwen3-coder:30b",
+    "created_at": "{{d0:08:15}}",
+    "started_at": "{{d0:08:15}}",
+    "progress": "212 of 340 type errors resolved",
+    "node": "Linux box",
+    "agent": "opencode",
+    "result": ""
+   },
+   {
+    "id": "oc1a",
+    "kind": "subagent",
+    "title": "Codemod: replace forwardRef wrappers",
+    "status": "done",
+    "live": false,
+    "model": "qwen3-coder:30b",
+    "created_at": "{{d0:08:20}}",
+    "started_at": "{{d0:08:20}}",
+    "progress": "",
+    "node": "Linux box",
+    "agent": "opencode",
+    "parent_id": "oc1",
+    "finished_at": "{{d0:10:05}}",
+    "result": "Rewrote 38 components. Two needed manual review and are listed in the PR notes.",
+    "result_chars": 79
+   },
+   {
+    "id": "oc1b",
+    "kind": "subagent",
+    "title": "Fix third-party type mismatches",
+    "status": "running",
+    "live": true,
+    "model": "llama3.3:70b",
+    "created_at": "{{d0:08:55}}",
+    "started_at": "{{d0:08:55}}",
+    "progress": "Patching the charting library types",
+    "node": "Linux box",
+    "agent": "opencode",
+    "parent_id": "oc1",
+    "result": ""
+   },
+   {
+    "id": "cx2",
+    "kind": "coding",
+    "title": "Codex: write the changelog from merged PRs",
+    "status": "done",
+    "live": false,
+    "model": "gpt-5",
+    "created_at": "{{d0:07:30}}",
+    "started_at": "{{d0:07:30}}",
+    "progress": "",
+    "node": "Pi",
+    "agent": "codex",
+    "finished_at": "{{d0:10:05}}",
+    "result": "Drafted CHANGELOG for v2.0 from 47 merged pull requests, grouped by area, with the three user-facing headlines first.",
+    "result_chars": 117
+   },
+   {
+    "id": "r1",
+    "kind": "research",
+    "title": "Compare vector databases for 5M documents",
+    "status": "done",
+    "live": false,
+    "model": "claude-opus-4",
+    "created_at": "{{d0:07:05}}",
+    "started_at": "{{d0:07:05}}",
+    "progress": "",
+    "node": "MacBook",
+    "agent": "",
+    "finished_at": "{{d0:10:05}}",
+    "result": "**Recommendation:** pgvector with HNSW for your scale. At 5M documents the managed options cost 6 to 10 times more for a latency you will not notice.\n\n- Recall at 10: pgvector 0.96, Qdrant 0.97, Pinecone 0.97\n- p95 latency: 18 ms, 12 ms, 21 ms\n- Operational cost: you already run Postgres.",
+    "result_chars": 289
+   },
+   {
+    "id": "t1",
+    "kind": "task",
+    "title": "Morning briefing",
+    "status": "done",
+    "live": false,
+    "model": "claude-sonnet-4",
+    "created_at": "{{d0:07:30}}",
+    "started_at": "{{d0:07:30}}",
+    "progress": "",
+    "node": "MacBook",
+    "agent": "",
+    "finished_at": "{{d0:10:05}}",
+    "result": "Three meetings today, the first at 10:30. Two pull requests wait for your review. Nothing urgent in your inbox.",
+    "result_chars": 111
+   },
+   {
+    "id": "t2",
+    "kind": "task",
+    "title": "Nightly dependency audit",
+    "status": "queued",
+    "live": false,
+    "model": "claude-haiku-4",
+    "created_at": "{{d0:23:00}}",
+    "started_at": "{{d0:23:00}}",
+    "progress": "Scheduled for 23:00",
+    "node": "Pi",
+    "agent": "",
+    "result": ""
+   }
+  ],
+  "count": 13,
+  "live": 7,
+  "kinds": [
+   "research",
+   "task",
+   "subagent",
+   "coding"
+  ]
+ },
+ "GET /api/agents/cc1": {
+  "ok": true,
+  "agent": {
+   "id": "cc1",
+   "kind": "coding",
+   "title": "Claude Code: migrate auth middleware to sessions v2",
+   "status": "running",
+   "live": true,
+   "model": "claude-opus-4",
+   "created_at": "{{d0:08:41}}",
+   "started_at": "{{d0:08:41}}",
+   "progress": "Editing 6 files, 31 of 42 tests passing",
+   "node": "MacBook",
+   "agent": "claude-code",
+   "result": "",
+   "messages": [
+    {
+     "role": "user",
+     "content": "Claude Code: migrate auth middleware to sessions v2",
+     "created_at": "{{d0:08:41}}"
+    }
+   ]
+  }
+ },
+ "GET /api/agents/cc1a": {
+  "ok": true,
+  "agent": {
+   "id": "cc1a",
+   "kind": "subagent",
+   "title": "Explore: every use of the legacy token cookie",
+   "status": "done",
+   "live": false,
+   "model": "claude-haiku-4",
+   "created_at": "{{d0:08:42}}",
+   "started_at": "{{d0:08:42}}",
+   "progress": "",
+   "node": "MacBook",
+   "agent": "claude-code",
+   "parent_id": "cc1",
+   "finished_at": "{{d0:10:05}}",
+   "result": "Found 14 references in 6 files. Only `session.ts` and `refresh.ts` write the cookie; the rest only read it.",
+   "result_chars": 107,
+   "messages": [
+    {
+     "role": "user",
+     "content": "Explore: every use of the legacy token cookie",
+     "created_at": "{{d0:08:42}}"
+    }
+   ]
+  }
+ },
+ "GET /api/agents/cc1b": {
+  "ok": true,
+  "agent": {
+   "id": "cc1b",
+   "kind": "subagent",
+   "title": "Write tests for the refresh flow",
+   "status": "running",
+   "live": true,
+   "model": "claude-sonnet-4",
+   "created_at": "{{d0:08:50}}",
+   "started_at": "{{d0:08:50}}",
+   "progress": "3 of 5 cases written",
+   "node": "MacBook",
+   "agent": "claude-code",
+   "parent_id": "cc1",
+   "result": "",
+   "messages": [
+    {
+     "role": "user",
+     "content": "Write tests for the refresh flow",
+     "created_at": "{{d0:08:50}}"
+    }
+   ]
+  }
+ },
+ "GET /api/agents/cc1c": {
+  "ok": true,
+  "agent": {
+   "id": "cc1c",
+   "kind": "subagent",
+   "title": "Review the migration for race conditions",
+   "status": "running",
+   "live": true,
+   "model": "claude-opus-4",
+   "created_at": "{{d0:09:02}}",
+   "started_at": "{{d0:09:02}}",
+   "progress": "Reading the lock handling in refresh.ts",
+   "node": "MacBook",
+   "agent": "claude-code",
+   "parent_id": "cc1",
+   "result": "",
+   "messages": [
+    {
+     "role": "user",
+     "content": "Review the migration for race conditions",
+     "created_at": "{{d0:09:02}}"
+    }
+   ]
+  }
+ },
+ "GET /api/agents/cx1": {
+  "ok": true,
+  "agent": {
+   "id": "cx1",
+   "kind": "coding",
+   "title": "Codex: add retry with backoff to the uploader",
+   "status": "running",
+   "live": true,
+   "model": "gpt-5-codex",
+   "created_at": "{{d0:09:10}}",
+   "started_at": "{{d0:09:10}}",
+   "progress": "Running the integration suite on the Pi",
+   "node": "Pi",
+   "agent": "codex",
+   "result": "",
+   "messages": [
+    {
+     "role": "user",
+     "content": "Codex: add retry with backoff to the uploader",
+     "created_at": "{{d0:09:10}}"
+    }
+   ]
+  }
+ },
+ "GET /api/agents/cx1a": {
+  "ok": true,
+  "agent": {
+   "id": "cx1a",
+   "kind": "subagent",
+   "title": "Benchmark backoff curves against the staging bucket",
+   "status": "running",
+   "live": true,
+   "model": "gpt-5-codex",
+   "created_at": "{{d0:09:14}}",
+   "started_at": "{{d0:09:14}}",
+   "progress": "Run 4 of 10",
+   "node": "Pi",
+   "agent": "codex",
+   "parent_id": "cx1",
+   "result": "",
+   "messages": [
+    {
+     "role": "user",
+     "content": "Benchmark backoff curves against the staging bucket",
+     "created_at": "{{d0:09:14}}"
+    }
+   ]
+  }
+ },
+ "GET /api/agents/oc1": {
+  "ok": true,
+  "agent": {
+   "id": "oc1",
+   "kind": "coding",
+   "title": "OpenCode: upgrade to React 19 and fix the type errors",
+   "status": "running",
+   "live": true,
+   "model": "qwen3-coder:30b",
+   "created_at": "{{d0:08:15}}",
+   "started_at": "{{d0:08:15}}",
+   "progress": "212 of 340 type errors resolved",
+   "node": "Linux box",
+   "agent": "opencode",
+   "result": "",
+   "messages": [
+    {
+     "role": "user",
+     "content": "OpenCode: upgrade to React 19 and fix the type errors",
+     "created_at": "{{d0:08:15}}"
+    }
+   ]
+  }
+ },
+ "GET /api/agents/oc1a": {
+  "ok": true,
+  "agent": {
+   "id": "oc1a",
+   "kind": "subagent",
+   "title": "Codemod: replace forwardRef wrappers",
+   "status": "done",
+   "live": false,
+   "model": "qwen3-coder:30b",
+   "created_at": "{{d0:08:20}}",
+   "started_at": "{{d0:08:20}}",
+   "progress": "",
+   "node": "Linux box",
+   "agent": "opencode",
+   "parent_id": "oc1",
+   "finished_at": "{{d0:10:05}}",
+   "result": "Rewrote 38 components. Two needed manual review and are listed in the PR notes.",
+   "result_chars": 79,
+   "messages": [
+    {
+     "role": "user",
+     "content": "Codemod: replace forwardRef wrappers",
+     "created_at": "{{d0:08:20}}"
+    }
+   ]
+  }
+ },
+ "GET /api/agents/oc1b": {
+  "ok": true,
+  "agent": {
+   "id": "oc1b",
+   "kind": "subagent",
+   "title": "Fix third-party type mismatches",
+   "status": "running",
+   "live": true,
+   "model": "llama3.3:70b",
+   "created_at": "{{d0:08:55}}",
+   "started_at": "{{d0:08:55}}",
+   "progress": "Patching the charting library types",
+   "node": "Linux box",
+   "agent": "opencode",
+   "parent_id": "oc1",
+   "result": "",
+   "messages": [
+    {
+     "role": "user",
+     "content": "Fix third-party type mismatches",
+     "created_at": "{{d0:08:55}}"
+    }
+   ]
+  }
+ },
+ "GET /api/agents/cx2": {
+  "ok": true,
+  "agent": {
+   "id": "cx2",
+   "kind": "coding",
+   "title": "Codex: write the changelog from merged PRs",
+   "status": "done",
+   "live": false,
+   "model": "gpt-5",
+   "created_at": "{{d0:07:30}}",
+   "started_at": "{{d0:07:30}}",
+   "progress": "",
+   "node": "Pi",
+   "agent": "codex",
+   "finished_at": "{{d0:10:05}}",
+   "result": "Drafted CHANGELOG for v2.0 from 47 merged pull requests, grouped by area, with the three user-facing headlines first.",
+   "result_chars": 117,
+   "messages": [
+    {
+     "role": "user",
+     "content": "Codex: write the changelog from merged PRs",
+     "created_at": "{{d0:07:30}}"
+    }
+   ]
+  }
+ },
+ "GET /api/agents/r1": {
+  "ok": true,
+  "agent": {
+   "id": "r1",
+   "kind": "research",
+   "title": "Compare vector databases for 5M documents",
+   "status": "done",
+   "live": false,
+   "model": "claude-opus-4",
+   "created_at": "{{d0:07:05}}",
+   "started_at": "{{d0:07:05}}",
+   "progress": "",
+   "node": "MacBook",
+   "agent": "",
+   "finished_at": "{{d0:10:05}}",
+   "result": "**Recommendation:** pgvector with HNSW for your scale. At 5M documents the managed options cost 6 to 10 times more for a latency you will not notice.\n\n- Recall at 10: pgvector 0.96, Qdrant 0.97, Pinecone 0.97\n- p95 latency: 18 ms, 12 ms, 21 ms\n- Operational cost: you already run Postgres.",
+   "result_chars": 289,
+   "messages": [
+    {
+     "role": "user",
+     "content": "Compare vector databases for 5M documents",
+     "created_at": "{{d0:07:05}}"
+    }
+   ]
+  }
+ },
+ "GET /api/agents/t1": {
+  "ok": true,
+  "agent": {
+   "id": "t1",
+   "kind": "task",
+   "title": "Morning briefing",
+   "status": "done",
+   "live": false,
+   "model": "claude-sonnet-4",
+   "created_at": "{{d0:07:30}}",
+   "started_at": "{{d0:07:30}}",
+   "progress": "",
+   "node": "MacBook",
+   "agent": "",
+   "finished_at": "{{d0:10:05}}",
+   "result": "Three meetings today, the first at 10:30. Two pull requests wait for your review. Nothing urgent in your inbox.",
+   "result_chars": 111,
+   "messages": [
+    {
+     "role": "user",
+     "content": "Morning briefing",
+     "created_at": "{{d0:07:30}}"
+    }
+   ]
+  }
+ },
+ "GET /api/agents/t2": {
+  "ok": true,
+  "agent": {
+   "id": "t2",
+   "kind": "task",
+   "title": "Nightly dependency audit",
+   "status": "queued",
+   "live": false,
+   "model": "claude-haiku-4",
+   "created_at": "{{d0:23:00}}",
+   "started_at": "{{d0:23:00}}",
+   "progress": "Scheduled for 23:00",
+   "node": "Pi",
+   "agent": "",
+   "result": "",
+   "messages": [
+    {
+     "role": "user",
+     "content": "Nightly dependency audit",
+     "created_at": "{{d0:23:00}}"
+    }
+   ]
+  }
+ },
+ "GET /api/documents/library": {
+  "total": 4,
+  "documents": [
+   {
+    "id": "d1",
+    "title": "Launch announcement",
+    "language": "markdown",
+    "updated_at": "{{d0:16:20}}",
+    "version_count": 3,
+    "archived": false
+   },
+   {
+    "id": "d2",
+    "title": "Sync engine design notes",
+    "language": "markdown",
+    "updated_at": "{{d-1:16:20}}",
+    "version_count": 4,
+    "archived": false
+   },
+   {
+    "id": "d3",
+    "title": "Q4 roadmap",
+    "language": "markdown",
+    "updated_at": "{{d-2:16:20}}",
+    "version_count": 5,
+    "archived": false
+   },
+   {
+    "id": "d4",
+    "title": "Interview questions",
+    "language": "markdown",
+    "updated_at": "{{d-3:16:20}}",
+    "version_count": 6,
+    "archived": false
+   }
+  ]
+ },
+ "GET /api/document/d1": {
+  "id": "d1",
+  "title": "Launch announcement",
+  "language": "markdown",
+  "current_content": "# JoeBro 2.0\n\nOne app for every agent you already use.\n\nClaude Code, Codex and OpenCode sessions show up next to your own chats, on your Mac, your Pi and your phone. Subagents nest under the agent that spawned them. Your keys, your models, your machines.\n\n## What is new\n\n- **Night Shift:** queue a task before bed, review the diff over coffee.\n- **Shared memory:** every agent reads and writes one project memory.\n- **Live Activities:** watch your agents work from the lock screen.\n",
+  "version_count": 4
+ },
+ "GET /api/document/d2": {
+  "id": "d2",
+  "title": "Sync engine design notes",
+  "language": "markdown",
+  "current_content": "# Sync engine\n\nEvery record carries a hybrid logical clock stamp. Staleness is decided in exactly one place, `isStale`, with ties broken by device id.\n\n## Failure modes\n\n1. Clock skew larger than 5 minutes: reject the write and ask the client to resync.\n2. Partial uploads: the server keeps the previous version until the checksum matches.\n",
+  "version_count": 4
+ },
+ "GET /api/document/d3": {
+  "id": "d3",
+  "title": "Q4 roadmap",
+  "language": "markdown",
+  "current_content": "# Q4 roadmap\n\n| Area | Goal | Owner |\n|---|---|---|\n| Agents | Subagent view on every platform | Alex |\n| Memory | Shared project memory over MCP | Sam |\n| Mobile | Lock-screen approvals | Jo |\n",
+  "version_count": 4
+ },
+ "GET /api/document/d4": {
+  "id": "d4",
+  "title": "Interview questions",
+  "language": "markdown",
+  "current_content": "# Senior iOS engineer\n\n1. Walk me through how you would keep a Live Activity updated while the app is suspended.\n2. How do you decide what belongs in a widget extension versus the app?\n3. Tell me about a bug you only found because of a customer's screenshot.\n",
+  "version_count": 4
+ },
+ "GET /api/calendar/status": {
+  "configured": true,
+  "type": "macos",
+  "display": "Calendar",
+  "macos_authorized": true
+ },
+ "GET /api/calendar/events": {
+  "events": [
+   {
+    "uid": "e1",
+    "summary": "Stand-up",
+    "dtstart": "{{d0:09:30}}",
+    "dtend": "{{d0:09:45}}",
+    "all_day": false,
+    "location": "Video call",
+    "description": "",
+    "calendar_id": "work",
+    "color": "#6aa7ff"
+   },
+   {
+    "uid": "e2",
+    "summary": "Design review: agents tab",
+    "dtstart": "{{d0:11:00}}",
+    "dtend": "{{d0:12:00}}",
+    "all_day": false,
+    "location": "Studio room",
+    "description": "",
+    "calendar_id": "work",
+    "color": "#c78bff"
+   },
+   {
+    "uid": "e3",
+    "summary": "Lunch with Sam",
+    "dtstart": "{{d0:13:00}}",
+    "dtend": "{{d0:14:00}}",
+    "all_day": false,
+    "location": "Cafe Verde",
+    "description": "",
+    "calendar_id": "work",
+    "color": "#6fd39a"
+   },
+   {
+    "uid": "e4",
+    "summary": "Focus: release notes",
+    "dtstart": "{{d0:15:00}}",
+    "dtend": "{{d0:17:00}}",
+    "all_day": false,
+    "location": "",
+    "description": "",
+    "calendar_id": "work",
+    "color": "#ffb35c"
+   },
+   {
+    "uid": "e5",
+    "summary": "Demo recording",
+    "dtstart": "{{d1:11:00}}",
+    "dtend": "{{d1:12:30}}",
+    "all_day": false,
+    "location": "",
+    "description": "",
+    "calendar_id": "work",
+    "color": "#c78bff"
+   },
+   {
+    "uid": "e6",
+    "summary": "Release dry run",
+    "dtstart": "{{d1:17:00}}",
+    "dtend": "{{d1:18:30}}",
+    "all_day": false,
+    "location": "",
+    "description": "",
+    "calendar_id": "work",
+    "color": "#ff7a7a"
+   },
+   {
+    "uid": "e7",
+    "summary": "Launch post call",
+    "dtstart": "{{d2:14:00}}",
+    "dtend": "{{d2:14:30}}",
+    "all_day": false,
+    "location": "Video call",
+    "description": "",
+    "calendar_id": "work",
+    "color": "#6aa7ff"
+   },
+   {
+    "uid": "e8",
+    "summary": "Ship v2",
+    "dtstart": "{{d3:10:00}}",
+    "dtend": "{{d3:11:00}}",
+    "all_day": false,
+    "location": "",
+    "description": "",
+    "calendar_id": "work",
+    "color": "#ff7a7a"
+   },
+   {
+    "uid": "e9",
+    "summary": "Retro",
+    "dtstart": "{{d4:16:00}}",
+    "dtend": "{{d4:17:00}}",
+    "all_day": false,
+    "location": "Studio room",
+    "description": "",
+    "calendar_id": "work",
+    "color": "#6fd39a"
+   }
+  ]
+ },
+ "GET /api/calendar/pending": {
+  "pending": []
+ },
+ "GET /api/memory": {
+  "memory": [
+   {
+    "id": "m1",
+    "text": "Prefers short answers with a clear next step, and code over prose.",
+    "category": "preference",
+    "pinned": true
+   },
+   {
+    "id": "m2",
+    "text": "Working on Atlas, a TypeScript sync engine with a Postgres backend.",
+    "category": "project",
+    "pinned": true
+   },
+   {
+    "id": "m3",
+    "text": "Release process: freeze Monday, dry run on a clean machine, ship Thursday morning.",
+    "category": "project",
+    "pinned": false
+   },
+   {
+    "id": "m4",
+    "text": "Writes changelogs user-first: lead with what changes for people, not for the code.",
+    "category": "preference",
+    "pinned": false
+   },
+   {
+    "id": "m5",
+    "text": "Sam handles launch copy; Alex owns the agents tab.",
+    "category": "person",
+    "pinned": false
+   }
+  ]
+ },
+ "GET /api/tasks": {
+  "tasks": [
+   {
+    "id": "k1",
+    "name": "Morning briefing",
+    "prompt": "Summarise my calendar, open pull requests and unread mail.",
+    "schedule": "daily",
+    "scheduled_time": "07:30",
+    "status": "active",
+    "permission_mode": "readonly",
+    "repeat_day": 0,
+    "task_type": "task"
+   },
+   {
+    "id": "k2",
+    "name": "Weekly review",
+    "prompt": "List what shipped this week and what slipped.",
+    "schedule": "weekly",
+    "scheduled_time": "17:00",
+    "status": "active",
+    "permission_mode": "readonly",
+    "repeat_day": 5,
+    "task_type": "task"
+   },
+   {
+    "id": "k3",
+    "name": "Nightly dependency audit",
+    "prompt": "Check for outdated or vulnerable dependencies and open an issue for anything critical.",
+    "schedule": "daily",
+    "scheduled_time": "23:00",
+    "status": "active",
+    "permission_mode": "readonly",
+    "repeat_day": 0,
+    "task_type": "task"
+   }
+  ]
+ },
+ "GET /api/notes": {
+  "notes": [
+   {
+    "id": "n1",
+    "title": "Launch checklist",
+    "note_type": "checklist",
+    "pinned": true,
+    "color": "yellow",
+    "items": [
+     {
+      "text": "Freeze release branch",
+      "done": true
+     },
+     {
+      "text": "Record demo",
+      "done": false
+     },
+     {
+      "text": "Notarise build",
+      "done": false
+     }
+    ]
+   }
+  ]
+ },
+ "GET /api/research/library": {
+  "total": 2,
+  "research": [
+   {
+    "id": "rs1",
+    "query": "Compare vector databases for 5M documents",
+    "category": "tech",
+    "source_count": 23,
+    "status": "done",
+    "completed_at": 0
+   },
+   {
+    "id": "rs2",
+    "query": "How do other tools handle agent permissions?",
+    "category": "tech",
+    "source_count": 17,
+    "status": "done",
+    "completed_at": 0
+   }
+  ]
+ },
+ "GET /api/research/active": {
+  "active": []
+ },
+ "GET /api/skills": {
+  "skills": []
+ },
+ "GET /api/tools": {
+  "tools": []
+ },
+ "GET /api/plugins": {
+  "plugins": []
+ },
+ "GET /api/mcp": {
+  "servers": [
+   {
+    "id": "mcp1",
+    "name": "joebro-memory",
+    "command": "python3",
+    "args": "memory_mcp.py",
+    "enabled": true,
+    "tools": [
+     "memory_search",
+     "memory_write"
+    ]
+   }
+  ]
+ },
+ "GET /api/inbox": {
+  "messages": [],
+  "unread": 0
+ },
+ "GET /api/push/status": {
+  "enabled": false
+ },
+ "GET /api/email/status": {
+  "configured": false,
+  "sources": []
+ },
+ "chat_reply": "Here is how I would approach it. First, look at what the three agents are touching so the work does not collide: Claude Code owns the auth middleware, Codex owns the uploader and OpenCode owns the React upgrade, so there is no overlap. I would let them finish, then review the three diffs in this order: auth first, because everything else depends on sessions, then the uploader, then the React upgrade. Want me to queue the reviews for tomorrow morning?",
+ "chat_events": [
+  {
+   "type": "tool_start",
+   "tool": "agents",
+   "command": "list running coding agents"
+  },
+  {
+   "type": "tool_output",
+   "tool": "agents",
+   "output": "3 running: Claude Code (MacBook), Codex (Pi), OpenCode (Linux box)",
+   "exit_code": 0
+  }
+ ]
+}

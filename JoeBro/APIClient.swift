@@ -17,6 +17,7 @@ final class APIClient {
     static let shared = APIClient()
 
     var baseURL: URL {
+        if DemoMode.active { return DemoMode.url }
         let raw = UserDefaults.standard.string(forKey: "serverURL") ?? "http://127.0.0.1:8765"
         return URL(string: raw) ?? URL(string: "http://127.0.0.1:8765")!
     }
@@ -36,6 +37,7 @@ final class APIClient {
         // leaving the model picker permanently empty until the cache expired.
         cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
         cfg.urlCache = nil
+        DemoMode.install(cfg)
         return URLSession(configuration: cfg)
     }()
 

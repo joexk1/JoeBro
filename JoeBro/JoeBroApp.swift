@@ -104,7 +104,7 @@ struct JoeBroApp: App {
     @State private var store = AppStore()
 
     init() {
-        LocalBackend.shared.start()
+        if !DemoMode.active { LocalBackend.shared.start() }
         _ = UpdaterManager.shared   // start Sparkle's scheduled update checks
     }
 
