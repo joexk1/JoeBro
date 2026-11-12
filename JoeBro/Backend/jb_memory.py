@@ -145,7 +145,7 @@ class MemoryMixin:
             j = len(words & rw) / len(words | rw)
             if j >= 0.6 or words <= rw or rw <= words:
                 # Same fact, possibly refreshed — keep the fuller phrasing.
-                new_text = text if len(text) >= len(r.get("text") or "") else r["text"]
+                new_text = text  # a newer correction may be shorter than the stale fact
                 self.store.exec(
                     "update memory set text=?, kind=?, topic=?, category=?, entities=?, updated_at=? where id=?",
                     (new_text, kind, topic, topic, entities or r.get("entities") or "", now, r["id"]))

@@ -38,7 +38,10 @@ DEFAULT_PORT = 8765
 BACKEND_VERSION = "1.3.0"     # the wire contract the phone checks via /api/mobile/hello
 # The reserved chat the phone agent lives in. One id, defined here, so a rename
 # never has to chase string literals through the other modules.
-PHONE_SESSION_ID = "phone"
+PHONE_SESSION_ID = os.environ.get("JOEBRO_PHONE_SESSION") or "phone"   # an older install can keep its session id
+# Device ids that mean "this backend's own machine" for a chat bound to a device
+# (see the bridge below). '' always does; JOEBRO_HOST_ID adds this host's own name.
+LOCAL_HOST_IDS = {""} | {x.strip() for x in (os.environ.get("JOEBRO_HOST_ID") or "").split(",") if x.strip()}
 
 # Deep-research worker registry. Handler is per-request, so worker bookkeeping
 # lives at module scope: _RESEARCH_STARTED is the set of ids that already have a
@@ -249,9 +252,28 @@ def atomic_write_text(path: Path, text: str):
     atomic_write_bytes(path, text.encode("utf-8"))
 
 
+def mktemp_beside(path: Path):
+    """(fd, name) for a temp file next to `path`, created the way a plain
+    open() would create it: mode 0666, trimmed by the umask or — where the
+    folder has one — its default ACL.
+
+    Not tempfile.mkstemp: that forces 0600, os.replace carries the 0600 onto
+    the real file, and in a folder with a default ACL (a file-sync server's data
+    folder, say) a 0600 create sets the ACL mask to --- . The sync server then
+    can't read anything the backend wrote, so the file opens in JoeBro and
+    nowhere else."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    while True:
+        tmp = path.parent / f"{path.name}.{os.urandom(6).hex()}.tmp"
+        try:
+            return os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666), str(tmp)
+        except FileExistsError:
+            continue
+
+
 def atomic_write_bytes(path: Path, data: bytes):
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
+    fd, tmp = mktemp_beside(path)
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
@@ -504,7 +526,7 @@ def docx_write_extra(path: Path, region: str, text: str):
         names = list(contents.keys())
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
+    fd, tmp = mktemp_beside(path)
     os.close(fd)
     try:
         with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
@@ -563,7 +585,7 @@ def docx_write_footnotes(path: Path, text: str):
         contents[rels_name] = rels.encode("utf-8")
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
+    fd, tmp = mktemp_beside(path)
     os.close(fd)
     try:
         with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
@@ -607,7 +629,7 @@ def docx_replace_in_place(path: Path, find: str, replace: str) -> bool:
         return False
     contents["word/document.xml"] = ET.tostring(root, encoding="UTF-8", xml_declaration=True)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
+    fd, tmp = mktemp_beside(path)
     os.close(fd)
     try:
         with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
@@ -647,7 +669,7 @@ def text_to_docx(path: Path, text: str):
         '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
         "</Relationships>")
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
+    fd, tmp = mktemp_beside(path)
     os.close(fd)
     try:
         with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
@@ -695,6 +717,30 @@ def apply_find_replace(text, find, replace, replace_all=False, occurrence=None, 
     return updated, f"replaced 1 occurrence (line ~{line})"
 
 
+def event_time_out(value, all_day):
+    """An event time as the API should emit it: never ambiguous.
+
+    All-day means a DATE, so it comes back as `YYYY-MM-DD` in the local calendar
+    — a stored `2026-10-01T22:00:00Z` is midnight on the 2nd in Central Europe, and
+    reporting it as the 1st is a day-out-by-one bug. A timed event comes back as
+    ISO-8601 that always carries an offset; a legacy naive string is interpreted
+    as local and stamped, rather than left for the client to guess."""
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    if "T" not in raw:
+        return raw[:10]                       # already a bare date
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return raw
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+    if all_day:
+        return dt.astimezone().strftime("%Y-%m-%d")
+    return dt.astimezone().isoformat(timespec="seconds")
+
+
 def read_doc_text(path: Path) -> str:
     """Document text for the AI — plain text for .docx, CSV for .xlsx, raw otherwise."""
     if is_docx(path):
@@ -720,6 +766,47 @@ def write_doc_text(path: Path, text: str):
         atomic_write_bytes(path, text_to_apkg(text, path.stem))
     else:
         atomic_write_text(path, text)
+
+
+# ---------------------------------------------------------------------------
+# The bridge: when a chat is bound to a folder on a *remote* device, the agent's
+# file/bash tools are forwarded to that device's bridge agent (a small HTTP service the
+# user runs on that machine and registers in the `devices` table) instead of
+# executing on the backend host. Empty host (or LOCAL_HOST_IDS) = the backend itself.
+# Bridge API: POST /v1/exec {command,cwd} ; /v1/read_file {path,max_chars} ;
+# /v1/write_file {path,content} — all behind an X-Bridge-Token header.
+
+REMOTE_ROUTED_TOOLS = {
+    "list_files", "read_file", "read_pdf", "create_document",
+    "edit_document", "suggest_document", "bash", "python",
+}
+
+
+def bridge_call(bridge_url: str, token, endpoint: str, payload: dict, timeout: int = 20):
+    """POST to a device bridge endpoint. Returns parsed JSON, or None if the
+    device is unreachable (caller surfaces that as an error).
+
+    ponytail: 20s default so file/list/read loads fail fast when the device is
+    asleep/unreachable — a long timeout here lets one dead bridge call freeze
+    the whole app (URLSession caps at 6 conns/host, so stuck calls starve
+    chat/model loads). Long-running user commands pass timeout= explicitly."""
+    url = bridge_url.rstrip("/") + endpoint
+    data = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["X-Bridge-Token"] = token
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read().decode("utf-8"))
+        except Exception:
+            return {"error": f"HTTP {e.code}"}
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return None
+
 
 
 # ---- Cloak Mode ---------------------------------------------------------------
@@ -845,7 +932,7 @@ OBSOLETE_AI_TOOLS = {
 }
 EMAIL_AI_TOOLS = {
     "list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email",
-    "bulk_email", "delete_email", "archive_email", "mark_email_read",
+    "bulk_email", "delete_email", "archive_email", "mark_email_read", "read_email_attachment", "save_email_attachment",
 }
 TRANSFER_AI_TOOLS = {"export_to_artifact", "deliver_artifact", "move_file"}
 # The phone agent's extra tools. Offered to the phone chat (and the silent runs
@@ -855,8 +942,8 @@ TRANSFER_AI_TOOLS = {"export_to_artifact", "deliver_artifact", "move_file"}
 PHONE_TOOL_NAMES = {
     "manage_plan", "remind_me", "manage_reminders", "notify_me", "manage_pulse",
     "spawn_agent", "spawn_subagent", "manage_agents", "get_location", "get_weather",
-    "push_status", "describe_image", "find_tools",
-    "muse_recall", "muse_remember", "muse_forget",
+    "push_status", "describe_image", "find_tools", "manage_autonomy",
+    "muse_recall", "muse_remember", "muse_update", "muse_forget",
     "personal_task_create", "personal_task_list", "personal_task_update",
     "personal_task_delete", "personal_task_run_now",
 } | TRANSFER_AI_TOOLS
@@ -865,18 +952,18 @@ PRODUCTION_AI_TOOLS = {
     "list_files", "read_file", "read_pdf", "read_attachment",
     "create_document", "edit_document", "suggest_document",
     "trigger_research", "manage_research", "manage_memory", "manage_tasks", "manage_skills",
-    "manage_chats", "create_event",
-    "shopping_list", "health_data", "coding_agents", "proactive_actions",
+    "manage_chats", "create_event", "manage_events",
+    "shopping_list", "health_data", "coding_agents", "proactive_actions", "desktop_use",
 } | EMAIL_AI_TOOLS | PHONE_TOOL_NAMES
 WRITE_SIDE_EFFECT_TOOLS = {
     "bash", "python",
     "create_document", "edit_document",
     "manage_memory", "manage_tasks", "manage_skills", "trigger_research", "manage_research",
-    "manage_chats", "create_event",
-    "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read",
-    "remind_me", "manage_reminders", "notify_me", "manage_pulse",
+    "manage_chats", "create_event", "manage_events", "desktop_use",
+    "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "save_email_attachment",
+    "remind_me", "manage_reminders", "notify_me", "manage_pulse", "manage_autonomy",
     "spawn_agent", "spawn_subagent", "manage_agents",
-    "muse_remember", "muse_forget",
+    "muse_remember", "muse_update", "muse_forget",
     "personal_task_create", "personal_task_update", "personal_task_delete", "personal_task_run_now",
 } | TRANSFER_AI_TOOLS
 
@@ -942,27 +1029,55 @@ FUNCTION_TOOL_SCHEMAS = [
         {"folder": {"type": "string"}, "limit": {"type": "integer"}, "query": {"type": "string"}}, []),
     _fn("read_email", "Read the full body of one email by uid.",
         {"uid": {"type": "string"}, "folder": {"type": "string"}}, ["uid"]),
+    _fn("read_email_attachment", "Read-only. List a message's attachments (filename, mime type, size), or read one attachment's content as text. Call with just `uid` to list; add `index` (or `filename`) from that list to extract text. Works for PDF, docx, xlsx (as CSV), and text/csv/markdown/json/html; other formats (images, archives, binaries) return extracted=false with a note. Long text is capped: use `offset` (or `pages` for PDFs) to continue. Does not mark the email read.",
+        {"uid": {"type": "string", "description": "email uid from list_emails/read_email"}, "folder": {"type": "string"},
+         "index": {"type": "integer", "description": "attachment index from the listing"},
+         "filename": {"type": "string", "description": "alternative to index"},
+         "pages": {"type": "string", "description": "PDF only: '3', '3-9', '12-'"},
+         "offset": {"type": "integer", "description": "character offset to continue a truncated read"}}, ["uid"]),
+    _fn("save_email_attachment", "Save the original bytes of an email attachment into the shared JoeBro artifact store. Use the MIME index from read_email/read_email_attachment. Returns artifact_id and file metadata for folder export or image/playlist-cover tools; never sends binary data to the model. Does not mark the email read or remove it.",
+        {"uid": {"type": "string"}, "index": {"type": "integer", "minimum": 0}, "folder": {"type": "string"}}, ["uid", "index"]),
     _fn("send_email", "Send an email.",
         {"to": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}}, ["to", "subject", "body"]),
     _fn("archive_email", "Archive an email by uid.", {"uid": {"type": "string"}, "folder": {"type": "string"}}, ["uid"]),
     _fn("delete_email", "Delete an email by uid.", {"uid": {"type": "string"}, "folder": {"type": "string"}}, ["uid"]),
     _fn("mark_email_read", "Mark an email read/unread.", {"uid": {"type": "string"}, "read": {"type": "boolean"}}, ["uid"]),
-    _fn("create_event", "Add an event to the user's calendar. YOU resolve the natural-language date/time into ISO-8601 datetimes using today's date given in the system prompt (e.g. 'wednesday 2-5pm' -> the next Wednesday's date with start 14:00 and end 17:00).",
+    _fn("create_event", "Add an event to the user's calendar. YOU resolve the natural-language date/time into ISO-8601 datetimes using today's date given in the system prompt (e.g. 'wednesday 2-5pm' -> the next Wednesday's date with start 14:00 and end 17:00). EVERY timed event MUST carry an explicit IANA `timezone`; the calendar is written in that zone no matter where the user's devices are. For TRAVEL (flights, trains, ferries) `timezone` is the zone of the DEPARTURE location and `start` is the departure wall-clock time there; give the ARRIVAL clock time in `end` with `end_timezone` set to the arrival location's zone (e.g. depart AMS 10:20 Europe/Amsterdam, arrive LGW 10:40 Europe/London). Never convert times to the user's current zone yourself.",
         {"summary": {"type": "string", "description": "the event title"},
          "start": {"type": "string", "description": "ISO-8601 start datetime, e.g. 2026-06-17T14:00:00"},
-         "end": {"type": "string", "description": "ISO-8601 end datetime, e.g. 2026-06-17T17:00:00"},
-         "all_day": {"type": "boolean", "description": "true for an all-day event (optional)"}}, ["summary", "start", "end"]),
-    _fn("manage_chats", "Manage and drive the user's chats — you are the orchestrator over all of them. action=list (every chat, with its mode/permission/model), search (find chats/messages containing text), read (recent history + current mode/permission/model of one chat), create (start a new chat), bind_folder (bind a chat to a folder on disk), set_mode (chat/agent), set_permission (a chat's file access: sandbox/readonly/full), set_model (change the model a chat uses), models (list the model names available to choose from), send (post a message into a chat and get that chat's agent reply — this is how you DELEGATE coding/file work). Identify a chat with `chat` = its id or name.",
-        {"action": {"type": "string", "enum": ["list", "search", "read", "create", "bind_folder", "set_mode", "set_permission", "set_model", "models", "send"]},
+         "end": {"type": "string", "description": "ISO-8601 end datetime, e.g. 2026-06-17T17:00:00 (wall clock in end_timezone, or timezone if that is omitted)"},
+         "timezone": {"type": "string", "description": "REQUIRED IANA zone id of the event's start (for travel: the DEPARTURE location), e.g. Europe/Amsterdam, Europe/London, America/New_York. Not an abbreviation or offset."},
+         "end_timezone": {"type": "string", "description": "IANA zone id of the end time when it differs from start (travel: the ARRIVAL location's zone). Optional."},
+         "location": {"type": "string", "description": "optional"}, "description": {"type": "string", "description": "optional"},
+         "all_day": {"type": "boolean", "description": "true for an all-day event (optional)"}}, ["summary", "start", "end", "timezone"]),
+    _fn("manage_events", "List, MOVE, edit or delete events ALREADY on the user's calendar — including in bulk. Always `list` first to see what a filter matches, then act on the same filter. Select events with `ids`, a `query` substring of the title, and/or a `from`/`to` date range (all filters combine); `all: true` is required to mean every event. action=shift moves every matched event by an offset (days/hours/minutes, negative moves earlier) — this is how you fix a batch of events that are at the wrong time. action=set changes fields; absolute start/end are only allowed when exactly one event matches.",
+        {"action": {"type": "string", "enum": ["list", "shift", "set", "delete"], "description": "default list"},
+         "ids": {"type": "string", "description": "comma-separated event uids from a previous list"},
+         "query": {"type": "string", "description": "case-insensitive substring of the event title"},
+         "from": {"type": "string", "description": "only events starting on/after this date, YYYY-MM-DD"},
+         "to": {"type": "string", "description": "only events starting on/before this date, YYYY-MM-DD"},
+         "all": {"type": "boolean", "description": "match EVERY event — required when no other filter is given"},
+         "timezone": {"type": "string", "description": "set with absolute start/end: IANA zone id the new time is expressed in (travel: the departure location's zone). Required if start/end have no UTC offset."},
+         "days": {"type": "integer", "description": "shift: whole days to move by (negative = earlier)"},
+         "hours": {"type": "integer", "description": "shift: hours to move by (negative = earlier)"},
+         "minutes": {"type": "integer", "description": "shift: minutes to move by (negative = earlier)"},
+         "summary": {"type": "string", "description": "set: new title"},
+         "start": {"type": "string", "description": "set: ISO-8601 start, single matched event only"},
+         "end": {"type": "string", "description": "set: ISO-8601 end, single matched event only"},
+         "location": {"type": "string", "description": "set: new location"},
+         "description": {"type": "string", "description": "set: new notes"},
+         "all_day": {"type": "boolean", "description": "set: make the event all-day (or not)"}}, ["action"]),
+    _fn("manage_chats", "Find chats and connected folders: list (folder=group name/path, folder=? lists folders; query=name; limit/offset), search, read history. folder scopes chat lookup. list_files/read_file read a path inside the target chat connected folder, without writes or another model. create/bind_folder/set_mode/set_permission/set_model/models/send manage or delegate. Identify chat by id or name; use list to resolve ambiguity.",
+        {"action": {"type": "string", "enum": ["list", "search", "read", "list_files", "read_file", "create", "bind_folder", "set_mode", "set_permission", "set_model", "models", "send"]},
          "chat": {"type": "string", "description": "target chat id or name (read/send/set_mode/set_permission/set_model/bind_folder)"},
          "query": {"type": "string", "description": "text to search for across chats (search)"},
          "message": {"type": "string", "description": "message to post into the chat (send)"},
          "mode": {"type": "string", "enum": ["chat", "agent"], "description": "new mode (set_mode); also the starting mode for create"},
          "permission": {"type": "string", "enum": ["sandbox", "readonly", "full"], "description": "file-access level (set_permission); also for create"},
          "model": {"type": "string", "description": "model name to switch the chat to (set_model) — use the `models` action first to see valid names"},
-         "folder": {"type": "string", "description": "absolute folder path to bind (bind_folder); also for create"},
+         "folder": {"type": "string", "description": "folder group name or bound path to scope list/search/chat lookup; absolute path for bind/create"},
          "name": {"type": "string", "description": "name for the new chat (create)"},
-         "limit": {"type": "integer"}}, ["action"]),
+         "limit": {"type": "integer"}, "offset": {"type": "integer"}, "path": {"type": "string", "description": "relative path for list_files/read_file"}, "lines": {"type": "string", "description": "read_file line range"}}, ["action"]),
     _fn("bash", "Run a shell command (only with terminal access + Full Access). NOT for email or web.", {"command": {"type": "string"}}, ["command"]),
     _fn("python", "Run a Python snippet (only with terminal access + Full Access).", {"code": {"type": "string"}}, ["code"]),
 ]
@@ -979,11 +1094,12 @@ _ARTIFACT_OPTS = {"filename": {"type": "string", "description": "optional destin
                   "subject": {"type": "string", "description": "email subject"},
                   "body": {"type": "string", "description": "email body text"},
                   "confirm_token": {"type": "string", "description": "from the needs_confirmation preview, only after the user agreed"}}
-_SCHED = {"type": "string", "enum": ["daily", "weekly", "monthly"]}
+_SCHED = {"type": "string", "enum": ["once", "daily", "weekly", "monthly"]}
 _PTASK_FIELDS = {"title": {"type": "string"},
                  "prompt": {"type": "string", "description": "what the background agent should check/do; its final reply is the notification"},
                  "schedule": _SCHED,
                  "time": {"type": "string", "description": "HH:MM local"},
+                 "date": {"type": "string", "description": "YYYY-MM-DD local date, required for schedule=once"},
                  "weekday": {"type": "integer", "description": "weekly only: 0=Mon ... 6=Sun"},
                  "enabled": {"type": "boolean"}}
 PHONE_TOOL_SCHEMAS = [
@@ -1005,6 +1121,15 @@ PHONE_TOOL_SCHEMAS = [
          "hours": {"type": "integer", "description": "hourly forecast length, default 6, max 48"},
          "days": {"type": "integer", "description": "daily forecast length, 0-7, default 0"}}, []),
     _fn("push_status", "Check mobile push configuration and registered device counts without sending anything. Reports setup blockers; never exposes device tokens.", {}, []),
+    _fn("manage_autonomy", "Configure or run the user's autonomous routines: small scheduled checks that run on their own with no model call and file a short report in the Inbox. `list` shows which routines exist on this install and their settings. Notifications default off; use notify=true only when requested.",
+        {"action": {"type": "string", "enum": ["list", "set", "enable", "pause", "run"]},
+         "routine": {"type": "string", "description": "routine id from `list`"},
+         "settings": {"type": "object", "properties": {
+             "enabled": {"type": "boolean"}, "notify": {"type": "boolean"},
+             "every_days": {"type": "integer", "minimum": 1, "maximum": 30},
+             "at": {"type": "string"}, "timezone": {"type": "string"}, "quiet_hours": {"type": "string"},
+             "topics": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
+             "channel_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 3}}}}, ["action"]),
     _fn("notify_me", "Send the user a requested phone notification now. auto uses push when configured, otherwise Telegram. mobile requires push; inbox only saves a message. Check the delivery result: APNs acceptance does not guarantee display on the device.",
         {"message": {"type": "string", "description": "the message, written to be read on a phone"},
          "title": {"type": "string", "description": "optional short heading"},
@@ -1040,6 +1165,8 @@ PHONE_TOOL_SCHEMAS = [
     _fn("muse_remember", "Save ONE durable fact about the user (a preference, person, project, routine) as a short line in a memory file. Not one-off chatter, not secrets. Near-duplicates are skipped.",
         {"file": {"type": "string", "description": "one of: about-me, preferences, people, projects, routines (or an existing file name)"},
          "fact": {"type": "string", "description": "one short self-contained line"}}, ["file", "fact"]),
+    _fn("muse_update", "Correct or replace ONE existing personal memory. Recall first, then pass the file, an exact matching phrase or line number, and the replacement fact. Use for changed preferences, updated plans and corrections, rather than appending a contradiction.",
+        {"file": {"type": "string"}, "match": {"type": "string"}, "fact": {"type": "string"}}, ["file", "match", "fact"]),
     _fn("muse_forget", "DELETE saved memory. Use whenever the user says forget/delete/remove/clear. `match` = a few words of the line (fuzzy), a line number from muse_recall (\"3\", \"2-4\"), or \"*\" to clear a whole file (never about-me). Omit `file` to search every file by words. Returns the exact lines removed; report them.",
         {"file": {"type": "string", "description": "memory file; optional when matching by words"},
          "match": {"type": "string", "description": "words, line number(s), or * for the whole file"}}, ["match"]),
@@ -1292,6 +1419,7 @@ def mcp_discover(command, args, timeout=MCP_CONNECT_TIMEOUT):
             "name": str(t.get("name")),
             "description": str(t.get("description") or ""),
             "inputSchema": t.get("inputSchema") if isinstance(t.get("inputSchema"), dict) else {"type": "object", "properties": {}},
+            "annotations": t.get("annotations") if isinstance(t.get("annotations"), dict) else {},
         })
     return out
 
@@ -1314,6 +1442,14 @@ def mcp_call_tool(command, args, tool_name, arguments, timeout=MCP_CALL_TIMEOUT)
         text = json.dumps(result, ensure_ascii=False)[:4000]
     is_error = bool(result.get("isError"))
     return text, is_error
+
+
+class _ClosingConnection(sqlite3.Connection):
+    def __exit__(self, *exc):
+        try:
+            return super().__exit__(*exc)
+        finally:
+            self.close()
 
 
 class Store:
@@ -1463,6 +1599,15 @@ class Store:
                     created_at text not null,
                     updated_at text not null
                 );
+                create table if not exists devices (
+                    id text primary key,
+                    name text not null,
+                    bridge_url text default '',
+                    token text default '',
+                    is_self integer default 0,
+                    created_at text not null,
+                    last_seen text default ''
+                );
                 create table if not exists mcp_servers (
                     id text primary key,
                     name text not null,
@@ -1601,6 +1746,16 @@ class Store:
             # without a crash.
             try:
                 db.execute("alter table sessions add column folder text")
+            except sqlite3.OperationalError:
+                pass
+            # A session can be bound to a remote device's folder (the bridge):
+            # host_id '' = run tools on this host, else forward to that device.
+            try:
+                db.execute("alter table sessions add column host_id text default ''")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                db.execute("alter table tasks add column scheduled_date text default ''")
             except sqlite3.OperationalError:
                 pass
             # sort_order: user-defined sidebar order for drag-to-reorder. Backfilled
@@ -1743,7 +1898,8 @@ class Store:
         db.commit()
 
     def db(self):
-        con = sqlite3.connect(self.db_path)
+        # `with self.db() as db` must CLOSE the connection (stock sqlite3 only commits).
+        con = sqlite3.connect(self.db_path, factory=_ClosingConnection)
         con.row_factory = sqlite3.Row
         return con
 
@@ -1821,6 +1977,7 @@ __all__ = [
     "atomic_write_text", "atomic_write_bytes",
     "backup_existing",
     "cloak_messages", "cloak_text", "CLOAK_PATTERNS",
+    "event_time_out", "mktemp_beside", "bridge_call", "REMOTE_ROUTED_TOOLS", "LOCAL_HOST_IDS",
     "base64",
     "datetime",
     "docx_extras",

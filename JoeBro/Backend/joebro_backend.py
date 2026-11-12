@@ -30,6 +30,8 @@ import jb_ext
 import gzip
 import hmac
 
+jb_ext.load()      # private add-ons, if any: after the core modules, before Handler
+
 
 # Prefs that must never leave the process in clear — see the /api/prefs handler.
 SECRET_PREFS = {"bot_token"}

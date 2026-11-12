@@ -22,7 +22,7 @@ process, which is what the rest of this backend already is.
 from jb_core import *  # noqa: F401,F403
 
 # Order is the order both Agents tabs render their subdivisions in.
-KINDS = ("chat", "research", "task", "briefing", "subagent")   # "briefing" is reserved; nothing opens one yet
+KINDS = ("chat", "research", "task", "briefing", "subagent")
 LIVE = ("queued", "running")
 
 # Cancellation is cooperative: the flag is set here, the worker notices. Both
@@ -31,6 +31,7 @@ LIVE = ("queued", "running")
 _CANCEL_RUNS = set()        # agent-run ids
 _CANCEL_SESSIONS = set()    # session ids (the chat Stop button)
 _CANCEL_GUARD = threading.Lock()
+_ACTIVE_MODEL_SOCKETS = {}  # token -> ((run_id, session_id), socket) of a live model stream
 
 _LEGACY_STATUS = {"error": "failed", "stopped": "cancelled", "completed": "done"}
 
@@ -41,6 +42,33 @@ def request_cancel(run_id="", session_id=""):
             _CANCEL_RUNS.add(run_id)
         if session_id:
             _CANCEL_SESSIONS.add(session_id)
+        sockets = [sock for (rid, sid), sock in _ACTIVE_MODEL_SOCKETS.values()
+                   if (run_id and rid == run_id) or (session_id and sid == session_id)]
+    # Closing the transport wakes a blocked SSE read immediately. Never wait
+    # for an HTTPResponse reader lock on the Stop request thread.
+    import socket
+    for sock in sockets:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+
+def register_model_socket(token, response, run_id, session_id):
+    """Remember a live model stream's socket so Stop can close it at once."""
+    try:
+        sock = response.fp.raw._sock
+    except AttributeError:
+        return
+    with _CANCEL_GUARD:
+        _ACTIVE_MODEL_SOCKETS[token] = ((run_id, session_id), sock)
+    if is_cancelled(run_id, session_id):
+        request_cancel(run_id, session_id)
+
+
+def unregister_model_socket(token):
+    with _CANCEL_GUARD:
+        _ACTIVE_MODEL_SOCKETS.pop(token, None)
 
 
 def clear_cancel(run_id="", session_id=""):
@@ -191,9 +219,8 @@ class AgentsMixin:
     def agent_cancel(self, aid):
         """Ask a run to stop, and say honestly what that will actually do.
 
-        Research checks a flag between phases; chat and task runs check between
-        model rounds. Neither aborts an HTTP call already in flight, so a stop
-        lands within one step rather than instantly. A queued run never starts."""
+        Research checks a flag between phases; chat and task runs close a live
+        model stream and check before each tool. A queued run never starts."""
         row = self.store.one("select * from agents where id=?", (aid,))
         if not row:
             return {"ok": False, "detail": "no such agent"}, 404
@@ -218,11 +245,11 @@ class AgentsMixin:
             return {"ok": True, "id": aid, "status": "cancelled", "cancelled": True,
                     "detail": "was queued, never started"}, 200
         note = {"research": "stops at the next phase boundary",
-                "task": "stops after the current model round",
-                "chat": "stops after the current model round",
-                "subagent": "stops after the current model round"}.get(kind, "stops soon")
+                "task": "interrupts the model stream; a tool already executing may finish",
+                "chat": "interrupts the model stream; a tool already executing may finish",
+                "subagent": "interrupts the model stream; a tool already executing may finish"}.get(kind, "stops soon")
         return {"ok": True, "id": aid, "status": "running", "cancelled": True,
-                "detail": f"cancel requested — {note}; an in-flight model call finishes first"}, 200
+                "detail": f"cancel requested — {note}"}, 200
 
     def delete_session_cascade(self, sid):
         """Delete a chat session AND its agent records (idempotent).
@@ -324,6 +351,7 @@ class AgentsMixin:
             "title": r.get("title") or "",
             "status": status,
             "live": status in LIVE,
+            "scope": "personal" if r.get("session_id") == PHONE_SESSION_ID or str(r.get("ref_id") or "").startswith("ptask_") else "workspace",
             "progress": r.get("progress") or "",
             "session_id": r.get("session_id") or "",
             "model": r.get("model") or "",
@@ -423,6 +451,10 @@ class AgentsMixin:
         old process, so mark it interrupted rather than leaving a permanent
         spinner in the UI. And adopt research rows that predate the registry so
         the list isn't empty on day one."""
+        try:
+            self.prune_briefing_rows()        # one briefing, never a pile
+        except Exception:
+            pass
         adopted = 0
         for r in self.store.rows("select * from research order by datetime(created_at) desc limit 100"):
             if self.store.one("select id from agents where kind='research' and ref_id=?", (r["id"],)):

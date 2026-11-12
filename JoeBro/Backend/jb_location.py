@@ -170,3 +170,37 @@ class LocationMixin:
         out = summarize(fetch_weather(lat, lon, hours, days), hours, days)
         out.update(ok=True, place=name)
         return json.dumps(out, ensure_ascii=False)
+
+    def briefing_weather_facts(self):
+        loc = load_location() if self.location_enabled() else None
+        if not loc:
+            return "WEATHER: no location reported."
+        d = fetch_weather(loc["lat"], loc["lon"], 12, 1)
+        s = summarize(d, 0, 1)
+        t = (s.get("daily") or [{}])[0]
+        return "WEATHER in %s: now %s°C %s; today %s to %s°C, %s, rain chance %s%%." % (
+            loc.get("place"), s["now"]["temp_c"], s["now"]["condition"], t.get("min_c"), t.get("max_c"), t.get("condition"), t.get("rain_prob"))
+
+    def rain_alert_check(self, now=None):
+        """Off by default (pref rain_alert.enabled). One push per local day."""
+        cfg = self.pref("rain_alert") or {}
+        if not cfg.get("enabled") or not self.location_enabled():
+            return None
+        now = now or time.time()
+        if now - cfg.get("checked", 0) < 600:
+            return None
+        day = datetime.fromtimestamp(now).strftime("%Y-%m-%d")
+        cfg["checked"] = now
+        loc = load_location()
+        if cfg.get("last_day") != day and loc:
+            try:
+                at = rain_soon(fetch_weather(loc["lat"], loc["lon"], 4, 0), 2)
+            except Exception:
+                at = None
+            if at:
+                cfg["last_day"] = day
+                self.set_pref("rain_alert", cfg)
+                return self.notify("Rain starting around %s in %s." % (at, loc.get("place") or "your area"),
+                                   title="Rain soon", kind="weather", source="rain_alert")
+        self.set_pref("rain_alert", cfg)
+        return None

@@ -1,15 +1,60 @@
 """Model discovery, endpoints, API tools, plugins, MCP servers, prefs."""
 from jb_core import *  # noqa: F401,F403
+import jb_ext
 
 
 class ModelsMixin:
 
     def pref(self, key):
         row = self.store.one("select value from prefs where key=?", (key,))
-        return self.loads(row["value"]) if row else None
+        if row:
+            return self.loads(row["value"])
+        # An extension may supply the default for a pref the user never set.
+        return jb_ext.first("pref_default", key)
 
     def set_pref(self, key, value):
         self.store.exec("insert or replace into prefs(key,value) values(?,?)", (key, json.dumps(value)))
+
+    # ---- composer settings synced across every client --------------------
+    # One small record so every client opens with the same composer: agent vs
+    # chat, think vs fast, and which tools are on. PUT/PATCH merge — a client
+    # only sends what it changed, so two devices toggling different switches
+    # never clobber each other. Stored as one pref row; no schema change.
+    CLIENT_SETTINGS_DEFAULTS = {"mode": "chat", "thinking": True, "web_search": True,
+                                "terminal": False, "permission_mode": "sandbox"}
+
+    def client_settings(self):
+        cur = self.pref("client_settings")
+        out = dict(self.CLIENT_SETTINGS_DEFAULTS)
+        if isinstance(cur, dict):
+            out.update({k: cur[k] for k in list(out) + ["updated_at", "updated_by"] if k in cur})
+        out.setdefault("updated_at", "")
+        out.setdefault("updated_by", "")
+        return out
+
+    def set_client_settings(self, body):
+        body = body if isinstance(body, dict) else {}
+        body = body.get("settings") if isinstance(body.get("settings"), dict) else body
+
+        def as_bool(v):
+            return v if isinstance(v, bool) else str(v).strip().lower() in ("1", "true", "yes", "on")
+        cur = self.client_settings()
+        changed = False
+        if "mode" in body and str(body["mode"]).lower() in ("chat", "agent"):
+            cur["mode"] = str(body["mode"]).lower()
+            changed = True
+        for k in ("thinking", "web_search", "terminal"):
+            if k in body:
+                cur[k] = as_bool(body[k])
+                changed = True
+        if "permission_mode" in body and str(body["permission_mode"]).lower() in ("sandbox", "readonly", "full"):
+            cur["permission_mode"] = str(body["permission_mode"]).lower()
+            changed = True
+        if changed:
+            cur["updated_at"] = now_iso()
+            cur["updated_by"] = str(body.get("client") or "")[:40]
+            self.set_pref("client_settings", cur)
+        return cur
 
     def _models_sig(self):
         """Cheap (DB-only) fingerprint of the endpoint config + hidden-model prefs.
@@ -138,6 +183,51 @@ class ModelsMixin:
         return [{"id": mid, "display": mid, "is_hidden": mid in hidden}
                 for mid in self._fetch_models(ep["base_url"], ep.get("api_key") or "")]
 
+    def endpoint_config_rows(self, q=None):
+        include_key = str((q or {}).get("include_key") or (q or {}).get("include_keys") or "").lower() in ("1", "true", "yes")
+        rows = self.store.rows("select * from endpoints order by created_at")
+        return [self.endpoint_config_json(r, include_key=include_key) for r in rows]
+
+    @staticmethod
+    def endpoint_config_json(r, include_key=False):
+        out = {
+            "id": r["id"],
+            "name": r.get("name") or "Local endpoint",
+            "base_url": r.get("base_url") or "",
+            "url": r.get("base_url") or "",
+            "model_type": "local",
+            "is_enabled": bool(r.get("is_enabled")),
+            "enabled": bool(r.get("is_enabled")),
+            "has_api_key": bool(r.get("api_key")),
+            "created_at": r.get("created_at"),
+        }
+        if include_key:
+            out["api_key"] = r.get("api_key") or ""
+        return out
+
+    def upsert_endpoint(self, body, endpoint_id=None):
+        ep_id = endpoint_id or body.get("id") or body.get("endpoint_id") or "ep_" + os.urandom(5).hex()
+        existing = self.store.one("select * from endpoints where id=?", (ep_id,))
+        if not existing:
+            self.store.exec(
+                "insert into endpoints(id,name,base_url,api_key,is_enabled,created_at) values(?,?,?,?,?,?)",
+                (ep_id, body.get("name") or "Local endpoint", body.get("base_url") or body.get("url") or "",
+                 body.get("api_key") or "", 1 if self.bool_body(body, "is_enabled", self.bool_body(body, "enabled", True)) else 0,
+                 now_iso()),
+            )
+        else:
+            enabled = self.bool_body(body, "is_enabled", self.bool_body(body, "enabled", bool(existing.get("is_enabled"))))
+            self.store.exec(
+                "update endpoints set name=?, base_url=?, api_key=?, is_enabled=? where id=?",
+                (body.get("name") or existing.get("name") or "Local endpoint",
+                 body.get("base_url") or body.get("url") or existing.get("base_url") or "",
+                 body.get("api_key") if "api_key" in body else existing.get("api_key") or "",
+                 1 if enabled else 0,
+                 ep_id),
+            )
+        row = self.store.one("select * from endpoints where id=?", (ep_id,))
+        return {"ok": True, "id": ep_id, "endpoint": self.endpoint_config_json(row, include_key=True)}
+
     def upsert_api_tool(self, body, tool_id=None):
         """Create/update a custom API tool. Sanitizes the user's name into a
         collision-free func_name (kept stable across edits unless the name
@@ -254,6 +344,20 @@ class ModelsMixin:
             "updated_at": r.get("updated_at"),
         }
 
+    _MCP_HIDDEN_ARGS = "[Saved arguments hidden — enter new arguments to replace]"
+
+    @classmethod
+    def _mcp_public_args(cls, args):
+        """Never send MCP launch arguments containing credentials to clients.
+
+        Existing Mac/iOS editors round-trip `args`, so use a stable sentinel that
+        an unchanged edit can submit without overwriting the stored value.
+        """
+        args = args or ""
+        if re.search(r"(?i)\b(bearer|authorization|api[_-]?key|access[_-]?token|client[_-]?secret|password|secret)\b", args):
+            return cls._MCP_HIDDEN_ARGS
+        return args
+
     def upsert_mcp_server(self, body, server_id=None):
         """Create or update an MCP server. When the (resulting) server is enabled,
         run discovery (spawn -> initialize -> tools/list -> kill, hard timeout) and
@@ -268,8 +372,10 @@ class ModelsMixin:
             command = (existing or {}).get("command") or ""
         command = command.strip()
         args = body.get("args")
-        if args is None:
+        if args is None or (existing and args == self._MCP_HIDDEN_ARGS):
             args = (existing or {}).get("args") or ""
+        elif args == self._MCP_HIDDEN_ARGS:
+            args = ""
         pmode = (body.get("permission_mode") or (existing or {}).get("permission_mode") or "sandbox").strip() or "sandbox"
         if pmode not in ("sandbox", "readonly", "full"):
             pmode = "sandbox"
@@ -310,21 +416,25 @@ class ModelsMixin:
                 (sid, name, command, args, enabled, pmode, tools_json, error, now, now))
         return {"ok": True, "server": self.mcp_server_json(self.store.one("select * from mcp_servers where id=?", (sid,)))}
 
-    @staticmethod
-    def mcp_server_json(r):
+    @classmethod
+    def mcp_server_json(cls, r):
         try:
             tools = json.loads(r.get("tools_json") or "[]")
         except Exception:
             tools = []
+        for extra in jb_ext.call("mcp_extra_tools", r):     # tools an extension adds to this server
+            tools = list(tools) + [{"name": t.get("name")} for t in extra if isinstance(t, dict)]
+        args = r.get("args") or ""
+        private_args = cls._mcp_public_args(args) == cls._MCP_HIDDEN_ARGS
         return {
             "id": r["id"],
             "name": r.get("name") or "MCP Server",
             "command": r.get("command") or "",
-            "args": r.get("args") or "",
+            "args": cls._mcp_public_args(args),
             "enabled": bool(r.get("enabled")),
             "permission_mode": r.get("permission_mode") or "sandbox",
             "tools": [t.get("name") for t in tools if isinstance(t, dict) and t.get("name")],
-            "error": r.get("error") or "",
+            "error": ("Connection or discovery failed; check server logs." if private_args and r.get("error") else (r.get("error") or "")),
             "created_at": r.get("created_at"),
             "updated_at": r.get("updated_at"),
         }

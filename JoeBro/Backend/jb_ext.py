@@ -97,7 +97,16 @@ def names():
     return [m.__name__ for m in _MODULES]
 
 
+_LOADED = []
+
+
 def load(directory=None):
+    """Load the extension folder, once. Called by joebro_backend after every core
+    module is imported (and before Handler is built), so an extension can import
+    any jb_* module. Importing jb_ext itself has no side effects."""
+    if _LOADED:
+        return
+    _LOADED.append(True)
     d = directory or os.environ.get("JOEBRO_EXT_DIR") or "~/.joebro-personal/ext"
     root = Path(os.path.expanduser(d))
     if not root.is_dir():
@@ -110,14 +119,13 @@ def load(directory=None):
         try:
             spec = importlib.util.spec_from_file_location("jbext_" + f.stem, f)
             mod = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = mod
             spec.loader.exec_module(mod)
             if hasattr(mod, "setup"):
                 mod.setup(sys.modules[__name__])
             _MODULES.append(mod)
         except Exception:
+            sys.modules.pop("jbext_" + f.stem, None)
             _log("could not load %s:\n%s" % (f.name, traceback.format_exc()))
     if _MODULES:
         _log("loaded: " + ", ".join(names()))
-
-
-load()

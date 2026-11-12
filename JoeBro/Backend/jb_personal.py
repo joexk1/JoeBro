@@ -30,12 +30,15 @@ class PersonalMixin:
     # opened it, always runs as an agent + orchestrator, and always follows the
     # app's default model. Clients cannot rename, re-model or delete it.
 
+    def phone_agent_name(self):
+        return (self.pref("phone_agent_name") or "JoeBro").strip()[:40] or "JoeBro"
+
     def phone_payload(self, create=False):
         """The phone agent's profile. A GET never creates it; the POST does."""
         sid = PHONE_SESSION_ID
         model = self.pref("default_model") or ""
         endpoint_id = self.pref("default_endpoint_id") or ""
-        name = (self.pref("phone_agent_name") or "JoeBro").strip()[:40] or "JoeBro"
+        name = self.phone_agent_name()
         pmode = "full" if _on(self.pref("mobile_allow_full")) else "sandbox"
         if create:
             self.store.exec(
@@ -51,6 +54,8 @@ class PersonalMixin:
                 (name, model, endpoint_id, pmode, sid))
         session = self.store.one("select * from sessions where id=?", (sid,))
         soul = self.pref("phone_soul")
+        if not isinstance(soul, str):
+            soul = self.pref("joebro_soul")      # the pref's name before 1.3
         visible = self.session_json(session) if session else None
         if visible:
             visible.update({"name": name, "model": model, "mode": "agent", "archived": False})

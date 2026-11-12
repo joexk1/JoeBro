@@ -2,29 +2,39 @@
 
 Same table, same scheduler (_task_scheduler), same runner (execute_task), same
 registry rows as every other task. What differs is only:
-  * the phone agent (session `phone`) is the only chat with tools for them
-    (personal_task_*), and the REST/agents/chat lists hide them unless asked;
-  * a run is silent: its final reply is a notification, or the word NOTHING;
-  * a non-empty, changed (sha256) reply is appended to the phone chat as a
-    short assistant notice and pushed through the normal notify() path.
+  * the phone agent (session PHONE_SESSION_ID) is the only chat with tools for
+    them (personal_task_*), and the REST/agents/chat lists hide them unless asked;
+  * a run is silent: its final reply is a message for the user, or the word NOTHING;
+  * a non-empty, changed (sha256) reply is appended to the phone chat as an
+    assistant notice and pushed through the normal notify() path.
 
-Nothing is seeded. A user gets a task only by making one, or by tapping a
-"Starter task" button, which creates ONE ordinary task from STARTERS below.
+Nothing is seeded by the app itself. A user gets a task only by making one, or
+by tapping a "Starter task" button, which creates ONE ordinary task from STARTERS
+below. An extension may seed its own once (hook `ptask_seeds`) and may run a
+task without a model (hook `ptask_run`).
+
+A task whose prompt has `WATCH: <url>` lines is a page watch: no model, it
+replies only when a page's text changed since the last run.
 """
+import difflib
 import hashlib
 import traceback
 
 from jb_core import *  # noqa: F401,F403
+import jb_ext
 
 PTASK_PREFIX = "ptask_"
 _NOTHING = re.compile(r"^\W*(nothing|no update|nothing to report)\b", re.I)
 
 RUN_SUFFIX = (
-    "\n\n---\nYou are running silently in the background; nobody is reading this turn. Your final reply is "
-    "posted in the user's chat AND sent word for word as the phone notification, so write ONLY that "
-    "message: plain text, under 400 characters, no preamble, no sign-off. You choose the wording. Optionally "
-    "start with a line 'TITLE: <short heading>' to set the notification heading (default: the task title). If there is nothing worth reporting right now, reply "
-    "with exactly: NOTHING. Do not call notify_me yourself.")
+    "\n\n---\nThis is a user-requested personal background task. Do the work using real tools, "
+    "then write a COMPLETE useful message for the user's personal chat. This is not a notification-sized "
+    "output: include everything important and report unavailable sources honestly. For a morning briefing, "
+    "cover the user's requested sources in a concise readable briefing, not a fragment. "
+    "Never include credentials or passwords from source material. You may start with TITLE: <heading>. "
+    "Only when there is genuinely no new information, reply exactly NOTHING. Do not call notify_me; "
+    "the completed chat message gets a short lock-screen preview automatically.")
+
 
 # id -> (title, prompt, schedule, time). Written to be safe on a fresh install:
 # every source is optional and a missing one is skipped without comment.
@@ -52,6 +62,23 @@ class PersonalTasksMixin:
     PTASK_TOOL_NAMES = ("personal_task_create", "personal_task_list", "personal_task_update",
                         "personal_task_delete", "personal_task_run_now")
 
+    # ---- seed ------------------------------------------------------------
+
+    def ptask_seed(self):
+        """Seed an extension's own tasks, once (pref flag, so deleted seeds stay
+        deleted). Hook `ptask_seeds` returns a list of
+        (id, title, prompt, schedule, time, weekday, status). Core seeds nothing."""
+        seeds = [s for group in jb_ext.call("ptask_seeds") for s in group]
+        if not seeds or self.store.one("select 1 from prefs where key='seeded_ptasks_v1'"):
+            return 0
+        now = now_iso()
+        for tid, title, prompt, sched, t, wd, status in seeds:
+            self.store.exec(
+                "insert or ignore into tasks(id,title,prompt,schedule,scheduled_time,status,repeat_day,scope,created_at,updated_at)"
+                " values(?,?,?,?,?,?,?,'personal',?,?)", (tid, title, prompt, sched, t, status, wd, now, now))
+        self.store.exec("insert or replace into prefs(key,value) values('seeded_ptasks_v1', ?)", (json.dumps(True),))
+        return len(seeds)
+
     # ---- helpers ---------------------------------------------------------
 
     def ptask_is_personal(self, tid):
@@ -61,7 +88,13 @@ class PersonalTasksMixin:
     def tasks_for_scope(self, scope):
         scope = "personal" if str(scope or "").lower() == "personal" else "general"
         rows = self.store.rows("select * from tasks where coalesce(scope,'general')=? order by datetime(created_at) desc", (scope,))
-        return [self.task_json(r) for r in rows]
+        out = []
+        for row in rows:
+            item = self.task_json(row)
+            latest = self.store.one("SELECT status,error,finished_at,substr(result,1,1500) result FROM agents WHERE ref_id=? AND kind='task' ORDER BY created_at DESC LIMIT 1", (row['id'],))
+            if latest: item["last_execution"] = latest
+            out.append(item)
+        return out
 
     def ptask_starter(self, starter_id):
         """Create ONE personal task from a starter, only when the user asks for it
@@ -72,6 +105,60 @@ class PersonalTasksMixin:
         title, prompt, schedule, at = spec
         return self.upsert_task({"title": title, "prompt": prompt, "schedule": schedule,
                                  "scheduled_time": at, "scope": "personal"})
+
+    # ---- deterministic page watch (no model) ----------------------------------
+
+    _WATCH_RE = re.compile(r"(?m)^WATCH:\s*(https?://\S+)")
+    _WATCH_HOT = re.compile(r"2027|2026/27|2027/28|fee|deadline|clos|open|apply|application", re.I)
+
+    def ptask_watch(self, row):
+        """Tasks whose prompt has `WATCH: <url>` lines: fetch each page (browser
+        headers, Jina fallback), keep its text + sha256 in prefs, and reply only
+        when a page's text changed since the last run (first run = silent
+        baseline). All pages unreadable -> one 'check failed' reply."""
+        urls = self._WATCH_RE.findall(row.get("prompt") or "")
+        key = "watch_" + row["id"]
+        saved = self.pref(key) or {}
+        out, failed, changed = [], [], []
+        for url in urls:
+            try:
+                text = "\n".join(l for l in (re.sub(r"\s+", " ", x).strip() for x in self._reach_read(url).splitlines()) if l)
+                if len(text) < 300:
+                    raise ValueError("too little text")
+            except Exception as exc:
+                failed.append(f"{url} ({str(exc)[:60]})")
+                continue
+            h = hashlib.sha256(text.encode()).hexdigest()
+            old = saved.get(url)
+            saved[url] = {"hash": h, "text": text[:200000], "at": now_iso()}
+            if old and old.get("hash") != h:
+                a, b = (old.get("text") or "").splitlines(), text.splitlines()
+                add = [l[2:] for l in difflib.ndiff(a, b) if l.startswith("+ ")]
+                rem = [l[2:] for l in difflib.ndiff(a, b) if l.startswith("- ")]
+                add.sort(key=lambda l: not self._WATCH_HOT.search(l))
+                if add or rem:
+                  changed.append((url, add[:3], len(add), len(rem)))
+        self.set_pref(key, saved)
+        if urls and len(failed) == len(urls):
+            return "TITLE: Page watch - check failed\nCould not read any watched page: " + "; ".join(failed)[:350]
+        for url, add, na, nr in changed:
+            out.append(f"{urllib.parse.urlparse(url).path.strip('/') or url}: +{na}/-{nr} lines. " + " | ".join(l[:110] for l in add))
+        if not out:
+            return "NOTHING"
+        return "TITLE: " + (row.get("title") or "Page watch")[:60] + " - changed\n" + "\n".join(out)[:500]
+
+    def ptask_deterministic(self, row):
+        """A reply for a task that needs no model, or None to run it as an agent.
+        Page watches are built in; an extension can claim others (hook `ptask_run`,
+        fn(handler, row) -> reply text or None)."""
+        if (row.get("scope") or "general") != "personal":
+            return None
+        reply = jb_ext.first("ptask_run", self, row)
+        if reply is not None:
+            return reply
+        if self._WATCH_RE.search(row.get("prompt") or ""):
+            return self.ptask_watch(row)
+        return None
 
     # ---- the run's outcome -----------------------------------------------
 
@@ -85,21 +172,21 @@ class PersonalTasksMixin:
         text = (reply or "").strip()
         if not text or _NOTHING.match(text):
             return {"reported": False, "why": "nothing to report"}
-        text = text[:600]
         digest = hashlib.sha256(re.sub(r"\s+", " ", text.lower()).encode()).hexdigest()
         if digest == (row.get("last_hash") or ""):
             return {"reported": False, "why": "unchanged since last report"}
-        self.store.exec("update tasks set last_hash=? where id=?", (digest, row["id"]))
         title = row.get("title") or "JoeBro"
         m = re.match(r"\s*TITLE:\s*(.+?)\s*\n+(.*)", text, re.S | re.I)  # agent-chosen heading
         if m and m.group(2).strip():
             title, text = m.group(1)[:150], m.group(2).strip()
+        meta = {"notice": True, "source": "personal_task", "task_id": row["id"], "task_title": title}
+        if getattr(self, "_task_visualizations", None): meta["visualizations"] = self._task_visualizations
         self.ensure_phone_session()
-        self.add_message(PHONE_SESSION_ID, "assistant", text,
-                         {"notice": True, "source": "personal_task", "task_id": row["id"], "task_title": title})
+        message_id = self.add_message(PHONE_SESSION_ID, "assistant", text, meta)
+        self.store.exec("update tasks set last_hash=? where id=?", (digest, row["id"]))
         try:
             delivery = self.notify(text, title=title[:150], kind="personal_task", source=row["id"],
-                                   session=PHONE_SESSION_ID)
+                                   session=PHONE_SESSION_ID, message_id=message_id)
         except Exception as exc:
             delivery = {"ok": False, "detail": str(exc)[:200]}
         return {"reported": True, "delivery": delivery}
@@ -113,7 +200,8 @@ class PersonalTasksMixin:
             traceback.print_exc()
 
     def ptask_tool(self, name, body, form):
-        if ((form or {}).get("session") or "") != PHONE_SESSION_ID:
+        from jb_updates import personal_context
+        if not personal_context(self, form):
             raise ValueError(name + " is only available to the phone agent")
         a = self.parse_tool_args(body)
         a.pop("permission_mode", None)             # never model-settable (see manage_tasks)
