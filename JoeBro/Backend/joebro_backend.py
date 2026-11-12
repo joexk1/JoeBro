@@ -256,13 +256,16 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
                     coding = []
                 payload["agents"] = coding + payload.get("agents", [])
                 payload["count"] = payload.get("count", 0) + len(coding)
-                live = sum(1 for r in coding if r.get("live"))
+                live = sum(1 for r in coding if r.get("live") and r["kind"] == "coding")
                 for k in ("active", "live"):
                     if k in payload:
                         payload[k] += live
-                payload.setdefault("by_kind", {})["coding"] = len(coding)
+                payload.setdefault("by_kind", {})["coding"] = sum(1 for r in coding if r["kind"] == "coding")
+                payload["by_kind"]["subagent"] = sum(1 for r in coding if r["kind"] == "subagent")
             return self.json(payload)
         if path == "/api/coding-agents":
+            if (q.get("tree") or "") in ("1", "true"):
+                return self.json({"ok": True, "nodes": self.coding_nodes(), "tree": self.coding_nodes(tree=True)})
             return self.json({"ok": True, "nodes": self.coding_nodes()})
         if path == "/api/coding-agents/inbox":
             return self.json(self.coding_inbox_pull(q))
@@ -528,7 +531,7 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
                 return self.json(self.location_post(self._json_body()))
             except (KeyError, ValueError, TypeError):
                 return self.json({"ok": False, "detail": "lat and lon required"}, 400)
-        if path == "/api/push/activity":
+        if path in ("/api/push/activity", "/api/push/register_activity"):
             try:
                 return self.json(register_activity(self.store, self._json_body()))
             except (PushError, ValueError, TypeError):

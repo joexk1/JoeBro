@@ -444,14 +444,68 @@ def send_push(store, title, body, session=None, category=None, data=None):
 
 # ---- Live Activity push (ends the Dynamic Island when work finishes) -----------------
 
+_ACTIVITY_SCHEMA_DONE = set()
+
+
+def _activity_schema(store):
+    """push_activities gains install_id/activity_id; push_start_tokens is new. Idempotent."""
+    key = id(store)
+    if key in _ACTIVITY_SCHEMA_DONE:
+        return
+    store.exec("CREATE TABLE IF NOT EXISTS push_activities(token TEXT PRIMARY KEY, environment TEXT NOT NULL, updated_at REAL NOT NULL)")
+    for col in ("install_id", "activity_id"):
+        try:
+            store.exec("ALTER TABLE push_activities ADD COLUMN %s TEXT NOT NULL DEFAULT ''" % col)
+        except Exception:
+            pass
+    store.exec("""CREATE TABLE IF NOT EXISTS push_start_tokens(install_id TEXT PRIMARY KEY, token TEXT NOT NULL,
+        environment TEXT NOT NULL, updated_at REAL NOT NULL)""")
+    _ACTIVITY_SCHEMA_DONE.add(key)
+
+
+_HEX_RX = re.compile(r"[a-fA-F0-9]{32,400}")
+
+
 def register_activity(store, args):
-    token, env = args.get("token"), args.get("environment")
-    if not isinstance(token, str) or not re.fullmatch(r"[a-fA-F0-9]{32,400}", token) or env not in ("development", "production"):
+    """Live Activity tokens. One body may carry a push-to-start token (`push_to_start_token` +
+    `install_id`), a per-activity update token (`token`, or `push_token`, optional install_id/activity_id),
+    both, or `ended: true` (the app ended the activity itself: drop that install's update tokens)."""
+    if not isinstance(args, dict):
         raise PushError("invalid activity token")
-    store.exec("DELETE FROM push_activities WHERE updated_at<?", (time.time() - 86400,))
-    store.exec("INSERT INTO push_activities(token,environment,updated_at) VALUES(?,?,?) "
-               "ON CONFLICT(token) DO UPDATE SET updated_at=excluded.updated_at", (token.lower(), env, time.time()))
-    return {"ok": True}
+    _activity_schema(store)
+    env = args.get("environment")
+    install = str(args.get("install_id") or "")[:100]
+    start = args.get("push_to_start_token")
+    token = args.get("token") or args.get("push_token")
+    now = time.time()
+    store.exec("DELETE FROM push_activities WHERE updated_at<?", (now - 86400,))
+    if args.get("ended") and install:
+        store.exec("DELETE FROM push_activities WHERE install_id=?", (install,))
+        if not start and not token:
+            return {"ok": True, "start_token": False, "activity_token": False}
+    if start is None and token is None:
+        raise PushError("invalid activity token")
+    if env not in ("development", "production"):
+        raise PushError("invalid activity token")
+    out = {"ok": True, "start_token": False, "activity_token": False}
+    if start is not None:
+        if not install or not isinstance(start, str) or not _HEX_RX.fullmatch(start):
+            raise PushError("invalid push-to-start token")
+        store.exec("INSERT INTO push_start_tokens(install_id,token,environment,updated_at) VALUES(?,?,?,?) "
+                   "ON CONFLICT(install_id) DO UPDATE SET token=excluded.token,environment=excluded.environment,"
+                   "updated_at=excluded.updated_at", (install, start.lower(), env, now))
+        out["start_token"] = True
+    if token is not None:
+        if not isinstance(token, str) or not _HEX_RX.fullmatch(token):
+            raise PushError("invalid activity token")
+        aid = str(args.get("activity_id") or "")[:100]
+        if install and aid:   # a newer activity of the same install replaces its older update token
+            store.exec("DELETE FROM push_activities WHERE install_id=? AND activity_id=? AND token<>?", (install, aid, token.lower()))
+        store.exec("INSERT INTO push_activities(token,environment,updated_at,install_id,activity_id) VALUES(?,?,?,?,?) "
+                   "ON CONFLICT(token) DO UPDATE SET updated_at=excluded.updated_at,environment=excluded.environment,"
+                   "install_id=excluded.install_id,activity_id=excluded.activity_id", (token.lower(), env, now, install, aid))
+        out["activity_token"] = True
+    return out
 
 
 def end_activities(store, headline="Done", state="done"):
@@ -529,3 +583,121 @@ def end_if_idle(store, busy_turns):
         except Exception:
             pass
     threading.Thread(target=work, daemon=True).start()
+
+
+# ---- Live Activity push-to-start / update / end (feature-api.md section 4) ---------------
+
+DEAD_REASONS = ("BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic", "ExpiredToken")
+START_EVERY, UPDATE_EVERY, STRUCT_EVERY, KEEPALIVE = 60, 3, 15, 120
+WAKE = threading.Event()      # set by coding_event: the island loop re-checks within about a second
+
+
+def has_start_tokens(store):
+    _activity_schema(store)
+    return bool(store.one("SELECT 1 AS x FROM push_start_tokens LIMIT 1"))
+
+
+def _relevance(state):
+    return 100 if state.get("waiting") else 80 if any(r.get("kind") == "coding" for r in state.get("runs", [])) else 50
+
+
+class LiveActivityPusher:
+    """Decides which start/update/end liveactivity pushes to send. `send(env, token, payload, priority)`
+    returns (http_code, text); the default talks to APNs, tests inject a mock."""
+
+    def __init__(self, store, send=None, scene=None):
+        self.store, self.scene, self._send = store, scene, send
+        self.last_sig = None
+        self.last_struct = None
+        self.last_update = self.last_struct_push = 0.0
+        self.last_start = {}
+        self.started = None
+        self.seen_tokens = set()
+
+    def _default_send(self, env, token, payload, priority):
+        config = _config(self.store)
+        auth = _provider_token(config)
+        headers = {"authorization": "bearer " + auth, "apns-topic": config["bundle_id"] + ".push-type.liveactivity",
+                   "apns-push-type": "liveactivity", "apns-priority": str(priority)}
+        return _post(_host(env), token, headers, json.dumps(payload, ensure_ascii=False).encode())
+
+    def _push(self, kind, row, payload, priority):
+        try:
+            code, text = (self._send or self._default_send)(row["environment"], row["token"], payload, priority)
+        except PushError:
+            return False
+        if code == 200:
+            return True
+        if code == 410 or _reason(text) in DEAD_REASONS:
+            table = "push_start_tokens" if kind == "start" else "push_activities"
+            self.store.exec("DELETE FROM %s WHERE token=?" % table, (row["token"],))
+        return False
+
+    def state(self, runs, now):
+        """ContentState from island runs (each may carry subagents/waiting)."""
+        runs = list(runs)
+        self.started = self.started or now
+        st = {"count": len(runs), "runs": runs[:4], "startedAt": self.started - 978307200, "finished": None, "headline": None,
+              "subagents": sum(int(r.get("subagents") or 0) for r in runs),
+              "waiting": sum(1 for r in runs if r.get("waiting"))}
+        if runs and all(r.get("kind") == "reply" for r in runs):
+            st["headline"] = "JoeBro is replying" if len(runs) == 1 else "%d chats replying" % len(runs)
+        return st
+
+    def tick(self, runs, now=None):
+        """One pass. Returns {'start': n, 'update': n, 'end': n} pushes accepted."""
+        now = now or time.time()
+        _activity_schema(self.store)
+        out = {"start": 0, "update": 0, "end": 0}
+        if not runs:
+            if self.last_sig not in (None, "[]"):
+                out["end"] = self._end(now)
+            self.last_sig, self.last_struct, self.started = "[]", None, None
+            return out
+        st = self.state(runs, now)
+        sig = json.dumps([(r["id"], str(r.get("detail", ""))[:40], r.get("queued"), r.get("subagents", 0), bool(r.get("waiting"))) for r in runs])
+        struct = json.dumps([(r["id"], r.get("subagents", 0), bool(r.get("waiting"))) for r in runs])
+        installs_with_activity = {r["install_id"] for r in self.store.rows("SELECT install_id FROM push_activities") if r["install_id"]}
+        for row in self.store.rows("SELECT * FROM push_start_tokens"):
+            if row["install_id"] in installs_with_activity or now - self.last_start.get(row["install_id"], 0) < START_EVERY:
+                continue
+            self.last_start[row["install_id"]] = now
+            attrs = {"id": "agents", "destination": "joebro://agents"}
+            if self.scene:
+                attrs["sceneName"] = str(self.scene)
+            payload = {"aps": {"timestamp": int(now), "event": "start", "attributes-type": "JoeBroActivityAttributes",
+                               "attributes": attrs, "content-state": st, "stale-date": int(now) + 900,
+                               "relevance-score": _relevance(st),
+                               "alert": {"title": "JoeBro", "body": "%s started" % (runs[0].get("title") or "Agent")}}}
+            out["start"] += self._push("start", row, payload, 10)
+        changed = sig != self.last_sig
+        fresh = {r["token"] for r in self.store.rows("SELECT token FROM push_activities")} - self.seen_tokens
+        if fresh and now - self.last_update >= UPDATE_EVERY:    # a just-started activity gets the current state
+            changed = True
+            self.seen_tokens |= fresh
+        if (changed and now - self.last_update >= UPDATE_EVERY) or now - self.last_update >= KEEPALIVE:
+            structural = struct != self.last_struct
+            prio = 10 if structural and now - self.last_struct_push >= STRUCT_EVERY else 5
+            payload = {"aps": {"timestamp": int(now), "event": "update", "stale-date": int(now) + 300,
+                               "relevance-score": _relevance(st), "content-state": st}}
+            rows = self.store.rows("SELECT * FROM push_activities")
+            for row in rows:
+                out["update"] += self._push("update", row, payload, prio)
+            if rows or not changed:
+                self.last_update = now
+                self.last_sig, self.last_struct = sig, struct
+                if prio == 10 and structural:
+                    self.last_struct_push = now
+            elif not rows:
+                self.last_sig, self.last_struct = sig, struct   # nothing to update: don't retry every tick
+        return out
+
+    def _end(self, now):
+        st = {"count": 0, "runs": [], "startedAt": (self.started or now) - 978307200, "headline": "JoeBro finished",
+              "finished": "done", "subagents": 0, "waiting": 0}
+        payload = {"aps": {"timestamp": int(now), "event": "end", "dismissal-date": int(now) + 300, "content-state": st}}
+        n = 0
+        for row in self.store.rows("SELECT * FROM push_activities"):
+            n += self._push("end", row, payload, 10)
+            self.store.exec("DELETE FROM push_activities WHERE token=?", (row["token"],))
+        return n

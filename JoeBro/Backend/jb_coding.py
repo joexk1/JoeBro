@@ -10,6 +10,7 @@ from jb_core import PHONE_SESSION_ID
 import json
 import os
 import re
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -19,6 +20,7 @@ HOST_RX = re.compile(r"^[a-z0-9][a-z0-9-]{0,29}$")   # the computer name each li
 EVENTS = {"start", "prompt", "tool", "tool_done", "waiting", "stop", "end", "subagent_start", "subagent_stop"}
 STALE_RUNNING = 25 * 60     # running with no event this long -> assume it died
 STALE_WAITING = 3 * 3600
+SUB_DONE_SHOW = 30 * 60   # finished subagents stay listed this long
 SHOW_IDLE = 6 * 3600        # idle sessions stay listed this long
 DROP_ENDED = 15 * 60
 
@@ -59,6 +61,11 @@ class CodingAgentsMixin:
             cwd TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, tool_calls INTEGER NOT NULL DEFAULT 0,
             detail_json TEXT NOT NULL DEFAULT '[]', started REAL NOT NULL, last_activity REAL NOT NULL,
             pid INTEGER, terminal_json TEXT NOT NULL DEFAULT '{}')""")
+        for col in ("kind TEXT NOT NULL DEFAULT 'coding'", "agent_type TEXT NOT NULL DEFAULT ''"):
+            try:
+                self.store.exec("ALTER TABLE coding_agents ADD COLUMN " + col)
+            except Exception:
+                pass
 
     def coding_event(self, ev):
         """One normalised hook event from joebro-agent-report."""
@@ -72,14 +79,33 @@ class CodingAgentsMixin:
         if source not in SOURCES or not HOST_RX.match(host) or not sid or kind not in EVENTS:
             raise ValueError("bad event (source/host/session_id/event)")
         aid = "code:%s:%s:%s" % (host, source, sid)
+        psid = re.sub(r"[^A-Za-z0-9_.:-]", "", str(ev.get("parent_session_id") or ""))[:80]
+        parent_id = "code:%s:%s:%s" % (host, source, psid) if psid and psid != sid else str(ev.get("parent") or "")[:120]
+        is_sub = bool(psid and psid != sid) or kind in ("subagent_start", "subagent_stop")
+        if kind in ("subagent_start", "subagent_stop") and not psid:
+            raise ValueError("subagent events need parent_session_id")
         now = time.time()
         row = self.store.one("SELECT * FROM coding_agents WHERE id=?", (aid,))
+        if row and row.get("kind") == "subagent":
+            is_sub = True
         detail = json.loads(row["detail_json"]) if row else []
         status = row["status"] if row else "idle"
         tool_calls = row["tool_calls"] if row else 0
         text = _clip(ev.get("text"), 300)
         tool = _clip(ev.get("tool"), 60)
-        if kind == "start":
+        if is_sub:
+            if kind in ("subagent_stop", "stop", "end"):
+                status = "done"
+                if text:
+                    detail.append("✓ " + text)
+            else:
+                status = "running" if kind != "waiting" else "waiting"
+                if kind == "tool":
+                    tool_calls += 1
+                    detail.append(tool + (": " + text if text else ""))
+                elif text:
+                    detail.append(("⏸ " if kind == "waiting" else "› ") + text)
+        elif kind == "start":
             status = "idle" if not row or status in ("ended", "stale") else status
         elif kind == "prompt":
             status = "running"
@@ -100,6 +126,8 @@ class CodingAgentsMixin:
                 detail.append("✓ " + text)
         elif kind == "end":
             status = "ended"
+        elif kind in ("subagent_start", "subagent_stop"):
+            pass
         detail = detail[-14:]
         cwd = str(ev.get("cwd") or (row or {}).get("cwd") or "")[:300]
         name = _clip(ev.get("name"), 80) or (row or {}).get("name") or (os.path.basename(cwd.rstrip("/")) or SOURCES[source])
@@ -107,19 +135,35 @@ class CodingAgentsMixin:
         term = {k: str(ev[k])[:200] for k in ("kitty_window_id", "kitty_listen_on", "tmux_pane", "term") if ev.get(k)}
         if row and not term:
             term = json.loads(row.get("terminal_json") or "{}")
+        sub_kind = "subagent" if is_sub else "coding"
+        agent_type = _clip(ev.get("subagent_type"), 40) or (row or {}).get("agent_type") or ""
+        if is_sub and not _clip(ev.get("name"), 80) and not (row or {}).get("name"):
+            name = agent_type or "subagent"
+        if is_sub and not row:
+            prow = self.store.one("SELECT cwd,model FROM coding_agents WHERE id=?", (parent_id,)) or {}
+            cwd, model = cwd or prow.get("cwd", ""), model or prow.get("model", "")
         pid = ev.get("pid") if isinstance(ev.get("pid"), int) else (row or {}).get("pid")
         self.store.exec("""INSERT INTO coding_agents(id,host,source,session_id,parent,name,cwd,model,status,tool_calls,detail_json,
-                started,last_activity,pid,terminal_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                started,last_activity,pid,terminal_json,kind,agent_type) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET name=excluded.name,cwd=excluded.cwd,model=excluded.model,status=excluded.status,
                 tool_calls=excluded.tool_calls,detail_json=excluded.detail_json,last_activity=excluded.last_activity,
-                pid=excluded.pid,terminal_json=excluded.terminal_json""",
-                        (aid, host, source, sid, str(ev.get("parent") or "")[:120], name, cwd, model, status, tool_calls,
-                         json.dumps(detail, ensure_ascii=False), now, now, pid, json.dumps(term)))
-        if not row and pid:   # same process adopted earlier under a pid-based id -> one row only
+                pid=excluded.pid,terminal_json=excluded.terminal_json,parent=excluded.parent,kind=excluded.kind,
+                agent_type=excluded.agent_type""",
+                        (aid, host, source, sid, parent_id if is_sub else (str(ev.get("parent") or "")[:120] or (row or {}).get("parent") or ""), name, cwd, model, status, tool_calls,
+                         json.dumps(detail, ensure_ascii=False), now, now, pid, json.dumps(term), sub_kind, agent_type))
+        if not is_sub and kind in ("stop", "end"):   # harnesses that send no subagent stop: they end with the parent's turn
+            self.store.exec("UPDATE coding_agents SET status='done',last_activity=? WHERE parent=? AND kind='subagent' "
+                            "AND status IN ('running','waiting')", (now, aid))
+        try:
+            from jb_push import WAKE
+            WAKE.set()
+        except Exception:
+            pass
+        if not row and pid and not is_sub:   # same process adopted earlier under a pid-based id -> one row only
             self.store.exec("UPDATE coding_agents SET status='ended' WHERE host=? AND pid=? AND id<>? AND status<>'ended'",
                             (host, pid, aid))
         self.store.exec("DELETE FROM coding_agents WHERE last_activity<?", (now - 3 * 86400,))
-        if kind in ("stop", "end"):       # one compact session record in Shared Memory (no model call)
+        if kind in ("stop", "end") and not is_sub:       # one compact session record in Shared Memory (no model call)
             try:
                 import jb_sharedmem
                 last = text if kind == "stop" else ""
@@ -129,32 +173,56 @@ class CodingAgentsMixin:
                                                          "session_id": sid}, last, str(ev.get("branch") or ""))
             except Exception:
                 pass
-        return {"ok": True, "id": aid, "status": status}
+        return {"ok": True, "id": aid, "status": status, "kind": sub_kind, "parent": parent_id if is_sub else ""}
 
-    def coding_nodes(self, include_idle=True):
+    def coding_nodes(self, include_idle=True, tree=False):
+        """Coding agents plus their subagents. Subagent rows follow their parent; `tree` nests them
+        under it as `child_nodes`. Finished subagents stay listed for SUB_DONE_SHOW."""
         self._coding_table()
         now = time.time()
-        out = []
-        for r in self.store.rows("SELECT * FROM coding_agents ORDER BY last_activity DESC LIMIT 80"):
+        flat, hidden = [], set()
+        for r in self.store.rows("SELECT * FROM coding_agents ORDER BY last_activity DESC LIMIT 120"):
             age = now - r["last_activity"]
             status = r["status"]
+            is_sub = r.get("kind") == "subagent"
             if status == "running" and age > STALE_RUNNING:
                 status = "stale"
             if status == "waiting" and age > STALE_WAITING:
                 status = "idle"
-            if status == "ended":
-                continue   # the session is closed: nothing to show or supervise
-            if status in ("idle", "stale") and (age > SHOW_IDLE or not include_idle):
+            if status == "ended" or (is_sub and status == "done" and age > SUB_DONE_SHOW) or \
+                    (is_sub and status in ("stale", "idle") and age > SUB_DONE_SHOW):
+                hidden.add(r["id"])
+                continue
+            if not is_sub and status in ("idle", "stale") and (age > SHOW_IDLE or not include_idle):
+                hidden.add(r["id"])
                 continue
             detail = json.loads(r["detail_json"] or "[]")
-            out.append({"id": r["id"], "parent": r["parent"] or None, "source": r["source"], "host": r["host"],
-                        "name": r["name"], "status": status, "busy": status in ("running", "waiting"),
-                        "waiting": status == "waiting", "failed": False, "model": r["model"], "cwd": r["cwd"],
-                        "started": _iso(r["started"]), "last_activity": _iso(r["last_activity"]),
-                        "tool_calls": r["tool_calls"], "detail": detail,
-                        "terminal": json.loads(r.get("terminal_json") or "{}")})
-        out.sort(key=lambda n: (not n["busy"], n["last_activity"]), reverse=False)
-        out.sort(key=lambda n: (not n["busy"]))
+            flat.append({"id": r["id"], "kind": "subagent" if is_sub else "coding", "parent": r["parent"] or None,
+                         "children": [], "agent_type": r.get("agent_type") or "", "subagents": {"total": 0, "live": 0},
+                         "source": r["source"], "host": r["host"],
+                         "name": r["name"], "status": status, "busy": status in ("running", "waiting"),
+                         "waiting": status == "waiting", "failed": False, "model": r["model"], "cwd": r["cwd"],
+                         "started": _iso(r["started"]), "last_activity": _iso(r["last_activity"]),
+                         "tool_calls": r["tool_calls"], "detail": detail,
+                         "terminal": json.loads(r.get("terminal_json") or "{}")})
+        by_id = {n["id"]: n for n in flat}
+        subs = [n for n in flat if n["kind"] == "subagent"]
+        for n in subs:
+            par = by_id.get(n["parent"])
+            if par is not None and par["kind"] == "coding":
+                par["children"].append(n["id"])
+                par["subagents"]["total"] += 1
+                par["subagents"]["live"] += 1 if n["busy"] else 0
+        tops = [n for n in flat if n["kind"] == "coding" or n["parent"] not in by_id and n["parent"] not in hidden]
+        tops.sort(key=lambda n: (not n["busy"] and not any(by_id[c]["busy"] for c in n["children"])))
+        if tree:
+            for n in tops:
+                n["child_nodes"] = [by_id[c] for c in n["children"]]
+            return tops
+        out = []
+        for n in tops:
+            out.append(n)
+            out.extend(by_id[c] for c in n["children"])
         return out
 
     def coding_agent_records(self):
@@ -162,12 +230,15 @@ class CodingAgentsMixin:
         recs = []
         for n in self.coding_nodes():
             live = n["busy"]
+            sub = n["kind"] == "subagent"
             label = SOURCES.get(n["source"], n["source"])
             recs.append({
-                "id": n["id"], "kind": "coding", "title": "%s · %s" % (label, n["name"]),
+                "id": n["id"], "kind": n["kind"], "title": ("%s · %s" % (label, n["name"])) if not sub else n["name"],
+                "agent_type": n["agent_type"], "children": n["children"],
+                "subagent_count": n["subagents"]["total"], "subagent_live": n["subagents"]["live"],
                 "status": n["status"] if n["status"] != "idle" else "done", "live": live,
                 "progress": ("Needs you — " if n["waiting"] else "") + (n["detail"][-1] if n["detail"] else _where(n["host"]).strip()),
-                "session_id": "", "model": n["model"], "ref_id": "", "parent_id": "",
+                "session_id": "", "model": n["model"], "ref_id": "", "parent_id": n["parent"] or "",
                 "created_at": n["started"], "started_at": n["started"],
                 "finished_at": "" if live else n["last_activity"], "error": "",
                 "cancel_requested": False, "host": n["host"], "source": n["source"], "cwd": n["cwd"],
@@ -180,6 +251,7 @@ class CodingAgentsMixin:
             return None
         node = next(n for n in self.coding_nodes() if n["id"] == aid)
         rec["result"] = "\n".join(node["detail"])
+        rec["child_agents"] = [r for r in self.coding_agent_records() if r["parent_id"] == aid]
         rec["messages"] = [{"role": "user" if line.startswith("›") else "assistant", "content": line,
                             "created_at": node["last_activity"]} for line in node["detail"]]
         return rec
@@ -527,7 +599,7 @@ class CodingAgentsMixin:
 # ---------------------------------------------------------------------- module level
 def live_coding_count(store):
     now = time.time()
-    r = store.one("SELECT COUNT(*) AS n FROM coding_agents WHERE (status='running' AND last_activity>?) OR (status='waiting' AND last_activity>?)",
+    r = store.one("SELECT COUNT(*) AS n FROM coding_agents WHERE kind<>'subagent' AND ((status='running' AND last_activity>?) OR (status='waiting' AND last_activity>?))",
                   (now - STALE_RUNNING, now - STALE_WAITING)) or {}
     return int(r.get("n") or 0)
 
@@ -556,8 +628,9 @@ def island_state(handler):
         runs.append({"id": r["id"], "title": (handler.phone_agent_name() + " · " if r.get("scope") == "personal" else "") + (r["title"] or "Agent"), "kind": "personal" if r.get("scope") == "personal" else r["kind"],
                      "detail": (r.get("progress") or "")[:120], "queued": r["status"] == "queued"})
     for r in handler.coding_agent_records():
-        if r["live"]:
-            runs.append({"id": r["id"], "title": r["title"], "kind": "coding", "detail": (r.get("progress") or "")[:120], "queued": False})
+        if r["live"] and r["kind"] != "subagent":    # subagents are counted on their run, never listed as runs
+            runs.append({"id": r["id"], "title": r["title"], "kind": "coding", "detail": (r.get("progress") or "")[:120], "queued": False,
+                         "subagents": r.get("subagent_live", 0), "waiting": "Needs you" in (r.get("progress") or "")[:10]})
     return runs
 
 
@@ -569,9 +642,9 @@ def coding_loop(server):
     2 min so it never reads stale), and an end push the moment nothing is live."""
     import types as _types
     from joebro_backend import Handler
-    from jb_push import has_activities, update_activities, end_activities
     time.sleep(25)
-    last_sig, last_push, last_reconcile, started = None, 0.0, 0.0, None
+    threading.Thread(target=island_loop, args=(server,), daemon=True).start()
+    last_reconcile = 0.0
     pushed = {}
     while True:
         try:
@@ -596,25 +669,33 @@ def coding_loop(server):
                     h.coding_reconcile_open()
                 except Exception:
                     pass
-            if has_activities(server.store):
-                runs = island_state(h)
-                sig = json.dumps([(r["id"], r["detail"][:40], r["queued"]) for r in runs])
-                if not runs:
-                    if last_sig != "[]":
-                        end_activities(server.store, headline="JoeBro finished")
-                    started = None
-                elif sig != last_sig or now - last_push > 120:
-                    started = started or now
-                    n = len(runs)
-                    headline = None if any(r["kind"] != "reply" for r in runs) else ("JoeBro is replying" if n == 1 else "%d chats replying" % n)
-                    state = {"count": n, "runs": runs[:4], "startedAt": started - 978307200, "finished": None}
-                    if headline:
-                        state["headline"] = headline
-                    update_activities(server.store, state, priority=10 if sig != last_sig else 5)
-                    last_push = now
-                last_sig = sig
-            else:
-                last_sig, started = None, None
         except Exception:
             pass
         time.sleep(20)
+
+
+def island_loop(server):
+    """Owns the Live Activity (Dynamic Island) while the app is in the background: a push-to-start when the
+    first agent appears, update pushes when runs / subagents / waiting change, an end push when nothing is
+    live. Woken within about a second by every coding event (jb_push.WAKE); rate limits live in the pusher."""
+    import types as _types
+    from joebro_backend import Handler
+    import jb_push
+    pusher = jb_push.LiveActivityPusher(server.store)
+    time.sleep(5)
+    while True:
+        try:
+            if jb_push.has_activities(server.store) or jb_push.has_start_tokens(server.store):
+                h = Handler.__new__(Handler)
+                h.server = _types.SimpleNamespace(store=server.store)
+                try:
+                    pusher.scene = h.pref("island_scene") or None
+                except Exception:
+                    pass
+                pusher.tick(island_state(h))
+            else:
+                pusher.last_sig, pusher.started = None, None
+        except Exception:
+            pass
+        jb_push.WAKE.wait(2)
+        jb_push.WAKE.clear()
