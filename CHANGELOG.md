@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- `joebro-agents memory import --write` no longer replaces CLAUDE.md and AGENTS.md. Instructions stay where they are; it moves only Claude Code's learned memory and adds a short pointer block. `--include-instructions` also reads facts from the instruction files without changing them.
+
 ## 1.5.0 — 2026-11-12
 
 ### Added

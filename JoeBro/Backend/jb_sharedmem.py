@@ -498,10 +498,10 @@ def split_facts(text):
 
 
 def slim_pointer(name=""):
-    """What CLAUDE.md / AGENTS.md shrink to once memory is the single source of truth."""
+    """The block added to CLAUDE.md / AGENTS.md. Their instructions stay; learned facts live in Shared Memory."""
     return ("%s\n# Project memory\n"
-            "Kept in JoeBro Shared Memory, shared by every coding agent; a short brief is added at session start. "
-            "Look things up with `memory_recall`; save durable facts with `memory_remember`. "
+            "Learned facts (decisions, gotchas) live in JoeBro Shared Memory, shared by every agent. "
+            "Look them up with `memory_recall`; save new ones with `memory_remember`, not here. "
             "Readable copy: `.joebro/memory/MEMORY.md`.\n%s\n" % (MARK_START, MARK_END))
 
 
