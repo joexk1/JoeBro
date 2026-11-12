@@ -19,6 +19,7 @@ from jb_reach import ReachMixin
 from jb_spend import SpendMixin
 from jb_updates import PersonalUpdatesMixin, ensure_tables, claim_scheduled_run, finish_scheduled_run, personal_reply_loop
 from jb_personal import PersonalMixin, reminder_loop
+import jb_usermem
 from jb_muse import MuseMixin, muse_name
 from jb_ptasks import PersonalTasksMixin
 from jb_heartbeat import HeartbeatMixin
@@ -419,8 +420,7 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
                 "macos_authorized": bool(cfg.get("macos_authorized")),
             })
         if path == "/api/memory":
-            rows = self.store.rows("select * from memory order by pinned desc, datetime(created_at) desc")
-            return self.json({"memory": [self.memory_json(r) for r in rows]})
+            return self.json({"memory": [self.memory_json(r) for r in jb_usermem.mem_rows(self.store)]})
         if path == "/api/calendar/events":
             return self.calendar_events(q)
         if path == "/api/documents/library":
@@ -817,8 +817,7 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
             return self.create_document(self._json_body())
         if path.endswith("/pin") and path.startswith("/api/memory/"):
             mid = path.split("/")[3]
-            row = self.store.one("select pinned from memory where id=?", (mid,))
-            self.store.exec("update memory set pinned=? where id=?", (0 if row and row["pinned"] else 1, mid))
+            jb_usermem.mem_pin(self.store, mid)
             return self.json({"ok": True})
         if path == "/api/calendar/events":
             return self.create_event(self._json_body())
@@ -1053,7 +1052,7 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
             self.store.exec("delete from endpoints where id=?", (path.rsplit("/", 1)[-1],))
             return self.json({"ok": True})
         if path.startswith("/api/memory/"):
-            self.store.exec("delete from memory where id=?", (path.rsplit("/", 1)[-1],))
+            jb_usermem.mem_delete(self.store, path.rsplit("/", 1)[-1])
             return self.json({"ok": True})
         if path.startswith("/api/tasks/"):
             self.store.exec("delete from tasks where id=?", (path.rsplit("/", 1)[-1],))

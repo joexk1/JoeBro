@@ -16,9 +16,12 @@ The protocol against context pollution:
            editor: merge, rewrite, prune superseded state
 
 All stdlib + sqlite; the Brain tab API (memory_json shape, /api/memory routes)
-is unchanged apart from new optional fields.
+is unchanged, but the rows now live in the `user` scope of Shared Memory (jb_usermem);
+the old `memory` table is only the one-time migration source.
 """
 import math
+
+import jb_usermem
 
 from jb_core import *  # noqa: F401,F403
 
@@ -98,7 +101,7 @@ class MemoryMixin:
         user forced those) plus at most k rows that clear the relevance bar.
         An unrelated message injects nothing — that's the point.
         Returns (context_block, used_texts) for the prompt and message footer."""
-        rows = self.store.rows("select * from memory")
+        rows = jb_usermem.mem_rows(self.store)
         if not rows:
             return "", []
         pinned = [r for r in rows if r.get("pinned")]
@@ -107,10 +110,7 @@ class MemoryMixin:
         hits = pinned[:6] + [r for _, r in scored[:k]]
         if not hits:
             return "", []
-        now = now_iso()
-        for r in hits:
-            self.store.exec("update memory set use_count=?, last_used=? where id=?",
-                            ((r.get("use_count") or 0) + 1, now, r["id"]))
+        jb_usermem.mem_touch(self.store, [r["id"] for r in hits])
         block = ("Long-term memory relevant to this request (background knowledge — "
                  "use it, don't recite it):\n" + "\n".join(self._memory_line(r) for r in hits))
         return block, [r.get("text") or "" for r in hits]
@@ -138,7 +138,7 @@ class MemoryMixin:
             entities = ", ".join(str(e).strip() for e in entities if str(e).strip())
         words = self._content_words(text)
         now = now_iso()
-        for r in self.store.rows("select * from memory where topic=? or category=?", (topic, topic)):
+        for r in [m for m in jb_usermem.mem_rows(self.store) if m["topic"] == topic]:
             rw = self._content_words(r.get("text") or "")
             if not words or not rw:
                 continue
@@ -146,21 +146,15 @@ class MemoryMixin:
             if j >= 0.6 or words <= rw or rw <= words:
                 # Same fact, possibly refreshed — keep the fuller phrasing.
                 new_text = text  # a newer correction may be shorter than the stale fact
-                self.store.exec(
-                    "update memory set text=?, kind=?, topic=?, category=?, entities=?, updated_at=? where id=?",
-                    (new_text, kind, topic, topic, entities or r.get("entities") or "", now, r["id"]))
+                jb_usermem.mem_write(self.store, r["id"], new_text, topic, kind, entities or r.get("entities") or "", r["pinned"])
                 return r["id"], "merged"
         mid = "mem_" + os.urandom(6).hex()
-        self.store.exec(
-            "insert into memory(id,text,category,kind,topic,entities,pinned,created_at,updated_at)"
-            " values(?,?,?,?,?,?,0,?,?)",
-            (mid, text, topic, kind, topic, entities, now, now))
+        jb_usermem.mem_write(self.store, mid, text, topic, kind, entities, False)
         return mid, "added"
 
     def memory_topics(self):
         """Existing page names, for the extractor prompt (reuse before invent)."""
-        rows = self.store.rows("select distinct topic, category from memory")
-        topics = {(r.get("topic") or r.get("category") or "").strip() for r in rows}
+        topics = {(r.get("topic") or "").strip() for r in jb_usermem.mem_rows(self.store)}
         return sorted(t for t in topics if t)[:30]
 
     # ---- HTTP / tool surface (Brain tab contract unchanged) ------------------
@@ -168,7 +162,7 @@ class MemoryMixin:
     def upsert_memory(self, body, memory_id=None):
         mid = memory_id or body.get("id") or body.get("memory_id") or "mem_" + os.urandom(6).hex()
         now = now_iso()
-        ex = self.store.one("select * from memory where id=?", (mid,)) or {}
+        ex = jb_usermem.mem_get(self.store, mid) or {}
         text = body.get("text") if "text" in body else ex.get("text")
         # The UI's "category" and the protocol's "topic" are the same page name.
         topic = memory_slug(body.get("topic") or body.get("category")
@@ -179,17 +173,9 @@ class MemoryMixin:
             entities = ", ".join(str(e).strip() for e in entities if str(e).strip())
         pinned = body.get("pinned")
         pinned = 1 if pinned is True else 0 if pinned is False else (ex.get("pinned") or 0)
-        if ex:
-            self.store.exec(
-                "update memory set text=?, category=?, topic=?, kind=?, entities=?, pinned=?, updated_at=? where id=?",
-                (text or "", topic, topic, kind, entities, pinned, now, mid))
-        else:
-            self.store.exec(
-                "insert into memory(id,text,category,kind,topic,entities,pinned,created_at,updated_at)"
-                " values(?,?,?,?,?,?,?,?,?)",
-                (mid, text or "", topic, kind, topic, entities, pinned, now, now))
+        jb_usermem.mem_write(self.store, mid, text or "", topic, kind, entities, bool(pinned))
         return {"ok": True, "id": mid,
-                "memory": self.memory_json(self.store.one("select * from memory where id=?", (mid,)))}
+                "memory": jb_usermem.mem_get(self.store, mid)}
 
     def manage_memory_tool(self, body):
         args = self.parse_tool_args(body)
@@ -209,16 +195,13 @@ class MemoryMixin:
             mid = args.get("id") or args.get("memory_id")
             if not mid:
                 raise ValueError("memory id required")
-            self.store.exec("delete from memory where id=?", (mid,))
+            jb_usermem.mem_delete(self.store, mid)
             return f"Deleted memory {mid}"
-        rows = self.store.rows("select * from memory order by pinned desc, datetime(created_at) desc")
+        rows = jb_usermem.mem_rows(self.store)
         q = args.get("text") or args.get("query") or ""
         if action == "search" and q.strip():
             rows = [r for _, r in self._score_memories(q, rows)][:10]
-            now = now_iso()
-            for r in rows:   # recalled = used
-                self.store.exec("update memory set use_count=?, last_used=? where id=?",
-                                ((r.get("use_count") or 0) + 1, now, r["id"]))
+            jb_usermem.mem_touch(self.store, [r["id"] for r in rows])   # recalled = used
         return json.dumps([self.memory_json(r) for r in rows], ensure_ascii=False)
 
     @staticmethod

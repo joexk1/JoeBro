@@ -10,9 +10,12 @@ file contributes only the lines that overlap the user's message. The agent write
 with muse_remember / muse_forget; a light background pass after a turn proposes
 new durable facts about the user and appends or corrects them (deduped, secrets
 filtered; pref `muse_auto_learn`, on for the phone chat). Memory text is DATA,
-never instructions. This module never touches jb_memory's store (the Brain).
+never instructions. Storage is the `user` scope of Shared Memory (jb_usermem): each file is a topic, each line a
+fact with source `muse`. The old markdown files are only the one-time migration source.
 """
 import threading
+
+import jb_usermem
 from datetime import date
 
 from jb_core import *  # noqa: F401,F403
@@ -80,47 +83,36 @@ class MuseMixin:
     # ---- files -----------------------------------------------------------
 
     def muse_seed_defaults(self):
-        d = muse_dir()
+        jb_usermem.ensure(self.store)
         for n in DEFAULT_FILES:
-            p = d / (n + ".md")
-            if not p.exists():
-                p.write_text("# " + n.replace("-", " ").title() + "\n", encoding="utf-8")
+            self.store.exec("INSERT OR IGNORE INTO user_files(name) VALUES(?)", (n,))
 
     def muse_list(self):
         self.muse_seed_defaults()
         out = []
-        for p in sorted(muse_dir().glob("*.md")):
-            text = p.read_text(encoding="utf-8", errors="replace")
-            st = p.stat()
-            out.append({"name": p.stem, "lines": sum(1 for l in text.splitlines() if l.startswith("- ")),
-                        "bytes": st.st_size, "always": p.stem == ALWAYS_FILE,
-                        "updated": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")})
+        for n in jb_usermem.muse_names(self.store):
+            i = jb_usermem.muse_info(self.store, n)
+            out.append({"name": n, "lines": i["lines"], "bytes": i["bytes"], "always": n == ALWAYS_FILE, "updated": i["updated"]})
         return out
 
     def muse_read(self, name):
-        p = muse_dir() / (muse_name(name) + ".md")
-        return p.read_text(encoding="utf-8", errors="replace") if p.exists() else None
+        return jb_usermem.muse_read(self.store, muse_name(name))
 
     def muse_write(self, name, content):
-        p = muse_dir() / (muse_name(name) + ".md")
         content = str(content or "")[:60000]
         with _LOCK:
-            tmp = p.with_suffix(".tmp")
-            tmp.write_text(content if content.endswith("\n") or not content else content + "\n", encoding="utf-8")
-            os.replace(tmp, p)
+            jb_usermem.muse_write(self.store, muse_name(name), content)
             self._muse_changed()
 
     def muse_delete(self, name):
         n = muse_name(name)
         if n == ALWAYS_FILE:
             raise ValueError("about-me is always in the prompt - edit it instead of deleting it")
-        p = muse_dir() / (n + ".md")
-        if not p.exists():
-            return False
         with _LOCK:
-            p.unlink()
-            self._muse_changed()
-        return True
+            ok = jb_usermem.muse_delete(self.store, n)
+            if ok:
+                self._muse_changed()
+        return ok
 
     def _muse_revision(self):
         p = muse_dir() / ".revision"
@@ -138,8 +130,7 @@ class MuseMixin:
         match = str(match or "").strip()
         if not match: raise ValueError("match the existing fact by line number or its exact words")
         with _LOCK:
-            p = muse_dir() / (n + ".md")
-            lines = (p.read_text(encoding="utf-8") if p.exists() else "").splitlines()
+            lines = (self.muse_read(n) or "").splitlines()
             hits = [i for i, line in enumerate(lines) if line.startswith("- ") and
                     ((match.isdigit() and i + 1 == int(match)) or
                      (not match.isdigit() and match.casefold() in line.casefold()))]
@@ -147,10 +138,7 @@ class MuseMixin:
                 raise ValueError("memory update needs exactly one matching fact; recall it first")
             old = lines[hits[0]][2:]
             lines[hits[0]] = f"- {date.today().isoformat()}: {replacement}"
-            tmp = p.with_suffix(".tmp")
-            tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            os.replace(tmp, p)
-            self._muse_changed()
+            self.muse_write(n, "\n".join(lines) + "\n")
         return {"ok": True, "file": n, "previous": old, "fact": replacement}
 
     def muse_append(self, name, fact):
@@ -158,8 +146,7 @@ class MuseMixin:
         n = muse_name(name)
         fact = clean_fact(fact)
         with _LOCK:
-            p = muse_dir() / (n + ".md")
-            text = p.read_text(encoding="utf-8") if p.exists() else "# " + n.replace("-", " ").title() + "\n"
+            text = self.muse_read(n) or "# " + n.replace("-", " ").title() + "\n"
             lines = text.splitlines()
             if _is_dup(fact, [l for l in lines if l.startswith("- ")]):
                 return "duplicate"
@@ -167,10 +154,7 @@ class MuseMixin:
             bullets = [i for i, l in enumerate(lines) if l.startswith("- ")]
             for i in reversed(bullets[:-MAX_LINES] if len(bullets) > MAX_LINES else []):
                 del lines[i]
-            tmp = p.with_suffix(".tmp")
-            tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            os.replace(tmp, p)
-            self._muse_changed()
+            self.muse_write(n, "\n".join(lines) + "\n")
         return "added"
 
     _CLEAR_WORDS = {"*", "all", "everything", "clear", "all lines", "the whole file", "whole file"}
@@ -201,10 +185,10 @@ class MuseMixin:
         removed = []
         with _LOCK:
             for n in names:
-                p = muse_dir() / (n + ".md")
-                if not p.exists():
+                text = self.muse_read(n)
+                if text is None:
                     continue
-                lines = p.read_text(encoding="utf-8").splitlines()
+                lines = text.splitlines()
                 bullets = [(i, l) for i, l in enumerate(lines) if l.startswith("- ")]
                 if whole:
                     hit = {i for i, _ in bullets}
@@ -222,10 +206,7 @@ class MuseMixin:
                     continue
                 removed += [{"file": n, "line": i + 1, "text": lines[i][2:]} for i in sorted(hit)]
                 keep = [l for i, l in enumerate(lines) if i not in hit]
-                tmp = p.with_suffix(".tmp")
-                tmp.write_text("\n".join(keep) + "\n", encoding="utf-8")
-                os.replace(tmp, p)
-            if removed: self._muse_changed()
+                self.muse_write(n, "\n".join(keep) + "\n")
         return {"removed": removed, "cleared": whole and bool(removed)}
 
     def muse_forget(self, name, match):
@@ -295,6 +276,12 @@ class MuseMixin:
             if a.get("file") and not (a.get("query") or "").strip():      # whole file, with line numbers
                 return json.dumps({"ok": True, "file": muse_name(a["file"]), "lines": self.muse_numbered(a["file"])}, ensure_ascii=False)
             hits = self.muse_retrieve(a.get("query") or "", a.get("file") or None, k=10)
+            projects = []
+            if a.get("projects") and (a.get("query") or "").strip():      # on request: coding-project and global memory too
+                projects = [{"project": f["project_name"], "scope": f["scope"], "topic": f["topic"], "text": f["text"]}
+                            for f in jb_usermem.recall_everywhere(self.store, a["query"], 8) if f["scope"] != "user"]
+            if projects:
+                return json.dumps({"ok": True, "matches": [{"file": n, "text": l[2:]} for n, l in hits], "projects": projects}, ensure_ascii=False)
             return json.dumps({"ok": True, "matches": [
                 {"file": n, "line": next((x["line"] for x in self.muse_numbered(n) if x["text"] == l[2:]), 0), "text": l[2:]}
                 for n, l in hits]}, ensure_ascii=False)
