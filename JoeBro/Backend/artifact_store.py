@@ -232,16 +232,25 @@ def copy_to_folder(artifact_id, root_name, folder="", filename=None, move=False)
     with _locked() as storage:
         source = resolve_artifact(artifact_id)
         record = _record(artifact_id)
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        # A root named in JOEBRO_SHARED_ROOTS (comma list) is a folder another service reads
+        # (a file-sync server's data folder). It needs umask-style creates: a 0600 file or 0700
+        # dir zeroes a default-ACL mask and that service could not read what we wrote.
+        shared = root_name in {x.strip() for x in os.environ.get("JOEBRO_SHARED_ROOTS", "").split(",") if x.strip()}
+        directory.mkdir(parents=True, exist_ok=True, mode=0o777 if shared else 0o700)
         name = safe_name(filename or record["filename"])
         if filename and filename != name:
             raise ArtifactError("Filename must be a simple safe basename")
         target = directory / name
         if target.exists() or target.is_symlink():
             raise ArtifactError("Destination exists; choose another filename")
-        fd, temp = tempfile.mkstemp(dir=directory, prefix=".joebro-artifact-")
+        if shared:
+            temp = str(directory / (".joebro-artifact-" + os.urandom(8).hex()))
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+        else:
+            fd, temp = tempfile.mkstemp(dir=directory, prefix=".joebro-artifact-")
         try:
-            os.fchmod(fd, 0o600)
+            if not shared:
+                os.fchmod(fd, 0o600)
             with os.fdopen(fd, "wb") as out:
                 out.write(source.read_bytes())
                 out.flush()

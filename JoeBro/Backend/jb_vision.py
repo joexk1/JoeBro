@@ -64,20 +64,26 @@ def _cache_put(key, text):
         pass
 
 
-def _target(h):
-    """(endpoint_id, model) from the pref, or None when no caption model is chosen."""
+def _targets(h):
+    """[(endpoint_id, model)] to try in order: the chosen caption model, then any default
+    an extension names (hook `vision_default_target` -> (endpoint_id, model)); core has none."""
+    import jb_ext
+    out = []
     pref = h.pref("vision_caption_model")
     if isinstance(pref, str) and ":" in pref:
         eid, model = pref.split(":", 1)
         if h.store.one("select id from endpoints where id=? and is_enabled=1", (eid,)) and model.strip():
-            return eid, model.strip()
-    # An extension may name a default caption model (hook `vision_default_target`
-    # -> (endpoint_id, model)); core has none.
-    import jb_ext
+            out.append((eid, model.strip()))
     dflt = jb_ext.first("vision_default_target", h)
-    if dflt and h.store.one("select id from endpoints where id=? and is_enabled=1", (dflt[0],)):
-        return dflt
-    return None
+    if dflt and dflt not in out and h.store.one("select id from endpoints where id=? and is_enabled=1", (dflt[0],)):
+        out.append(tuple(dflt))
+    return out
+
+
+def _target(h):
+    """The first caption target, or None when no caption model is chosen."""
+    t = _targets(h)
+    return t[0] if t else None
 
 
 def _is_local_url(url):
@@ -141,22 +147,26 @@ def caption_bytes(h, data, call=_call):
     if not data or len(data) > MAX_IMAGE_BYTES:
         raise VisionError("image missing or over %d MB" % (MAX_IMAGE_BYTES // 1048576))
     mime = sniff_mime(data)
-    target = _target(h)
-    if not target:
+    targets = _targets(h)
+    if not targets:
         raise VisionError("no caption model is set; choose one in the Mac app (Settings > Mobile)")
     key = hashlib.sha256(data).hexdigest() + "." + PROMPT_V
     hit = _cache_get(key)
     if hit:
         return hit
-    try:
-        _guard_remote(h, target[0], data)
-        text = _clean(call(h, target[0], target[1], mime, data))
-    except Exception as exc:
-        raise VisionError(f"could not caption image ({target[1]}: {exc})") from None
-    if not text:
-        raise VisionError("the caption model returned nothing")
-    _cache_put(key, text)
-    return text
+    err = "nothing tried"
+    for eid, model in targets:              # a 429 / 5xx / empty reply falls through to the next target
+        try:
+            _guard_remote(h, eid, data)
+            text = _clean(call(h, eid, model, mime, data))
+        except Exception as exc:
+            err = f"{model}: {exc}"
+            continue
+        if text:
+            _cache_put(key, text)
+            return text
+        err = f"{model}: the caption model returned nothing"
+    raise VisionError(f"could not caption image ({err})")
 
 
 def _inline(caption):

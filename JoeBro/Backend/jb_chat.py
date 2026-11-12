@@ -301,11 +301,10 @@ class ChatMixin:
 
     # no agent round cap — the loop runs until the model stops calling tools
 
-    def _agent_system(self, f):
+    def _agent_system(self, f, tool_names=None, now=True):
         # COMPACT prompt — we send native function schemas, so the model must
         # NOT be told a text tool format (verbose format instructions make weak
         # models echo the tool-call boilerplate INTO the file content).
-        now = datetime.now().astimezone()
         system = (
             "You are the assistant inside the native JoeBro app. You can use the provided function "
             "tools across MULTIPLE steps: call a tool, read its result, then call another, until the "
@@ -323,9 +322,10 @@ class ChatMixin:
             "edit_document on the same Q/A text. "
             "To add a calendar event call create_event with ISO-8601 start/end datetimes that YOU resolve "
             "from the user's words. Never put tool syntax or raw file contents in your text reply.\n"
-            f"Today is {now.strftime('%A, %Y-%m-%d')} and the current local time is {now.strftime('%H:%M')} "
-            f"({now.strftime('%z') or 'local'}). Use this to resolve relative dates like 'tomorrow', "
-            "'wednesday', or 'next week' into absolute ISO-8601 datetimes.\n"
+            + ((f"Today is {datetime.now().astimezone().strftime('%A, %Y-%m-%d')} and the current local time is {datetime.now().astimezone().strftime('%H:%M')} "
+                f"({datetime.now().astimezone().strftime('%z') or 'local'}). Use this to resolve relative dates like 'tomorrow', "
+                "'wednesday', or 'next week' into absolute ISO-8601 datetimes.\n") if now else "")
+            +
             "CRITICAL: only claim you did something if the matching tool actually ran and returned success. "
             "To create, edit, or save a file you MUST call create_document or edit_document and see it succeed. "
             "Saying 'done', 'created', 'saved', or 'added' WITHOUT a successful tool call in this turn is forbidden — "
@@ -356,12 +356,18 @@ class ChatMixin:
                 f"entire updated file (current text plus their additions) — do not create a new file. "
                 f"Current content of `{doc['path']}`:\n\"\"\"\n{doc['content']}\n\"\"\""
             )
+        if tool_names:          # advice only for the tools actually on offer this turn
+            from jb_prompt import _advice_for, LOADABLE_NOTE
+            advice = _advice_for(tool_names)
+            if advice:
+                system += "\n\nYour tools this turn:\n" + "\n".join("- " + x for x in advice)
+            if "find_tools" in tool_names:
+                system += "\n\n" + LOADABLE_NOTE
         return system
 
-    def _orchestrator_system(self, f):
+    def _orchestrator_system(self, f, now=True):
         """System prompt for the Telegram Message Bot. It MANAGES chats and agents
         and delegates all hands-on coding/file work — never doing it itself."""
-        now = datetime.now().astimezone()
         system = (
             "You are JoeBro's Message Bot — the user's orchestrator over ALL their chats and agents, "
             "reachable from Telegram. You manage and coordinate work; you do not do hands-on coding or "
@@ -387,8 +393,9 @@ class ChatMixin:
             "subject — finish the current thread first.\n\n"
             "If the user is confused, explain plainly what JoeBro and you (the bot) can do, and offer a concrete "
             "next step. Keep replies concise and chat-friendly for Telegram.\n"
-            f"Today is {now.strftime('%A, %Y-%m-%d')} and the local time is {now.strftime('%H:%M')} "
-            f"({now.strftime('%z') or 'local'}). Resolve relative dates against this.\n"
+            + ((f"Today is {datetime.now().astimezone().strftime('%A, %Y-%m-%d')} and the local time is {datetime.now().astimezone().strftime('%H:%M')} "
+                f"({datetime.now().astimezone().strftime('%z') or 'local'}). Resolve relative dates against this.\n") if now else "")
+            +
             "Only claim you did something if the matching tool actually ran and returned success."
         )
         focus = self.pref("bot_focus_" + (f.get("session") or ""))
@@ -403,11 +410,10 @@ class ChatMixin:
             system += "\n\nAdditional instructions from the user:\n" + custom
         return system
 
-    def _chat_system(self, f):
+    def _chat_system(self, f, now=True):
         """System prompt for CHAT mode — pure conversation, NO tools. Spells out
         that the assistant cannot take actions so it stops claiming it edited the
         doc / sent mail / ran something, and stops emitting tool-call syntax."""
-        now = datetime.now().astimezone()
         system = (
             "You are the assistant inside the native JoeBro app, in CHAT mode. This is a plain "
             "conversation: you have NO tools and CANNOT take any action on the user's machine. "
@@ -418,8 +424,8 @@ class ChatMixin:
             "If the user wants you to actually DO something — edit the open document, manage email, "
             "search the web, run a task — tell them to turn on Agent mode (the hammer toggle next to "
             "the message box) and you'll carry it out there.\n"
-            f"Today is {now.strftime('%A, %Y-%m-%d')} and the local time is {now.strftime('%H:%M')} "
-            f"({now.strftime('%z') or 'local'})."
+            + ((f"Today is {datetime.now().astimezone().strftime('%A, %Y-%m-%d')} and the local time is {datetime.now().astimezone().strftime('%H:%M')} "
+                f"({datetime.now().astimezone().strftime('%z') or 'local'}).") if now else "")
         )
         doc = self.open_doc_context(f)
         if doc:
@@ -661,11 +667,16 @@ class ChatMixin:
             self._turn_tools = tools      # find_tools appends to THIS list mid-turn
             system = self._phone_system(f, [t["function"]["name"] for t in tools if t.get("function")])
         elif orchestrator:
-            system = self._orchestrator_system(f)
+            system = self._orchestrator_system(f, now=False)
         elif agent:
-            system = self._agent_system(f)
+            # Tools first, so the prompt carries advice only for what is on offer, and the
+            # clock rides next to the user's message instead of in the cacheable prefix.
+            tools = self.tools_for(f, has_folder=root is not None)
+            tools = list(tools) if tools is not None else []
+            self._turn_tools = tools
+            system = self._agent_system(f, [t["function"]["name"] for t in tools if t.get("function")], now=False)
         else:
-            system = self._chat_system(f)
+            system = self._chat_system(f, now=False)
         # Say WHERE the bound folder is, and name its top level. The prompt used
         # to talk about "bound-folder files" without ever giving the path or a
         # single filename, so every turn opened with a list_files round just to
@@ -699,20 +710,19 @@ class ChatMixin:
             system += "\n\nActive guardrail plugins — follow these:\n" + guard
             emit({"type": "plugins_used", "data": [p.get("name") for p in bg_plugins]})
         messages = [{"role": "system", "content": system}] + self._history_messages(f)
-        if on_phone and agent:
-            # The clock (and weather, if the user opted in) rides in one note just
-            # before the user's message, not in the system prompt: a changing prefix
-            # would invalidate the provider's prompt cache for everything after it.
-            tail = [self._now_line()]
-            if str(self.pref("location_enabled")).lower() in ("1", "true", "yes", "on"):
-                try:
-                    from jb_location import now_line
-                    nl = now_line()
-                    if nl:
-                        tail.append(nl)
-                except Exception:
-                    pass
-            messages.insert(max(len(messages) - 1, 1), {"role": "system", "content": "\n\n".join(tail)})
+        # The clock (and weather, if the user opted in) rides in one note just
+        # before the user's message, not in the system prompt: a changing prefix
+        # would invalidate the provider's prompt cache for everything after it.
+        tail = [self._now_line()]
+        if str(self.pref("location_enabled")).lower() in ("1", "true", "yes", "on"):
+            try:
+                from jb_location import now_line
+                nl = now_line()
+                if nl:
+                    tail.append(nl)
+            except Exception:
+                pass
+        messages.insert(max(len(messages) - 1, 1), {"role": "system", "content": "\n\n".join(tail)})
         # Word documents attached to THIS turn: their text rides in one system note
         # just before the user's message (read_attachment continues a long one).
         doc_attachments = self._attachment_document_context(f)

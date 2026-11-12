@@ -462,12 +462,8 @@ class ProactiveMixin:
         args = dict(args, added_by="joebro")
         res = self.shopping_update(args)
         items = res.get("items", [])
-        todo = [i for i in items if not i["checked"]]
-        done = [i for i in items if i["checked"]]
-        fmt = lambda i: "- " + i["text"] + ((" (" + i["quantity"] + ")") if i["quantity"] else "")
-        head = "Shopping list: %d to get, %d ticked off." % (len(todo), len(done))
-        return head + ("\n" + "\n".join(fmt(i) for i in todo) if todo else "") + \
-            ("\nTicked: " + ", ".join(i["text"] for i in done[:15]) if done else "")
+        left = sum(not i.get("checked") for i in items)
+        return json.dumps({"summary": f"Shopping list: {left} to get, {len(items)-left} ticked off.", **res}, ensure_ascii=False)
 
     # ------------------------------------------------------------------ health
     def health_ingest(self, body):
@@ -547,7 +543,7 @@ class ProactiveMixin:
         if (args.get("action") or "summary") == "days":
             return json.dumps(self.health_rows(args.get("days") or 14), ensure_ascii=False)
         s = self.health_summary(args.get("days") or 14)
-        return self.health_text(s) + "\n" + json.dumps(s, ensure_ascii=False)
+        return json.dumps({"summary": self.health_text(s), **s}, ensure_ascii=False)
 
     def health_weekly_review(self, now=None):
         """Sunday evening: one deterministic (no-LLM) health recap push, once per week."""

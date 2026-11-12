@@ -32,6 +32,7 @@ from jb_desktop import DesktopUseMixin
 from jb_coding import CodingAgentsMixin, coding_loop
 from jb_plugins import PluginsMixin, PluginError
 import jb_ext
+import traceback
 import gzip
 import hmac
 

@@ -35,6 +35,7 @@ def default_config(data=None):
         for extra in jb_ext.call("janitor_scratch", data):
             cfg["scratch"] += [Path(p) for p in extra.get("scratch", [])]
             cfg["tmp_patterns"] += list(extra.get("tmp_patterns", []))
+            cfg.update(extra.get("config", {}))
     except Exception:
         pass
     return cfg
@@ -202,6 +203,11 @@ class Janitor:
         self.artifacts()
         self.scratch()
         self.vision()
+        try:
+            import jb_ext
+            jb_ext.call("janitor_run", self)       # an extension's own allowlisted cleanups
+        except Exception:
+            pass
         if vacuum:
             self.vacuum(state)
 

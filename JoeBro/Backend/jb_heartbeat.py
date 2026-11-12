@@ -284,8 +284,17 @@ class HeartbeatMixin:
             raise ValueError("heartbeat action must be run, pause, resume or set")
         if action == "stop":
             self.set_pref("personal_automation_paused", True)
+            # Cooperative cancellation only; never remove or disable user task rows.
             try:
                 self.cancel_session_run(PHONE_SESSION_ID)
+            except Exception:
+                pass
+            try:
+                rows = self.store.rows("SELECT id FROM agents WHERE status IN ('queued','running') AND "
+                                       "(session_id=? OR session_id LIKE 'task_session_ptask_%' OR session_id LIKE '%pulse%')",
+                                       (PHONE_SESSION_ID,))
+                for row in rows:
+                    self.agent_cancel(row["id"])
             except Exception:
                 pass
         return {"ok": True, "heartbeat": self.heartbeat_config(), "executed": False}

@@ -29,6 +29,8 @@ DOC_WRITE_TOOLS = {"create_document", "edit_document", "update_document"}
 # to (and callable by) a session whose permission_mode is at least that level —
 # so e.g. an iPhone-control server can require Full access.
 _PERM_RANK = {"sandbox": 0, "readonly": 1, "full": 2}
+_FILE_TOOLS = {"list_files", "read_file", "read_pdf", "create_document",
+               "edit_document", "update_document", "suggest_document"}
 
 
 def _perm_allows(item_mode, session_mode):
@@ -53,15 +55,15 @@ def _perm_allows(item_mode, session_mode):
 _SCHOLAR_RE = (r"\b(?:papers?|journals?|\bdoi\b|citations?|scholar|academic|literature|publications?|"
                r"\bstudies\b|research|books?|authors?|pubmed|arxiv|crossref|openalex|doaj|isbn|dataset|cite)")
 DEFERRED_GROUPS = {
-    "email": ({"list_email_accounts", "list_emails", "read_email", "send_email", "archive_email",
-               "delete_email", "mark_email_read", "reply_to_email", "bulk_email"},
+    "email": ({"list_email_accounts", "list_emails", "read_email", "read_email_attachment", "save_email_attachment",
+               "send_email", "archive_email", "delete_email", "mark_email_read", "reply_to_email", "bulk_email"},
               r"\b(?:e-?mails?|inbox|gmail|outlook|imap|mailbox|unsubscribe|attachment|\breply\b|\bsend (it|this|that|them)\b|"
               r"\bdraft\b|list_emails|send_email|read_email)"),
-    "calendar": ({"create_event"},
+    "calendar": ({"create_event", "manage_events"},
                  r"\b(?:calendar|events?\b|meetings?|appointments?|schedul|flights?|booking|itinerary|invite|"
                  r"birthday|dinner|lunch|reschedul|\b(mon|tues|wednes|thurs|fri|satur|sun)day\b|"
                  r"tomorrow|tonight|next week|this week|weekend|\bat \d{1,2}(:\d\d)?\s?(am|pm)?\b|\bical\b|caldav)"),
-    "reminders": ({"remind_me", "manage_reminders", "manage_pulse", "push_status"},
+    "reminders": ({"remind_me", "manage_reminders", "manage_pulse", "manage_autonomy", "push_status"},
                   r"\b(?:remind|reminders?|pulse|checklist|standing instruction|alert me|let me know|tell me (when|if)|"
                   r"ping me|nudge|keep an eye|monitor|watch for|watchlist|routines?|push|notifications?|weekly|daily|don.t forget|\bin \d+ ?(min|minutes|hours?|h)\b)"),
     "shopping": ({"shopping_list"},
@@ -1478,19 +1480,23 @@ class ToolsMixin:
         # agent (or a prompt injected into one) could schedule itself write-anywhere
         # access for tomorrow. Only the Tasks UI sets this, over the HTTP route.
         args.pop("permission_mode", None)
+        args.pop("scope", None)               # personal tasks belong to the personal_task_* tools
         if action in ("add", "create"):
             return json.dumps(self.upsert_task(args), ensure_ascii=False)
         if action in ("edit", "update"):
             tid = args.get("id") or args.get("task_id")
+            if self.ptask_is_personal(tid):
+                raise ValueError("no such task")
             return json.dumps(self.upsert_task(args, tid), ensure_ascii=False)
         if action == "delete":
             tid = args.get("id") or args.get("task_id")
             if not tid:
                 raise ValueError("task id required")
+            if self.ptask_is_personal(tid):
+                raise ValueError("no such task")
             self.store.exec("delete from tasks where id=?", (tid,))
             return f"Deleted task {tid}"
-        rows = self.store.rows("select * from tasks order by datetime(created_at) desc")
-        return json.dumps([self.task_json(r) for r in rows], ensure_ascii=False)
+        return json.dumps(self.tasks_for_scope("general"), ensure_ascii=False)     # personal tasks stay private
 
     def manage_skills_tool(self, body):
         args = self.parse_tool_args(body)

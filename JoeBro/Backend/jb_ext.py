@@ -16,7 +16,9 @@ Core code calls named hooks where behaviour is extensible:
     ext.call("name", *args)   -> list of every hook's non-None result
     ext.first("name", *args)  -> the first non-None result, else None
 
-A failing extension is logged and skipped; it never takes the backend down.
+A failing extension is logged and skipped; it never takes the backend down. A hook may
+refuse a request on purpose by raising ValueError (or a subclass): that propagates to the
+caller, which reports it to the user like any other validation error.
 Stdlib only, like the rest of the backend.
 """
 import importlib.util
@@ -43,6 +45,8 @@ def call(name, *args, **kw):
     for fn in _HOOKS.get(name, ()):
         try:
             r = fn(*args, **kw)
+        except ValueError:
+            raise
         except Exception:
             _log("hook %s failed:\n%s" % (name, traceback.format_exc()))
             continue
@@ -55,6 +59,8 @@ def first(name, *args, **kw):
     for fn in _HOOKS.get(name, ()):
         try:
             r = fn(*args, **kw)
+        except ValueError:
+            raise
         except Exception:
             _log("hook %s failed:\n%s" % (name, traceback.format_exc()))
             continue
