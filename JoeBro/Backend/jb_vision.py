@@ -71,6 +71,12 @@ def _target(h):
         eid, model = pref.split(":", 1)
         if h.store.one("select id from endpoints where id=? and is_enabled=1", (eid,)) and model.strip():
             return eid, model.strip()
+    # An extension may name a default caption model (hook `vision_default_target`
+    # -> (endpoint_id, model)); core has none.
+    import jb_ext
+    dflt = jb_ext.first("vision_default_target", h)
+    if dflt and h.store.one("select id from endpoints where id=? and is_enabled=1", (dflt[0],)):
+        return dflt
     return None
 
 
@@ -88,15 +94,15 @@ def _is_local_url(url):
 
 
 def _ocr_has_secret(data):
-    """Local OCR (tesseract, if installed) matched against the Cloak patterns."""
+    """Local OCR (tesseract) matched against the Cloak patterns. Fails CLOSED when OCR is unavailable."""
     import shutil, subprocess
     exe = shutil.which("tesseract")
     if not exe:
-        return False
+        return True        # fail closed: with no OCR we cannot say the image is clean
     try:
         out = subprocess.run([exe, "stdin", "stdout"], input=data, capture_output=True, timeout=40).stdout.decode("utf-8", "replace")
     except Exception:
-        return False
+        return True
     return cloak_text(out) != out
 
 

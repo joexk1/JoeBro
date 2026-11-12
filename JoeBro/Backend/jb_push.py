@@ -33,6 +33,82 @@ JWT_TTL = 3000          # APNs accepts a provider token for an hour; refresh at 
 _BUNDLE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]{2,154}")
 
 
+def notification_text(markdown, limit=None):
+    """Readable APNs text. Parse the full Markdown before limiting the preview.
+
+    Notification alert bodies are plain strings, not attributed Markdown. Keep
+    code literal, meaningful line breaks, list structure and image/link labels;
+    leave the original chat message and push routing metadata untouched.
+    """
+    import html
+    text = str(markdown or '').replace('\r\n', '\n').replace('\r', '\n')
+    protected = []
+    def hold(value):
+        token = '\x00P%d\x00' % len(protected)
+        protected.append(value)
+        return token
+
+    # Code fences can contain characters that look like Markdown emphasis.
+    lines, output, code, fence = text.split('\n'), [], [], None
+    for line in lines:
+        marker = re.match(r'^ {0,3}(`{3,}|~{3,})(.*)$', line)
+        if fence:
+            if marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence) and not marker[2].strip():
+                output.append(hold('\n'.join(code))); code, fence = [], None
+            else:
+                code.append(line)
+        elif marker:
+            fence = marker[1]
+        else:
+            output.append(line)
+    if fence: output.append(hold('\n'.join(code)))
+    text = '\n'.join(output)
+    text = re.sub(r'(`+)(.+?)\1(?!`)', lambda m: hold(re.sub(r'\s+', ' ', m[2]).strip()), text, flags=re.S)
+    text = re.sub(r'\\([\\`*_{}\[\]()#+.!|>~\-])', lambda m: hold(m[1]), text)
+    text = re.sub(r'^ {0,3}\[[^\]]+\]:[ \t]*\S.*$', '', text, flags=re.M)
+    # Inline links/images with balanced one-level parentheses in destinations.
+    text = re.sub(r'!?\[([^\]]*)\]\((?:[^()\n]|\([^()\n]*\))*\)', r'\1', text)
+    text = re.sub(r'!?\[([^\]]+)\]\[[^\]]*\]', r'\1', text)
+    text = re.sub(r'<((?:https?://|mailto:)[^>\s]+)>', lambda m: m[1].removeprefix('mailto:'), text)
+    text = re.sub(r'</?[A-Za-z][A-Za-z0-9]*(?:\s[^>]*|\s*)/?>', '', text)
+    text = re.sub(r'^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$', '', text, flags=re.M)
+    text = re.sub(r'^ {0,3}#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$', r'\1', text, flags=re.M)
+    text = re.sub(r'^ {0,3}(?:>[ \t]*)+', '', text, flags=re.M)
+    text = re.sub(r'^([ \t]*)[-+*][ \t]+\[([ xX])\][ \t]+',
+                  lambda m: m[1] + ('☑ ' if m[2].lower() == 'x' else '☐ '), text, flags=re.M)
+    text = re.sub(r'^([ \t]*)[-+*][ \t]+', r'\1• ', text, flags=re.M)
+    for _ in range(2):
+        text = re.sub(r'(\*\*|__)(?=\S)(.+?)\1', lambda m: m[2].rstrip(), text, flags=re.S)
+        text = re.sub(r'(?<![\w*])\*(?=\S)(.+?)(?<=\S)\*(?!\*)', r'\1', text, flags=re.S)
+        text = re.sub(r'(?<!\w)_(?=\S)(.+?)(?<=\S)_(?!\w)', r'\1', text, flags=re.S)
+        text = re.sub(r'~~(?=\S)(.+?)(?<=\S)~~', r'\1', text, flags=re.S)
+    text = re.sub(r'^ {0,3}(?:[-=_][ \t]*){3,}$', '', text, flags=re.M)
+    # Tables become compact readable rows rather than a pipe/alignment wall.
+    lines = text.split('\n'); table_lines = set()
+    for i, line in enumerate(lines):
+        if re.fullmatch(r'\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*', line):
+            table_lines.add(i)
+            j = i - 1
+            while j >= 0 and '|' in lines[j] and lines[j].strip(): table_lines.add(j); j -= 1
+            j = i + 1
+            while j < len(lines) and '|' in lines[j] and lines[j].strip(): table_lines.add(j); j += 1
+    for i in table_lines:
+        if re.fullmatch(r'[\s|:\-]+', lines[i]): lines[i] = ''
+        else: lines[i] = ' · '.join(x.strip() for x in lines[i].strip().strip('|').split('|'))
+    text = html.unescape('\n'.join(lines))
+    text = re.sub(r'\x00P(\d+)\x00', lambda m: protected[int(m[1])], text)
+    text = '\n'.join(line.rstrip() for line in text.split('\n'))
+    text = re.sub(r'\n{3,}', '\n\n', text).strip()
+    if limit is not None and len(text) > limit:
+        if limit < 2: return '…'[:max(0,limit)]
+        prefix = text[:limit-1].rstrip()
+        if len(prefix) < len(text) and prefix and prefix[-1].isalnum() and text[len(prefix)].isalnum():
+            boundary = max(prefix.rfind(' '), prefix.rfind('\n'))
+            if boundary >= int(limit * .65): prefix = prefix[:boundary].rstrip()
+        text = prefix + '…'
+    return text
+
+
 class PushError(ValueError):
     pass
 
@@ -262,11 +338,38 @@ def push_status(store):
 
 # ---- sending ------------------------------------------------------------------------
 
+def _reserve_personal_delivery(store, message_id, install_id):
+    """Persist before transport: a timeout must not trigger a duplicate push."""
+    store.exec('''CREATE TABLE IF NOT EXISTS push_message_deliveries (
+        message_id TEXT NOT NULL, install_id TEXT NOT NULL, state TEXT NOT NULL,
+        created_at REAL NOT NULL, updated_at REAL NOT NULL,
+        PRIMARY KEY(message_id,install_id))''')
+    with store.lock, store.db() as db:
+        cursor = db.execute('''INSERT OR IGNORE INTO push_message_deliveries
+            (message_id,install_id,state,created_at,updated_at) VALUES(?,?,'reserved',?,?)''',
+            (message_id,install_id,time.time(),time.time()))
+        created = cursor.rowcount == 1
+        row = db.execute('SELECT state FROM push_message_deliveries WHERE message_id=? AND install_id=?',
+                         (message_id,install_id)).fetchone()
+        db.commit()
+        return created, row['state']
+
+
+def _finish_personal_delivery(store, message_id, install_id, state):
+    store.exec('UPDATE push_message_deliveries SET state=?,updated_at=? WHERE message_id=? AND install_id=?',
+               (state,time.time(),message_id,install_id))
+
+
 def send_push(store, title, body, session=None, category=None, data=None):
     if not isinstance(title, str) or len(title) > 150 or not isinstance(body, str) or not body.strip() or len(body) > 3000:
         raise PushError("Push title/body invalid (title <=150, nonempty body <=3000 characters)")
     if session is not None and (not isinstance(session, str) or len(session) > 100):
         raise PushError("Push session must be a short chat identifier")
+    personal_message = None
+    if category == "PERSONAL_MESSAGE":      # a saved phone-chat message: pushed at most once per device
+        personal_message = str((data or {}).get("message_id") or "")
+        if not re.fullmatch(r"[1-9][0-9]{0,19}", personal_message):
+            raise PushError("Personal pushes require a saved chat message ID")
     status = push_status(store)
     if not status["configured"] or not status["enabled_devices"]:
         return {"channel": "mobile", "accepted": 0, "failed": 0, "delivered": False,
@@ -278,9 +381,13 @@ def send_push(store, title, body, session=None, category=None, data=None):
         return {"channel": "mobile", "accepted": 0, "failed": 0, "delivered": False, "detail": str(exc)}
     rows = store.rows("SELECT * FROM push_devices WHERE enabled=1 AND bundle_id=? ORDER BY updated_at DESC LIMIT 20",
                       (config["bundle_id"],))
-    accepted, failures = 0, []
+    accepted, failures, deduplicated, seen_devices = 0, [], 0, set()
     deadline = time.monotonic() + 20
     for row in rows:
+        target = (row["token"], row["environment"])
+        if target in seen_devices:
+            continue
+        seen_devices.add(target)
         left = deadline - time.monotonic()
         if left <= 0:
             failures.append("delivery_time_budget_exceeded")
@@ -290,6 +397,8 @@ def send_push(store, title, body, session=None, category=None, data=None):
         payload = {"aps": {"alert": alert, "sound": "default"}, "joebro": {"kind": "inbox"}}
         if session:
             payload["joebro"]["session"] = session
+        if personal_message:
+            payload["aps"]["thread-id"] = "joebro-personal"
         if category:   # actionable notification (e.g. CODING_APPROVAL -> Approve / Deny buttons)
             payload["aps"]["category"] = str(category)[:40]
         if isinstance(data, dict):
@@ -301,6 +410,16 @@ def send_push(store, title, body, session=None, category=None, data=None):
         headers = {"authorization": "bearer " + auth, "apns-topic": config["bundle_id"],
                    "apns-push-type": "alert", "apns-priority": "10",
                    "apns-expiration": str(int(time.time()) + 86400)}
+        if personal_message:
+            headers["apns-collapse-id"] = "jb-personal-" + personal_message
+            fresh, state = _reserve_personal_delivery(store, personal_message, row["install_id"])
+            if not fresh:       # persisted before transport: a timeout must not cause a duplicate push
+                deduplicated += 1
+                if state == "accepted":
+                    accepted += 1
+                else:
+                    failures.append("personal_message_delivery_already_attempted")
+                continue
         try:
             code, text = _post(_host(row["environment"]), row["token"], headers, raw, timeout=min(8, left))
         except PushError:
@@ -308,6 +427,8 @@ def send_push(store, title, body, session=None, category=None, data=None):
             store.exec("UPDATE push_devices SET last_error=? WHERE install_id=?", ("APNsNetworkUnavailable", row["install_id"]))
             continue
         if code == 200:
+            if personal_message:
+                _finish_personal_delivery(store, personal_message, row["install_id"], "accepted")
             accepted += 1
             store.exec("UPDATE push_devices SET last_success_at=?,last_error=NULL WHERE install_id=?", (time.time(), row["install_id"]))
             continue
@@ -316,7 +437,7 @@ def send_push(store, title, body, session=None, category=None, data=None):
         store.exec("UPDATE push_devices SET last_error=?,enabled=CASE WHEN ? THEN 0 ELSE enabled END WHERE install_id=?",
                    (reason, int(invalid), row["install_id"]))
         failures.append(reason)
-    return {"channel": "mobile", "accepted": accepted, "failed": len(failures), "delivered": accepted > 0,
+    return {"channel": "mobile", "accepted": accepted, "deduplicated": deduplicated, "failed": len(failures), "delivered": accepted > 0,
             "detail": "Accepted by APNs; device display is not confirmed" if accepted else "No mobile notification accepted",
             "errors": failures}
 
@@ -359,6 +480,34 @@ def end_activities(store, headline="Done", state="done"):
     return sent
 
 
+def update_activities(store, state, stale_in=300, priority=10):
+    """liveactivity UPDATE push to every registered activity (app in the background).
+    `state` is the ContentState dict; startedAt is seconds since 2001-01-01."""
+    rows = store.rows("SELECT * FROM push_activities")
+    if not rows:
+        return 0
+    config = _config(store)
+    auth = _provider_token(config)
+    now = int(time.time())
+    sent = 0
+    raw = json.dumps({"aps": {"timestamp": now, "event": "update", "stale-date": now + stale_in, "content-state": state}}).encode()
+    headers = {"authorization": "bearer " + auth, "apns-topic": config["bundle_id"] + ".push-type.liveactivity",
+               "apns-push-type": "liveactivity", "apns-priority": str(priority)}
+    for row in rows:
+        try:
+            code, _ = _post(_host(row["environment"]), row["token"], headers, raw)
+        except PushError:
+            continue
+        sent += code == 200
+        if code == 410:          # the activity is gone on the device
+            store.exec("DELETE FROM push_activities WHERE token=?", (row["token"],))
+    return sent
+
+
+def has_activities(store):
+    return bool(store.one("SELECT 1 AS x FROM push_activities LIMIT 1"))
+
+
 def end_if_idle(store, busy_turns):
     """Called after a chat turn / agent closes: end the island only when nothing
     else is running. No-op (and no network) when no activity was registered."""
@@ -370,6 +519,12 @@ def end_if_idle(store, busy_turns):
             n = store.one("SELECT COUNT(*) AS n FROM agents WHERE status IN ('queued','running') AND kind<>'briefing'") or {}
             if n.get("n", 0):
                 return
+            try:   # a coding agent still working keeps the island up
+                from jb_coding import live_coding_count
+                if live_coding_count(store):
+                    return
+            except Exception:
+                pass
             end_activities(store)
         except Exception:
             pass

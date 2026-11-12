@@ -6,6 +6,7 @@ Node shape follows Wudland's collector contract (id/parent/source/host/name/
 status/busy/model/cwd/started/last_activity/tool_calls/detail) so either side
 can consume the other. State is event-driven with staleness guards, because a
 harness that crashes never sends its Stop."""
+from jb_core import PHONE_SESSION_ID
 import json
 import os
 import re
@@ -212,7 +213,10 @@ class CodingAgentsMixin:
         sock = str(term.get("kitty_listen_on") or "").replace("unix:", "")
         match = [s for s in sessions if s.get("controllable") and (
             (row["source"] == "claude" and s.get("claude_session_id") == row["session_id"]) or
-            (sock and str(s.get("socket")) == sock and str(s.get("window_id")) == str(term.get("kitty_window_id"))))]
+            (sock and str(s.get("socket")) == sock and str(s.get("window_id")) == str(term.get("kitty_window_id"))) or
+            (term.get("tmux_pane") and s.get("kind") == "tmux" and
+             s.get("session_id") == "tmux:" + str(term["tmux_pane"]) and
+             s.get("agent_type") == row["source"]))]
         if len(match) != 1:
             return {"ok": False, "detail": "Couldn't match that agent to exactly one controllable terminal (it must run in Kitty or tmux)."}, 409
         sent = self.run_mcp_tool(mcp, "agent_send_keys", {"session_id": match[0]["session_id"], "host": row["host"], "keys": "escape"})
@@ -386,12 +390,23 @@ class CodingAgentsMixin:
         what = next((d[2:] for d in reversed(detail) if d.startswith("⏸")), "") or "needs your approval"
         title = "%s%s needs you" % (SOURCES.get(row["source"], row["source"]), _where(row["host"]))
         body = "%s · %s" % (row.get("name") or "", what)
+        nid = "inb_" + os.urandom(6).hex()
+        try:
+            self.store.exec(
+                "insert into inbox(id,kind,title,body,source,read,created_at) values(?,?,?,?,?,0,?)",
+                (nid, "coding_approval", title, body[:300], row["id"], _iso(time.time())))
+        except Exception:
+            return False  # Never push an approval the Notifications list cannot retrieve.
         try:
             from jb_push import send_push
+            data = {"agent": row["id"], "kind": "coding_approval"}
+            if nid:
+                data["inbox_id"] = nid
             send_push(self.store, title, body[:300], category="CODING_APPROVAL" if actionable else None,
-                      data={"agent": row["id"], "kind": "coding_approval"})
+                      data=data)
         except Exception:
             pass
+        return True
 
     def coding_decide(self, aid, decision):
         """Approve / deny the agent's pending permission prompt (lock-screen buttons).
@@ -445,8 +460,8 @@ class CodingAgentsMixin:
                                    (now - 1800, now - 45)):
             key = (row["id"], row["last_activity"])
             if key not in pushed and now - pushed.get(row["id"], 0) > 120:
-                pushed[key] = pushed[row["id"]] = now
-                self.coding_approval_push(row)
+                if self.coding_approval_push(row):
+                    pushed[key] = pushed[row["id"]] = now
         self._coding_decisions_table()
         for d in self.store.rows("SELECT agent_id FROM coding_decisions WHERE applied_at IS NULL"):
             try:
@@ -507,29 +522,83 @@ def live_coding_count(store):
     return int(r.get("n") or 0)
 
 
+def island_state(handler):
+    """What the Dynamic Island should show, computed server-side with the same
+    rules as the app: one entry per piece of work, a chat turn and its registry
+    row counted once, briefings excluded, coding agents included."""
+    from jb_chat import _ACTIVE_TURNS
+    turns = sorted(_ACTIVE_TURNS)
+    def chat_title(sid):
+        if sid == PHONE_SESSION_ID:
+            return handler.phone_agent_name()
+        row = handler.store.one("SELECT name FROM sessions WHERE id=?", (sid,))
+        return ((row or {}).get("name") or "").strip() or "JoeBro"
+    runs = [{"id": "chat-" + s, "title": chat_title(s), "kind": "personal" if s == PHONE_SESSION_ID else "reply", "detail": "", "queued": False} for s in turns]
+    seen = set(turns)
+    for r in handler.agents_payload(limit=60)["agents"]:
+        if not r["live"] or r["kind"] == "briefing":
+            continue
+        sid = r.get("session_id") or ""
+        if sid and sid in seen:
+            continue
+        if sid:
+            seen.add(sid)
+        runs.append({"id": r["id"], "title": (handler.phone_agent_name() + " · " if r.get("scope") == "personal" else "") + (r["title"] or "Agent"), "kind": "personal" if r.get("scope") == "personal" else r["kind"],
+                     "detail": (r.get("progress") or "")[:120], "queued": r["status"] == "queued"})
+    for r in handler.coding_agent_records():
+        if r["live"]:
+            runs.append({"id": r["id"], "title": r["title"], "kind": "coding", "detail": (r.get("progress") or "")[:120], "queued": False})
+    return runs
+
+
 def coding_loop(server):
     """Background upkeep for coding agents: phone pings for agents left waiting on
-    an approval, pending phone decisions, and (when Agent Control is set up)
-    reconciling which sessions are still open in a terminal."""
+    an approval, reconciling which sessions are still open in a terminal (every
+    90 s), and owning the Live Activity (Dynamic Island) while the app is in the
+    background: an update push when the set of live work changes (keep-alive every
+    2 min so it never reads stale), and an end push the moment nothing is live."""
     import types as _types
     from joebro_backend import Handler
+    from jb_push import has_activities, update_activities, end_activities
     time.sleep(25)
-    pushed, last_reconcile = {}, 0.0
+    last_sig, last_push, last_reconcile, started = None, 0.0, 0.0, None
+    pushed = {}
     while True:
         try:
             h = Handler.__new__(Handler)
             h.server = _types.SimpleNamespace(store=server.store)
-            if server.store.one("SELECT name FROM sqlite_master WHERE type='table' AND name='coding_agents'"):
+            now = time.time()
+            try:
                 h.coding_approval_tick(pushed)
-                if len(pushed) > 400:
-                    pushed.clear()
-                now = time.time()
-                if now - last_reconcile > 90 and server.store.one("SELECT 1 AS x FROM coding_agents WHERE status<>'ended' LIMIT 1"):
-                    last_reconcile = now
-                    try:
-                        h.coding_reconcile_open()
-                    except Exception:
-                        pass
+            except Exception:
+                pass
+            if len(pushed) > 400:
+                pushed.clear()
+            if now - last_reconcile > 90 and server.store.one("SELECT 1 AS x FROM coding_agents WHERE status<>'ended' LIMIT 1"):
+                last_reconcile = now
+                try:
+                    h.coding_reconcile_open()
+                except Exception:
+                    pass
+            if has_activities(server.store):
+                runs = island_state(h)
+                sig = json.dumps([(r["id"], r["detail"][:40], r["queued"]) for r in runs])
+                if not runs:
+                    if last_sig != "[]":
+                        end_activities(server.store, headline="JoeBro finished")
+                    started = None
+                elif sig != last_sig or now - last_push > 120:
+                    started = started or now
+                    n = len(runs)
+                    headline = None if any(r["kind"] != "reply" for r in runs) else ("JoeBro is replying" if n == 1 else "%d chats replying" % n)
+                    state = {"count": n, "runs": runs[:4], "startedAt": started - 978307200, "finished": None}
+                    if headline:
+                        state["headline"] = headline
+                    update_activities(server.store, state, priority=10 if sig != last_sig else 5)
+                    last_push = now
+                last_sig = sig
+            else:
+                last_sig, started = None, None
         except Exception:
             pass
         time.sleep(20)
