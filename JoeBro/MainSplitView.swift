@@ -46,8 +46,10 @@ struct MainSplitView: View {
             EmailPanel()
         case .calendar:
             CalendarPanel()
-        case .brain:
-            BrainPanel()
+        case .brain, .memory:
+            SharedMemoryPanel()
+        case .nightShift:
+            NightShiftPanel()
         case .notes:
             NotesPanel()
         case .tasks:

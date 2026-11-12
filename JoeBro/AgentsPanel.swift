@@ -108,6 +108,10 @@ struct AgentsPanel: View {
                     }
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
+                    if run.parentID.isEmpty, case let kids = all.filter({ $0.parentID == run.id }), !kids.isEmpty {
+                        Label("\(kids.count) subagent\(kids.count == 1 ? "" : "s") · \(kids.filter(\.live).count) running", systemImage: "arrow.triangle.branch")
+                            .font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
                     if !run.parentID.isEmpty {
                         Text("spawned by \(parentName(run, in: all))")
                             .font(.system(size: 10))

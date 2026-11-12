@@ -623,7 +623,7 @@ struct AgentDetailEnvelope: Decodable { var agent: AgentRun }
 struct PluginsResponse: Codable { var plugins: [Plugin] }
 
 enum WorkspaceTab: String, CaseIterable, Identifiable {
-    case chat, email, calendar, brain, notes, agents, tasks, skills, tools, plugins, aiCheck, research, inbox
+    case chat, email, calendar, brain, memory, nightShift, notes, agents, tasks, skills, tools, plugins, aiCheck, research, inbox
 
     var id: String { rawValue }
 
@@ -633,6 +633,8 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
         case .email: return "Email"
         case .calendar: return "Calendar"
         case .brain: return "Brain"
+        case .memory: return "Memory"
+        case .nightShift: return "Night Shift"
         case .notes: return "Notes"
         case .tasks: return "Tasks"
         case .skills: return "Skills"
@@ -651,6 +653,8 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
         case .email: return "envelope"
         case .calendar: return "calendar"
         case .brain: return "brain.head.profile"
+        case .memory: return "brain.head.profile"
+        case .nightShift: return "moon.stars"
         case .notes: return "note.text"
         case .tasks: return "clock.badge.checkmark"
         case .skills: return "graduationcap"

@@ -577,9 +577,57 @@
     "node": "Pi",
     "agent": "",
     "result": ""
+   },
+   {
+    "id": "cc2",
+    "kind": "coding",
+    "title": "Claude Code: fix flaky sync test on CI",
+    "status": "done",
+    "live": false,
+    "model": "claude-sonnet-4",
+    "created_at": "{{d-1:18:20}}",
+    "started_at": "{{d-1:18:20}}",
+    "progress": "",
+    "node": "MacBook",
+    "agent": "claude-code",
+    "finished_at": "{{d-1:18:20}}",
+    "result": "Fixed: the test relied on wall-clock ordering. It now uses an injected clock.",
+    "result_chars": 77
+   },
+   {
+    "id": "oc2",
+    "kind": "coding",
+    "title": "OpenCode: draft the migration guide",
+    "status": "done",
+    "live": false,
+    "model": "llama3.3:70b",
+    "created_at": "{{d-1:18:20}}",
+    "started_at": "{{d-1:18:20}}",
+    "progress": "",
+    "node": "Linux box",
+    "agent": "opencode",
+    "finished_at": "{{d-1:18:20}}",
+    "result": "Drafted docs/migrating-to-v2.md with before and after snippets.",
+    "result_chars": 63
+   },
+   {
+    "id": "cx3",
+    "kind": "coding",
+    "title": "Codex: profile the dashboard query",
+    "status": "done",
+    "live": false,
+    "model": "gpt-5",
+    "created_at": "{{d-1:18:20}}",
+    "started_at": "{{d-1:18:20}}",
+    "progress": "",
+    "node": "Pi",
+    "agent": "codex",
+    "finished_at": "{{d-1:18:20}}",
+    "result": "Found a missing composite index; proposed it in a branch.",
+    "result_chars": 57
    }
   ],
-  "count": 13,
+  "count": 16,
   "live": 7,
   "kinds": [
    "research",
@@ -912,6 +960,84 @@
      "role": "user",
      "content": "Nightly dependency audit",
      "created_at": "{{d0:23:00}}"
+    }
+   ]
+  }
+ },
+ "GET /api/agents/cc2": {
+  "ok": true,
+  "agent": {
+   "id": "cc2",
+   "kind": "coding",
+   "title": "Claude Code: fix flaky sync test on CI",
+   "status": "done",
+   "live": false,
+   "model": "claude-sonnet-4",
+   "created_at": "{{d-1:18:20}}",
+   "started_at": "{{d-1:18:20}}",
+   "progress": "",
+   "node": "MacBook",
+   "agent": "claude-code",
+   "finished_at": "{{d-1:18:20}}",
+   "result": "Fixed: the test relied on wall-clock ordering. It now uses an injected clock.",
+   "result_chars": 77,
+   "messages": [
+    {
+     "role": "user",
+     "content": "Claude Code: fix flaky sync test on CI",
+     "created_at": "{{d-1:18:20}}"
+    }
+   ]
+  }
+ },
+ "GET /api/agents/oc2": {
+  "ok": true,
+  "agent": {
+   "id": "oc2",
+   "kind": "coding",
+   "title": "OpenCode: draft the migration guide",
+   "status": "done",
+   "live": false,
+   "model": "llama3.3:70b",
+   "created_at": "{{d-1:18:20}}",
+   "started_at": "{{d-1:18:20}}",
+   "progress": "",
+   "node": "Linux box",
+   "agent": "opencode",
+   "finished_at": "{{d-1:18:20}}",
+   "result": "Drafted docs/migrating-to-v2.md with before and after snippets.",
+   "result_chars": 63,
+   "messages": [
+    {
+     "role": "user",
+     "content": "OpenCode: draft the migration guide",
+     "created_at": "{{d-1:18:20}}"
+    }
+   ]
+  }
+ },
+ "GET /api/agents/cx3": {
+  "ok": true,
+  "agent": {
+   "id": "cx3",
+   "kind": "coding",
+   "title": "Codex: profile the dashboard query",
+   "status": "done",
+   "live": false,
+   "model": "gpt-5",
+   "created_at": "{{d-1:18:20}}",
+   "started_at": "{{d-1:18:20}}",
+   "progress": "",
+   "node": "Pi",
+   "agent": "codex",
+   "finished_at": "{{d-1:18:20}}",
+   "result": "Found a missing composite index; proposed it in a branch.",
+   "result_chars": 57,
+   "messages": [
+    {
+     "role": "user",
+     "content": "Codex: profile the dashboard query",
+     "created_at": "{{d-1:18:20}}"
     }
    ]
   }
@@ -1261,5 +1387,958 @@
    "output": "3 running: Claude Code (MacBook), Codex (Pi), OpenCode (Linux box)",
    "exit_code": 0
   }
- ]
+ ],
+ "GET /api/night-shift": {
+  "ok": true,
+  "tasks": [
+   {
+    "id": "ns1",
+    "title": "Add retry with backoff to the uploader",
+    "position": 0,
+    "repo": "/code/atlas",
+    "repo_name": "atlas",
+    "prompt": "Add retry with backoff to the uploader",
+    "agent": "claude",
+    "model": "opus",
+    "host": "",
+    "status": "review",
+    "branch": "joebro/night/ns1-add-retry-with-backoff-t",
+    "test_command": "make test",
+    "on_approve": "keep",
+    "result": {
+     "summary": "Added exponential backoff with full jitter (cap 30s) to the uploader, honouring Retry-After. Six new tests, including the 429 and truncated-body cases. No public API changed.",
+     "learned": [
+      "Uploader retries must be idempotent: the server dedupes on the checksum header."
+     ],
+     "commits": 2,
+     "duration_s": 1320,
+     "cost_usd": 1.2,
+     "screenshot": false,
+     "diff": {
+      "files": 6,
+      "insertions": 212,
+      "deletions": 40,
+      "file_list": [
+       {
+        "path": "src/upload.py",
+        "added": 120,
+        "removed": 12
+       },
+       {
+        "path": "src/backoff.py",
+        "added": 54,
+        "removed": 0
+       },
+       {
+        "path": "tests/test_upload.py",
+        "added": 38,
+        "removed": 28
+       }
+      ]
+     },
+     "tests": {
+      "command": "make test",
+      "passed": true,
+      "duration_s": 41,
+      "output_tail": "148 passed in 41.2s"
+     }
+    }
+   },
+   {
+    "id": "ns2",
+    "title": "Migrate auth middleware to sessions v2",
+    "position": 0,
+    "repo": "/code/atlas",
+    "repo_name": "atlas",
+    "prompt": "Migrate auth middleware to sessions v2",
+    "agent": "codex",
+    "model": "gpt-5-codex",
+    "host": "pi",
+    "status": "review",
+    "branch": "joebro/night/ns2-migrate-auth-middleware-",
+    "test_command": "make test",
+    "on_approve": "keep",
+    "result": {
+     "summary": "Moved all middleware to the v2 session store and removed the legacy cookie path. Existing sessions are upgraded on first request. Found and fixed a race in token refresh.",
+     "learned": [],
+     "commits": 2,
+     "duration_s": 2820,
+     "cost_usd": 1.2,
+     "screenshot": false,
+     "diff": {
+      "files": 11,
+      "insertions": 388,
+      "deletions": 214,
+      "file_list": [
+       {
+        "path": "src/auth/session.ts",
+        "added": 140,
+        "removed": 80
+       },
+       {
+        "path": "src/auth/refresh.ts",
+        "added": 96,
+        "removed": 61
+       },
+       {
+        "path": "src/auth/middleware.ts",
+        "added": 70,
+        "removed": 44
+       }
+      ]
+     },
+     "tests": {
+      "command": "make test",
+      "passed": true,
+      "duration_s": 41,
+      "output_tail": "148 passed in 41.2s"
+     }
+    }
+   },
+   {
+    "id": "ns3",
+    "title": "Upgrade to React 19 and fix type errors",
+    "position": 0,
+    "repo": "/code/web",
+    "repo_name": "web",
+    "prompt": "Upgrade to React 19 and fix type errors",
+    "agent": "opencode",
+    "model": "qwen3-coder:30b",
+    "host": "linux-box",
+    "status": "review",
+    "branch": "joebro/night/ns3-upgrade-to-react-19-and-",
+    "test_command": "make test",
+    "on_approve": "keep",
+    "result": {
+     "summary": "Codemod replaced 38 forwardRef wrappers. Two tests still fail in the charting wrapper because the library types lag behind; everything else type-checks.",
+     "learned": [
+      "Charting library types lag React 19; keep the wrapper typed loosely."
+     ],
+     "commits": 2,
+     "duration_s": 3480,
+     "cost_usd": 1.2,
+     "screenshot": false,
+     "diff": {
+      "files": 38,
+      "insertions": 540,
+      "deletions": 505,
+      "file_list": [
+       {
+        "path": "src/components/Chart.tsx",
+        "added": 44,
+        "removed": 30
+       },
+       {
+        "path": "src/components/Button.tsx",
+        "added": 12,
+        "removed": 15
+       }
+      ]
+     },
+     "tests": {
+      "command": "make test",
+      "passed": false,
+      "duration_s": 41,
+      "output_tail": "2 failed, 146 passed\nFAILED tests/test_upload.py::test_retry_cap"
+     }
+    }
+   },
+   {
+    "id": "ns4",
+    "title": "Write migration guide for the v2 API",
+    "position": 1,
+    "repo": "/code/atlas",
+    "repo_name": "atlas",
+    "prompt": "Write migration guide for the v2 API",
+    "agent": "claude",
+    "model": "sonnet",
+    "status": "queued"
+   },
+   {
+    "id": "ns5",
+    "title": "Add dark mode to the settings screens",
+    "position": 2,
+    "repo": "/code/web",
+    "repo_name": "web",
+    "prompt": "Add dark mode to the settings screens",
+    "agent": "opencode",
+    "model": "llama3.3:70b",
+    "status": "queued"
+   },
+   {
+    "id": "ns6",
+    "title": "Profile and fix the slow dashboard query",
+    "position": 3,
+    "repo": "/code/atlas",
+    "repo_name": "atlas",
+    "prompt": "Profile and fix the slow dashboard query",
+    "agent": "codex",
+    "model": "gpt-5",
+    "status": "queued"
+   }
+  ],
+  "config": {
+   "enabled": true,
+   "window_start": "23:00",
+   "window_end": "07:00",
+   "default_agent": "claude"
+  },
+  "running": 0,
+  "queued": 3
+ },
+ "GET /api/night-shift/ns1/diff": {
+  "ok": true,
+  "diff": "diff --git a/src/upload.py b/src/upload.py\n--- a/src/upload.py\n+++ b/src/upload.py\n@@ -41,7 +41,19 @@ def send(chunk):\n-    return post(chunk)\n+    for attempt in range(MAX_ATTEMPTS):\n+        try:\n+            return post(chunk)\n+        except Retryable as err:\n+            time.sleep(backoff(attempt, err.retry_after))\n+    raise UploadFailed(chunk.id)\n",
+  "truncated": false
+ },
+ "GET /api/night-shift/ns2/diff": {
+  "ok": true,
+  "diff": "diff --git a/src/upload.py b/src/upload.py\n--- a/src/upload.py\n+++ b/src/upload.py\n@@ -41,7 +41,19 @@ def send(chunk):\n-    return post(chunk)\n+    for attempt in range(MAX_ATTEMPTS):\n+        try:\n+            return post(chunk)\n+        except Retryable as err:\n+            time.sleep(backoff(attempt, err.retry_after))\n+    raise UploadFailed(chunk.id)\n",
+  "truncated": false
+ },
+ "GET /api/night-shift/ns3/diff": {
+  "ok": true,
+  "diff": "diff --git a/src/upload.py b/src/upload.py\n--- a/src/upload.py\n+++ b/src/upload.py\n@@ -41,7 +41,19 @@ def send(chunk):\n-    return post(chunk)\n+    for attempt in range(MAX_ATTEMPTS):\n+        try:\n+            return post(chunk)\n+        except Retryable as err:\n+            time.sleep(backoff(attempt, err.retry_after))\n+    raise UploadFailed(chunk.id)\n",
+  "truncated": false
+ },
+ "GET /api/night-shift/ns4/diff": {
+  "ok": true,
+  "diff": "diff --git a/src/upload.py b/src/upload.py\n--- a/src/upload.py\n+++ b/src/upload.py\n@@ -41,7 +41,19 @@ def send(chunk):\n-    return post(chunk)\n+    for attempt in range(MAX_ATTEMPTS):\n+        try:\n+            return post(chunk)\n+        except Retryable as err:\n+            time.sleep(backoff(attempt, err.retry_after))\n+    raise UploadFailed(chunk.id)\n",
+  "truncated": false
+ },
+ "GET /api/night-shift/ns5/diff": {
+  "ok": true,
+  "diff": "diff --git a/src/upload.py b/src/upload.py\n--- a/src/upload.py\n+++ b/src/upload.py\n@@ -41,7 +41,19 @@ def send(chunk):\n-    return post(chunk)\n+    for attempt in range(MAX_ATTEMPTS):\n+        try:\n+            return post(chunk)\n+        except Retryable as err:\n+            time.sleep(backoff(attempt, err.retry_after))\n+    raise UploadFailed(chunk.id)\n",
+  "truncated": false
+ },
+ "GET /api/night-shift/ns6/diff": {
+  "ok": true,
+  "diff": "diff --git a/src/upload.py b/src/upload.py\n--- a/src/upload.py\n+++ b/src/upload.py\n@@ -41,7 +41,19 @@ def send(chunk):\n-    return post(chunk)\n+    for attempt in range(MAX_ATTEMPTS):\n+        try:\n+            return post(chunk)\n+        except Retryable as err:\n+            time.sleep(backoff(attempt, err.retry_after))\n+    raise UploadFailed(chunk.id)\n",
+  "truncated": false
+ },
+ "GET /api/shared-memory/projects": {
+  "ok": true,
+  "projects": [
+   {
+    "key": "user",
+    "name": "You",
+    "active": 2,
+    "archived": 0
+   },
+   {
+    "key": "global",
+    "name": "Global",
+    "active": 2,
+    "archived": 0
+   },
+   {
+    "key": "github.com/acme/atlas",
+    "name": "atlas",
+    "active": 5,
+    "archived": 3
+   },
+   {
+    "key": "github.com/acme/web",
+    "name": "web",
+    "active": 1,
+    "archived": 0
+   }
+  ]
+ },
+ "GET /api/shared-memory": {
+  "ok": true,
+  "facts": [
+   {
+    "id": "sm1",
+    "project": "user",
+    "project_name": "You",
+    "scope": "user",
+    "topic": "style",
+    "kind": "preference",
+    "text": "Prefers short answers with a clear next step, and code over prose.",
+    "status": "active",
+    "pinned": true,
+    "strength": 0.95,
+    "recalls": 9,
+    "created_at": "{{d-3:09:00}}",
+    "updated_at": "{{d-0:09:00}}",
+    "provenance": {
+     "agent": "app",
+     "model": "",
+     "host": "MacBook",
+     "source": "app"
+    }
+   },
+   {
+    "id": "sm2",
+    "project": "user",
+    "project_name": "You",
+    "scope": "user",
+    "topic": "review",
+    "kind": "preference",
+    "text": "Reviews diffs in the morning; wants the test result and a one-paragraph summary first.",
+    "status": "active",
+    "pinned": false,
+    "strength": 0.8,
+    "recalls": 5,
+    "created_at": "{{d-5:09:00}}",
+    "updated_at": "{{d-2:09:00}}",
+    "provenance": {
+     "agent": "joebro",
+     "model": "claude-sonnet-4",
+     "host": "MacBook",
+     "source": "app"
+    }
+   },
+   {
+    "id": "sm3",
+    "project": "github.com/acme/atlas",
+    "project_name": "atlas",
+    "scope": "project",
+    "topic": "testing",
+    "kind": "fact",
+    "text": "Run tests with `make test`; the suite needs Postgres on port 5433.",
+    "status": "active",
+    "pinned": true,
+    "strength": 0.88,
+    "recalls": 12,
+    "created_at": "{{d-4:09:00}}",
+    "updated_at": "{{d-1:09:00}}",
+    "provenance": {
+     "agent": "claude",
+     "model": "claude-opus-4",
+     "host": "MacBook",
+     "source": "mcp"
+    }
+   },
+   {
+    "id": "sm4",
+    "project": "github.com/acme/atlas",
+    "project_name": "atlas",
+    "scope": "project",
+    "topic": "sync",
+    "kind": "decision",
+    "text": "Staleness is decided in one place, `isStale` in clock.ts. Ties are broken by device id.",
+    "status": "active",
+    "pinned": false,
+    "strength": 0.82,
+    "recalls": 7,
+    "created_at": "{{d-5:09:00}}",
+    "updated_at": "{{d-2:09:00}}",
+    "provenance": {
+     "agent": "codex",
+     "model": "gpt-5-codex",
+     "host": "Pi",
+     "source": "mcp"
+    }
+   },
+   {
+    "id": "sm5",
+    "project": "github.com/acme/atlas",
+    "project_name": "atlas",
+    "scope": "project",
+    "topic": "migrations",
+    "kind": "gotcha",
+    "text": "Never edit an applied migration; the checksum guard fails the whole deploy. Add a new one.",
+    "status": "active",
+    "pinned": false,
+    "strength": 0.74,
+    "recalls": 6,
+    "created_at": "{{d-7:09:00}}",
+    "updated_at": "{{d-4:09:00}}",
+    "provenance": {
+     "agent": "claude",
+     "model": "claude-opus-4",
+     "host": "MacBook",
+     "source": "mcp"
+    }
+   },
+   {
+    "id": "sm6",
+    "project": "github.com/acme/atlas",
+    "project_name": "atlas",
+    "scope": "project",
+    "topic": "auth",
+    "kind": "learned",
+    "text": "The legacy token cookie is written only by session.ts and refresh.ts; everything else just reads it.",
+    "status": "active",
+    "pinned": false,
+    "strength": 0.66,
+    "recalls": 3,
+    "created_at": "{{d-4:09:00}}",
+    "updated_at": "{{d-1:09:00}}",
+    "provenance": {
+     "agent": "opencode",
+     "model": "qwen3-coder:30b",
+     "host": "Linux box",
+     "source": "night_shift"
+    }
+   },
+   {
+    "id": "sm7",
+    "project": "github.com/acme/atlas",
+    "project_name": "atlas",
+    "scope": "project",
+    "topic": "uploader",
+    "kind": "handoff",
+    "text": "Retry with backoff is half done: curve chosen (full jitter, cap 30s), integration tests still to write.",
+    "status": "active",
+    "pinned": false,
+    "strength": 0.58,
+    "recalls": 2,
+    "created_at": "{{d-3:09:00}}",
+    "updated_at": "{{d-0:09:00}}",
+    "provenance": {
+     "agent": "codex",
+     "model": "gpt-5-codex",
+     "host": "Pi",
+     "source": "mcp"
+    }
+   },
+   {
+    "id": "sm8",
+    "project": "github.com/acme/web",
+    "project_name": "web",
+    "scope": "project",
+    "topic": "react",
+    "kind": "decision",
+    "text": "Staying on React 19 with the compiler off until the charting library ships its types.",
+    "status": "active",
+    "pinned": false,
+    "strength": 0.7,
+    "recalls": 4,
+    "created_at": "{{d-6:09:00}}",
+    "updated_at": "{{d-3:09:00}}",
+    "provenance": {
+     "agent": "opencode",
+     "model": "qwen3-coder:30b",
+     "host": "Linux box",
+     "source": "mcp"
+    }
+   },
+   {
+    "id": "sm9",
+    "project": "global",
+    "project_name": "Global",
+    "scope": "global",
+    "topic": "commits",
+    "kind": "preference",
+    "text": "Small commits with a imperative subject line; never push without being asked.",
+    "status": "active",
+    "pinned": true,
+    "strength": 0.9,
+    "recalls": 15,
+    "created_at": "{{d-9:09:00}}",
+    "updated_at": "{{d-6:09:00}}",
+    "provenance": {
+     "agent": "claude",
+     "model": "claude-opus-4",
+     "host": "MacBook",
+     "source": "mcp"
+    }
+   },
+   {
+    "id": "sm10",
+    "project": "global",
+    "project_name": "Global",
+    "scope": "global",
+    "topic": "machines",
+    "kind": "fact",
+    "text": "Three machines are linked: MacBook (daily driver), Pi (always on, runs Night Shift), Linux box (GPU, local models).",
+    "status": "active",
+    "pinned": false,
+    "strength": 0.77,
+    "recalls": 8,
+    "created_at": "{{d-8:09:00}}",
+    "updated_at": "{{d-5:09:00}}",
+    "provenance": {
+     "agent": "app",
+     "model": "",
+     "host": "MacBook",
+     "source": "app"
+    }
+   }
+  ],
+  "count": 10
+ },
+ "GET /api/shared-memory/sm1": {
+  "ok": true,
+  "fact": {
+   "id": "sm1",
+   "project": "user",
+   "project_name": "You",
+   "scope": "user",
+   "topic": "style",
+   "kind": "preference",
+   "text": "Prefers short answers with a clear next step, and code over prose.",
+   "status": "active",
+   "pinned": true,
+   "strength": 0.95,
+   "recalls": 9,
+   "created_at": "{{d-3:09:00}}",
+   "updated_at": "{{d-0:09:00}}",
+   "provenance": {
+    "agent": "app",
+    "model": "",
+    "host": "MacBook",
+    "source": "app"
+   }
+  },
+  "history": [
+   {
+    "id": "sm1",
+    "project": "user",
+    "project_name": "You",
+    "scope": "user",
+    "topic": "style",
+    "kind": "preference",
+    "text": "Prefers short answers with a clear next step, and code over prose.",
+    "status": "active",
+    "pinned": true,
+    "strength": 0.95,
+    "recalls": 9,
+    "created_at": "{{d-3:09:00}}",
+    "updated_at": "{{d-0:09:00}}",
+    "provenance": {
+     "agent": "app",
+     "model": "",
+     "host": "MacBook",
+     "source": "app"
+    }
+   }
+  ],
+  "log": []
+ },
+ "GET /api/shared-memory/sm2": {
+  "ok": true,
+  "fact": {
+   "id": "sm2",
+   "project": "user",
+   "project_name": "You",
+   "scope": "user",
+   "topic": "review",
+   "kind": "preference",
+   "text": "Reviews diffs in the morning; wants the test result and a one-paragraph summary first.",
+   "status": "active",
+   "pinned": false,
+   "strength": 0.8,
+   "recalls": 5,
+   "created_at": "{{d-5:09:00}}",
+   "updated_at": "{{d-2:09:00}}",
+   "provenance": {
+    "agent": "joebro",
+    "model": "claude-sonnet-4",
+    "host": "MacBook",
+    "source": "app"
+   }
+  },
+  "history": [
+   {
+    "id": "sm2",
+    "project": "user",
+    "project_name": "You",
+    "scope": "user",
+    "topic": "review",
+    "kind": "preference",
+    "text": "Reviews diffs in the morning; wants the test result and a one-paragraph summary first.",
+    "status": "active",
+    "pinned": false,
+    "strength": 0.8,
+    "recalls": 5,
+    "created_at": "{{d-5:09:00}}",
+    "updated_at": "{{d-2:09:00}}",
+    "provenance": {
+     "agent": "joebro",
+     "model": "claude-sonnet-4",
+     "host": "MacBook",
+     "source": "app"
+    }
+   }
+  ],
+  "log": []
+ },
+ "GET /api/shared-memory/sm3": {
+  "ok": true,
+  "fact": {
+   "id": "sm3",
+   "project": "github.com/acme/atlas",
+   "project_name": "atlas",
+   "scope": "project",
+   "topic": "testing",
+   "kind": "fact",
+   "text": "Run tests with `make test`; the suite needs Postgres on port 5433.",
+   "status": "active",
+   "pinned": true,
+   "strength": 0.88,
+   "recalls": 12,
+   "created_at": "{{d-4:09:00}}",
+   "updated_at": "{{d-1:09:00}}",
+   "provenance": {
+    "agent": "claude",
+    "model": "claude-opus-4",
+    "host": "MacBook",
+    "source": "mcp"
+   }
+  },
+  "history": [
+   {
+    "id": "sm3",
+    "project": "github.com/acme/atlas",
+    "project_name": "atlas",
+    "scope": "project",
+    "topic": "testing",
+    "kind": "fact",
+    "text": "Run tests with `make test`; the suite needs Postgres on port 5433.",
+    "status": "active",
+    "pinned": true,
+    "strength": 0.88,
+    "recalls": 12,
+    "created_at": "{{d-4:09:00}}",
+    "updated_at": "{{d-1:09:00}}",
+    "provenance": {
+     "agent": "claude",
+     "model": "claude-opus-4",
+     "host": "MacBook",
+     "source": "mcp"
+    }
+   }
+  ],
+  "log": []
+ },
+ "GET /api/shared-memory/sm4": {
+  "ok": true,
+  "fact": {
+   "id": "sm4",
+   "project": "github.com/acme/atlas",
+   "project_name": "atlas",
+   "scope": "project",
+   "topic": "sync",
+   "kind": "decision",
+   "text": "Staleness is decided in one place, `isStale` in clock.ts. Ties are broken by device id.",
+   "status": "active",
+   "pinned": false,
+   "strength": 0.82,
+   "recalls": 7,
+   "created_at": "{{d-5:09:00}}",
+   "updated_at": "{{d-2:09:00}}",
+   "provenance": {
+    "agent": "codex",
+    "model": "gpt-5-codex",
+    "host": "Pi",
+    "source": "mcp"
+   }
+  },
+  "history": [
+   {
+    "id": "sm4",
+    "project": "github.com/acme/atlas",
+    "project_name": "atlas",
+    "scope": "project",
+    "topic": "sync",
+    "kind": "decision",
+    "text": "Staleness is decided in one place, `isStale` in clock.ts. Ties are broken by device id.",
+    "status": "active",
+    "pinned": false,
+    "strength": 0.82,
+    "recalls": 7,
+    "created_at": "{{d-5:09:00}}",
+    "updated_at": "{{d-2:09:00}}",
+    "provenance": {
+     "agent": "codex",
+     "model": "gpt-5-codex",
+     "host": "Pi",
+     "source": "mcp"
+    }
+   }
+  ],
+  "log": []
+ },
+ "GET /api/shared-memory/sm5": {
+  "ok": true,
+  "fact": {
+   "id": "sm5",
+   "project": "github.com/acme/atlas",
+   "project_name": "atlas",
+   "scope": "project",
+   "topic": "migrations",
+   "kind": "gotcha",
+   "text": "Never edit an applied migration; the checksum guard fails the whole deploy. Add a new one.",
+   "status": "active",
+   "pinned": false,
+   "strength": 0.74,
+   "recalls": 6,
+   "created_at": "{{d-7:09:00}}",
+   "updated_at": "{{d-4:09:00}}",
+   "provenance": {
+    "agent": "claude",
+    "model": "claude-opus-4",
+    "host": "MacBook",
+    "source": "mcp"
+   }
+  },
+  "history": [
+   {
+    "id": "sm5",
+    "project": "github.com/acme/atlas",
+    "project_name": "atlas",
+    "scope": "project",
+    "topic": "migrations",
+    "kind": "gotcha",
+    "text": "Never edit an applied migration; the checksum guard fails the whole deploy. Add a new one.",
+    "status": "active",
+    "pinned": false,
+    "strength": 0.74,
+    "recalls": 6,
+    "created_at": "{{d-7:09:00}}",
+    "updated_at": "{{d-4:09:00}}",
+    "provenance": {
+     "agent": "claude",
+     "model": "claude-opus-4",
+     "host": "MacBook",
+     "source": "mcp"
+    }
+   }
+  ],
+  "log": []
+ },
+ "GET /api/shared-memory/sm6": {
+  "ok": true,
+  "fact": {
+   "id": "sm6",
+   "project": "github.com/acme/atlas",
+   "project_name": "atlas",
+   "scope": "project",
+   "topic": "auth",
+   "kind": "learned",
+   "text": "The legacy token cookie is written only by session.ts and refresh.ts; everything else just reads it.",
+   "status": "active",
+   "pinned": false,
+   "strength": 0.66,
+   "recalls": 3,
+   "created_at": "{{d-4:09:00}}",
+   "updated_at": "{{d-1:09:00}}",
+   "provenance": {
+    "agent": "opencode",
+    "model": "qwen3-coder:30b",
+    "host": "Linux box",
+    "source": "night_shift"
+   }
+  },
+  "history": [
+   {
+    "id": "sm6",
+    "project": "github.com/acme/atlas",
+    "project_name": "atlas",
+    "scope": "project",
+    "topic": "auth",
+    "kind": "learned",
+    "text": "The legacy token cookie is written only by session.ts and refresh.ts; everything else just reads it.",
+    "status": "active",
+    "pinned": false,
+    "strength": 0.66,
+    "recalls": 3,
+    "created_at": "{{d-4:09:00}}",
+    "updated_at": "{{d-1:09:00}}",
+    "provenance": {
+     "agent": "opencode",
+     "model": "qwen3-coder:30b",
+     "host": "Linux box",
+     "source": "night_shift"
+    }
+   }
+  ],
+  "log": []
+ },
+ "GET /api/shared-memory/sm7": {
+  "ok": true,
+  "fact": {
+   "id": "sm7",
+   "project": "github.com/acme/atlas",
+   "project_name": "atlas",
+   "scope": "project",
+   "topic": "uploader",
+   "kind": "handoff",
+   "text": "Retry with backoff is half done: curve chosen (full jitter, cap 30s), integration tests still to write.",
+   "status": "active",
+   "pinned": false,
+   "strength": 0.58,
+   "recalls": 2,
+   "created_at": "{{d-3:09:00}}",
+   "updated_at": "{{d-0:09:00}}",
+   "provenance": {
+    "agent": "codex",
+    "model": "gpt-5-codex",
+    "host": "Pi",
+    "source": "mcp"
+   }
+  },
+  "history": [
+   {
+    "id": "sm7",
+    "project": "github.com/acme/atlas",
+    "project_name": "atlas",
+    "scope": "project",
+    "topic": "uploader",
+    "kind": "handoff",
+    "text": "Retry with backoff is half done: curve chosen (full jitter, cap 30s), integration tests still to write.",
+    "status": "active",
+    "pinned": false,
+    "strength": 0.58,
+    "recalls": 2,
+    "created_at": "{{d-3:09:00}}",
+    "updated_at": "{{d-0:09:00}}",
+    "provenance": {
+     "agent": "codex",
+     "model": "gpt-5-codex",
+     "host": "Pi",
+     "source": "mcp"
+    }
+   }
+  ],
+  "log": []
+ },
+ "GET /api/shared-memory/sm8": {
+  "ok": true,
+  "fact": {
+   "id": "sm8",
+   "project": "github.com/acme/web",
+   "project_name": "web",
+   "scope": "project",
+   "topic": "react",
+   "kind": "decision",
+   "text": "Staying on React 19 with the compiler off until the charting library ships its types.",
+   "status": "active",
+   "pinned": false,
+   "strength": 0.7,
+   "recalls": 4,
+   "created_at": "{{d-6:09:00}}",
+   "updated_at": "{{d-3:09:00}}",
+   "provenance": {
+    "agent": "opencode",
+    "model": "qwen3-coder:30b",
+    "host": "Linux box",
+    "source": "mcp"
+   }
+  },
+  "history": [
+   {
+    "id": "sm8",
+    "project": "github.com/acme/web",
+    "project_name": "web",
+    "scope": "project",
+    "topic": "react",
+    "kind": "decision",
+    "text": "Staying on React 19 with the compiler off until the charting library ships its types.",
+    "status": "active",
+    "pinned": false,
+    "strength": 0.7,
+    "recalls": 4,
+    "created_at": "{{d-6:09:00}}",
+    "updated_at": "{{d-3:09:00}}",
+    "provenance": {
+     "agent": "opencode",
+     "model": "qwen3-coder:30b",
+     "host": "Linux box",
+     "source": "mcp"
+    }
+   }
+  ],
+  "log": []
+ },
+ "GET /api/shared-memory/sm9": {
+  "ok": true,
+  "fact": {
+   "id": "sm9",
+   "project": "global",
+   "project_name": "Global",
+   "scope": "global",
+   "topic": "commits",
+   "kind": "preference",
+   "text": "Small commits with a imperative subject line; never push without being asked.",
+   "status": "active",
+   "pinned": true,
+   "strength": 0.9,
+   "recalls": 15,
+   "created_at": "{{d-9:09:00}}",
+   "updated_at": "{{d-6:09:00}}",
+   "provenance": {
+    "agent": "claude",
+    "model": "claude-opus-4",
+    "host": "MacBook",
+    "source": "mcp"
+   }
+  },
+  "history": [
+   {
+    "id": "sm9",
+    "project": "global",
+    "project_name": "Global",
+    "scope": "global",
+    "topic": "commits",
+    "kind": "preference",
+    "text": "Small commits with a imperative subject line; never push without being asked.",
+    "status": "active",
+    "pinned": true,
+    "strength": 0.9,
+    "recalls": 15,
+    "created_at": "{{d-9:09:00}}",
+    "updated_at": "{{d-6:09:00}}",
+    "provenance": {
+     "agent": "claude",
+     "model": "claude-opus-4",
+     "host": "MacBook",
+     "source": "mcp"
+    }
+   }
+  ],
+  "log": []
+ },
+ "GET /api/shared-memory/sm10": {
+  "ok": true,
+  "fact": {
+   "id": "sm10",
+   "project": "global",
+   "project_name": "Global",
+   "scope": "global",
+   "topic": "machines",
+   "kind": "fact",
+   "text": "Three machines are linked: MacBook (daily driver), Pi (always on, runs Night Shift), Linux box (GPU, local models).",
+   "status": "active",
+   "pinned": false,
+   "strength": 0.77,
+   "recalls": 8,
+   "created_at": "{{d-8:09:00}}",
+   "updated_at": "{{d-5:09:00}}",
+   "provenance": {
+    "agent": "app",
+    "model": "",
+    "host": "MacBook",
+    "source": "app"
+   }
+  },
+  "history": [
+   {
+    "id": "sm10",
+    "project": "global",
+    "project_name": "Global",
+    "scope": "global",
+    "topic": "machines",
+    "kind": "fact",
+    "text": "Three machines are linked: MacBook (daily driver), Pi (always on, runs Night Shift), Linux box (GPU, local models).",
+    "status": "active",
+    "pinned": false,
+    "strength": 0.77,
+    "recalls": 8,
+    "created_at": "{{d-8:09:00}}",
+    "updated_at": "{{d-5:09:00}}",
+    "provenance": {
+     "agent": "app",
+     "model": "",
+     "host": "MacBook",
+     "source": "app"
+    }
+   }
+  ],
+  "log": []
+ }
 }

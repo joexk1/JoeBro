@@ -120,8 +120,9 @@ struct SidebarView: View {
                         Group {
                             navRow(.email)
                             navRow(.calendar)
-                            navRow(.brain)
+                            navRow(.memory)
                             navRow(.agents)
+                            navRow(.nightShift)
                             navRow(.tasks)
                             navRow(.skills)
                             navRow(.tools)
