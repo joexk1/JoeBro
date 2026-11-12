@@ -272,6 +272,15 @@ class ChatMixin:
         for i in range(0, len(text), n):
             yield text[i:i + n]
 
+    @staticmethod
+    def bool_body(body, key, default=False):
+        if key not in body:
+            return default
+        val = body.get(key)
+        if isinstance(val, str):
+            return val.strip().lower() in ("1", "true", "yes", "on")
+        return bool(val)
+
     def _stream_document(self, sse, doc):
         """Open a freshly-created doc in the editor and type its content in,
         matching the Pi's doc_stream_open -> deltas -> doc_update sequence."""
@@ -513,6 +522,8 @@ class ChatMixin:
         try:
             with urllib.request.urlopen(req, timeout=120) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
+            self.record_usage(f.get("endpoint_id"), payload["model"], data.get("usage"),
+                              len(json.dumps(messages)), len(json.dumps(data.get("choices") or "")))
             return data.get("choices", [{}])[0].get("message", {}) or {}
         except Exception as exc:
             return self._endpoint_error(exc)
@@ -528,13 +539,21 @@ class ChatMixin:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
+        if any(h in (self.store.one("select base_url from endpoints where id=?", (f.get("endpoint_id") or "",)) or {}).get("base_url", "")
+               for h in ("openrouter.ai", "api.deepseek.com", "api.openai.com")):
+            payload["stream_options"] = {"include_usage": True}   # final chunk carries real token counts
         req = self._endpoint_request(f, payload)
         if req is None:
             return None
-        content, reasoning, calls, finish = [], [], {}, ""
+        content, reasoning, calls, finish, usage = [], [], {}, "", None
+        from jb_agents import register_model_socket, unregister_model_socket
+        stream_token = object()
+        sid = f.get("session") or getattr(self, "_cancel_session_id", "")
         try:
             with urllib.request.urlopen(req, timeout=300) as resp:
+                register_model_socket(stream_token, resp, self._agent_run_id, sid)
                 for raw in resp:
+                    if self.agent_run_cancelled(session_id=sid): break
                     line = raw.decode("utf-8", errors="replace").strip()
                     if not line.startswith("data:"):
                         continue
@@ -542,9 +561,12 @@ class ChatMixin:
                     if data == "[DONE]":
                         break
                     try:
-                        choice = (json.loads(data).get("choices") or [{}])[0]
+                        chunk = json.loads(data)
+                        choice = (chunk.get("choices") or [{}])[0]
                     except Exception:
                         continue
+                    if chunk.get("usage"):
+                        usage = chunk["usage"]
                     if choice.get("finish_reason"):
                         finish = choice["finish_reason"]
                     delta = choice.get("delta") or {}
@@ -562,7 +584,12 @@ class ChatMixin:
                         if fn.get("name"): slot["function"]["name"] += fn["name"]
                         if fn.get("arguments"): slot["function"]["arguments"] += fn["arguments"]
         except Exception as exc:
-            return self._endpoint_error(exc)
+            if not self.agent_run_cancelled(session_id=sid):
+                return self._endpoint_error(exc)
+        finally:
+            unregister_model_socket(stream_token)
+        self.record_usage(f.get("endpoint_id"), payload["model"], usage, len(json.dumps(messages)),
+                          len("".join(content)) + len("".join(reasoning)) + len(json.dumps(list(calls.values()))))
         msg = {"role": "assistant", "content": "".join(content)}
         if reasoning:
             msg["reasoning_content"] = "".join(reasoning)
@@ -624,6 +651,7 @@ class ChatMixin:
         orchestrator = str(f.get("orchestrator") or "").lower() in ("1", "true", "yes")
         agent = orchestrator or (f.get("mode") or "").lower() == "agent"
         on_phone = sid == PHONE_SESSION_ID
+        is_personal = on_phone                 # the phone agent's turns carry result cards
         tools = None
         if on_phone and agent:
             # Tools are resolved BEFORE the prompt: the composed phone prompt only
@@ -737,6 +765,8 @@ class ChatMixin:
         call_sigs, stuck = {}, False
         no_think = False   # set once reasoning has eaten a whole round's budget
         cancelled = False
+        continuations, partial_answer = 0, ""
+        finishing = False
         while True:
             # Stop, for real. A registry run (spawned agent, task) or a chat the user
             # hit Stop on is checked HERE, between rounds, the one place a long
@@ -752,11 +782,27 @@ class ChatMixin:
             # and the repeated-identical-call detector are the only stops. If either
             # trips, drop tools so the model MUST give a final answer this round.
             hit_limit = max_tool_calls and tool_calls_made >= max_tool_calls
-            use_tools = None if (stuck or hit_limit) else tools
+            use_tools = None if (stuck or hit_limit or finishing) else tools
             # Stream every round: content + reasoning deltas reach the client
             # live (the final answer no longer appears all at once after a wait).
+            # Refresh the actual saved plan every round; the initial system
+            # prompt otherwise kept showing the original unchecked steps.
+            plan_marker = "CURRENT WORKING PLAN (latest saved state):\n"
+            messages[:] = [m for m in messages if not (m.get("role") == "system" and
+                isinstance(m.get("content"), str) and m["content"].startswith(plan_marker))]
+            plan = self.plan_block(sid)
+            if plan:
+                messages.append({"role": "system", "content": plan_marker + plan +
+                    "\nBefore further work, update any step whose result has arrived; mark the next step doing. "
+                    "Use manage_plan to update this existing plan now, not only in the final answer. "
+                    "Never mark a step done without evidence from its result."})
             round_f = dict(f, thinking="false") if no_think else f
             msg = self._stream_chat(round_f, messages, use_tools, emit)
+            if self.agent_run_cancelled(session_id=sid):
+                cancelled = True
+                final_text = (msg.get("content") if isinstance(msg, dict) else "") or "Stopped."
+                if final_text == "Stopped.": emit({"delta": final_text})
+                break
             # If the call errored and we'd attached images, the model/endpoint
             # likely can't take them — drop the images and try once more so the
             # whole run doesn't die on one image.
@@ -773,6 +819,18 @@ class ChatMixin:
             raw_calls = msg.get("tool_calls") or []
             if not raw_calls or use_tools is None:
                 final_text = msg.get("content") or ""   # already streamed live
+                if f.get("_scheduled_task") and finish == "length" and final_text:
+                    if continuations >= 2:
+                        raise RuntimeError("Scheduled reply was truncated after continuation; not published")
+                    partial_answer += final_text
+                    messages.append({"role": "assistant", "content": final_text})
+                    messages.append({"role": "system", "content": "Continue the interrupted final answer exactly where it stopped. Do not repeat previous text or call tools. Finish the user's requested report."})
+                    continuations += 1
+                    finishing = True
+                    no_think = True
+                    continue
+                if partial_answer:
+                    final_text = partial_answer + final_text
                 if not final_text and finish == "length" and not no_think:
                     # A reasoning model spent the ENTIRE reply budget thinking and
                     # returned no text and no tool call. The turn used to end right
@@ -811,6 +869,9 @@ class ChatMixin:
             pending_narration = (msg.get("content") or "").strip()
             pending_vis = []   # image vision messages, appended AFTER all tool replies
             for tc in raw_calls:
+                if self.agent_run_cancelled(session_id=sid):
+                    cancelled = True
+                    break
                 fn = tc.get("function") or {}
                 name = (fn.get("name") or "").strip().lower()
                 # Per-turn tool-call cap, enforced inside the round too: a model
@@ -874,15 +935,33 @@ class ChatMixin:
                 # Announce the tool the moment it starts so the row appears live.
                 emit({"type": "tool_start", "tool": name, "command": command})
                 tool_calls_made += 1
+                if f.get("_scheduled_task"):
+                    multiplex = {"manage_events", "manage_reminders", "manage_tasks", "manage_agents", "manage_skills", "manage_memory", "manage_research", "manage_chats", "shopping_list", "coding_agents", "manage_autonomy", "manage_pulse", "manage_plan"}
+                    read_action = name in multiplex and str(params.get("action") or "list").lower() in {"list", "get", "read", "search", "status", "result"}
+                    read_name = name.startswith(("read_", "list_", "get_", "find_", "search_")) or name in {"web_search", "muse_recall", "health_data", "personal_task_list"}
+                    if "__" in name:
+                        row, real = self.mcp_server_for_func(name)
+                        read_name = any(t.get("name") == real and (t.get("annotations") or {}).get("readOnlyHint") is True
+                                        for t in json.loads((row or {}).get("tools_json") or "[]"))
+                    # Mark before dispatch: even a failed write can have partly acted.
+                    if not (read_action or read_name): self._task_write_performed = True
                 event = self._run_one_tool(root, name, body, f, allow_outside, readonly)
                 if event is None:
                     event = {"tool": name, "command": command,
                              "output": f"The {name} tool is not available in this mode.", "exit_code": 1}
+                if is_personal:
+                    try:
+                        from jb_cards import tool_visualization
+                        card = tool_visualization(name, params, event.get("output"), event.get("exit_code", 0))
+                        if card:
+                            event["visualization" if card["kind"] == "plan" else "_visualization_candidate"] = card
+                    except Exception: pass  # a visual can never break a successful action
                 if pending_narration:
                     event["narration"], pending_narration = pending_narration, ""
                 events.append(event)
                 emit({"type": "tool_output", "tool": event.get("tool"), "command": event.get("command", ""),
-                      "output": event.get("output", ""), "exit_code": event.get("exit_code", 0)})
+                      "output": event.get("output", ""), "exit_code": event.get("exit_code", 0),
+                      **({"visualization": event["visualization"]} if event.get("visualization") else {})})
                 doc = event.get("doc")
                 if doc and event.get("exit_code") == 0:
                     emit({"_doc": doc, "_tool": event.get("tool")})
@@ -902,9 +981,14 @@ class ChatMixin:
                 messages.append(vis)
             if pending_vis:
                 self._prune_context_images(messages)
+        if is_personal:
+            from jb_cards import select_result_visualizations
+            result_cards = select_result_visualizations(events, final_text, f.get("message") or "")
+            if result_cards: emit({"type": "visualizations", "data": result_cards})
         if not final_text:
             final_text = "I stopped without a final answer. Ask me to continue."
         if cancelled:
+            self._turn_cancelled = True
             self.agent_clear_cancel(session_id=sid)
         return final_text, "\n\n".join(thinking_parts), events
 
@@ -1074,7 +1158,10 @@ class ChatMixin:
         with _PERMISSION_GUARD:
             _PERMISSION_REGISTRY[rid] = {"event": ev, "decision": "deny"}
         emit({"type": "permission_request", "request_id": rid, "tool": tool, "command": command})
-        ev.wait(timeout=180)
+        deadline = time.monotonic() + 180
+        while not ev.wait(timeout=0.2) and time.monotonic() < deadline:
+            if self.agent_run_cancelled(session_id=getattr(self, "_cancel_session_id", "")):
+                break
         with _PERMISSION_GUARD:
             return _PERMISSION_REGISTRY.pop(rid, {}).get("decision", "deny")
 
@@ -1194,18 +1281,58 @@ class ChatMixin:
         if not msgs:
             return prefix + [{"role": "user", "content": f.get("message", "")}]
 
-        total = sum(len(m["content"]) for m in msgs)
-        if len(msgs) <= self.COMPACT_KEEP_RECENT or total <= self.COMPACT_CHAR_BUDGET:
-            return prefix + msgs[-30:]
+        # One huge old message (a pasted document, a long essay reply) used to ride
+        # along verbatim on every turn, and chats of <=12 messages were never
+        # compacted at all. Trim any single message beyond the last two.
+        cap = getattr(self, "HISTORY_MSG_CHAR_CAP", 6000)
+        for i in range(len(msgs) - 2):
+            c = msgs[i]["content"]
+            if len(c) > cap:
+                head = int(cap * 0.7)
+                msgs[i] = dict(msgs[i], content=(
+                    c[:head] + f"\n\n... [{len(c) - cap:,} characters trimmed from this older message] ...\n\n" + c[-(cap - head):]))
 
-        older = msgs[:-self.COMPACT_KEEP_RECENT]
-        recent = msgs[-self.COMPACT_KEEP_RECENT:]
-        summary = self._compact_history(f, sid, older)
+        total = sum(len(m["content"]) for m in msgs)
+        # Compact on EITHER limit. Under the char budget a long chat was cut to
+        # msgs[-30:] with no summary at all — the oldest turns just vanished,
+        # which is silent forgetting, not compaction.
+        if len(msgs) <= self.COMPACT_KEEP_RECENT or (total <= self.COMPACT_CHAR_BUDGET and len(msgs) <= 30):
+            return prefix + msgs
+
+        keep = self._keep_recent(msgs)
+        if len(msgs) <= keep:
+            return prefix + msgs
+        older = msgs[:-keep]
+        recent = msgs[-keep:]
+        summary, covered = self._compact_history(f, sid, older)
         if summary:
-            return prefix + [{"role": "system",
-                     "content": "[Conversation summary — earlier turns were compacted]\n" + summary}] + recent
+            # older[covered:] is the gap a REUSED summary doesn't cover yet. Send
+            # it verbatim: those turns are in neither the cached summary nor
+            # `recent`, so without this the model forgets what happened 13 turns
+            # ago while still remembering turn 2.
+            return (prefix + [{"role": "system",
+                    "content": "[Conversation summary — earlier turns were compacted]\n" + summary}]
+                    + older[covered:] + recent)
         return prefix + msgs[-30:]   # summary unavailable — fall back to naive trim
 
+
+    def _keep_recent(self, msgs):
+        """How many trailing turns to keep verbatim. Turn COUNT alone is the
+        wrong unit: ten agentic turns dragging tool output behind them are far
+        bigger than fifty chat turns, and a fixed keep-12 then refuses to
+        compact the largest chats in the database ("too short"). Cap at
+        COMPACT_KEEP_RECENT, but keep fewer when those turns alone would eat
+        the budget. Never below 2 — the model must still see what was just
+        said."""
+        keep, used = 0, 0
+        for m in reversed(msgs):
+            if keep >= self.COMPACT_KEEP_RECENT:
+                break
+            if keep >= 2 and used > self.COMPACT_CHAR_BUDGET // 2:
+                break
+            used += len(m.get("content") or "")
+            keep += 1
+        return min(max(keep, 1), len(msgs))
 
     @staticmethod
     def _history_tool_note(raw):
@@ -1227,17 +1354,23 @@ class ChatMixin:
 
     def _compact_history(self, f, sid, older):
         """Summarize `older` turns into one dense note via the session's own
-        endpoint. Cached per session in prefs and only refreshed once the older
-        window has grown by a few turns, so we don't pay to re-summarize every
-        turn. Incremental: a prior summary is folded into the next one."""
+        endpoint. Returns (summary, how many of `older` it actually covers) —
+        the caller sends the uncovered tail verbatim, so reusing the cache can
+        never drop a turn. Cached per session in prefs and only refreshed once
+        the older window has grown by a few turns, so we don't pay to
+        re-summarize every turn. Incremental: only the turns the cached summary
+        doesn't cover are folded into the next one."""
         cache = self.pref("compact_" + sid) or {}
-        cached_n = int(cache.get("n") or 0)
+        # A manual compact shrinks the history: clamp so a stale `n` can't claim
+        # to cover turns that no longer exist.
+        cached_n = min(int(cache.get("n") or 0), len(older))
         cached_summary = cache.get("summary") or ""
         # Reuse the cached summary until at least 6 new turns have aged out.
         if cached_summary and len(older) - cached_n < 6:
-            return cached_summary
+            return cached_summary, cached_n
 
-        convo = "\n".join(f"{m['role'].upper()}: {m['content'][:2000]}" for m in older)
+        fold = older[cached_n:] if cached_summary else older
+        convo = "\n".join(f"{m['role'].upper()}: {m['content'][:2000]}" for m in fold)
         user = convo
         if cached_summary:
             user = ("Existing summary of earlier turns:\n" + cached_summary +
@@ -1246,9 +1379,9 @@ class ChatMixin:
             f.get("endpoint_id") or "", f.get("model") or "",
             self.COMPACT_SYSTEM_PROMPT, user, max_tokens=1024)
         if not summary:
-            return cached_summary or ""
+            return (cached_summary, cached_n) if cached_summary else ("", 0)
         self.set_pref("compact_" + sid, {"n": len(older), "summary": summary})
-        return summary
+        return summary, len(older)
 
     def manual_compact(self, sid):
         """Force-compact a session on demand (the 'Compact Chat' button):
@@ -1260,13 +1393,22 @@ class ChatMixin:
         if not sess:
             return {"ok": False, "error": "no such session"}
         rows = self.store.rows(
-            "select id, role, content from messages where session_id=? order by id", (sid,))
-        convo = [r for r in rows
-                 if r.get("role") in ("user", "assistant") and (r.get("content") or "").strip()]
-        if len(convo) <= self.COMPACT_KEEP_RECENT:
-            return {"ok": True, "compacted": False}   # not enough history to bother
-        older = convo[:-self.COMPACT_KEEP_RECENT]
-        text = "\n".join(f"{r['role'].upper()}: {(r['content'] or '')[:2000]}" for r in older)
+            "select id, role, content, metadata from messages where session_id=? order by id", (sid,))
+        # Fold each turn's tool calls into its text. They are the bulk of an
+        # agentic chat — sizing without them called a 2 MB session "short", and
+        # summarizing without them threw away everything the agent actually did.
+        convo = []
+        for r in rows:
+            if r.get("role") not in ("user", "assistant") or not (r.get("content") or "").strip():
+                continue
+            note = self._history_tool_note(r.get("metadata"))
+            convo.append({"id": r["id"], "role": r["role"],
+                          "content": r["content"] + ("\n\n" + note if note else "")})
+        keep = self._keep_recent(convo)
+        if len(convo) <= keep:
+            return {"ok": True, "compacted": False}   # nothing older than the tail
+        older = convo[:-keep]
+        text = "\n".join(f"{m['role'].upper()}: {m['content'][:2000]}" for m in older)
         # fold any prior manual summary into the new one so nothing is lost
         prior = next((r for r in rows if r.get("role") == "system"
                       and (r.get("content") or "").startswith("[Conversation summary")), None)
@@ -1277,7 +1419,7 @@ class ChatMixin:
             self.COMPACT_SYSTEM_PROMPT, text, max_tokens=1024)
         if not summary:
             return {"ok": False, "error": "couldn't summarize — model unavailable"}
-        drop_ids = [r["id"] for r in older] + ([prior["id"]] if prior else [])
+        drop_ids = [m["id"] for m in older] + ([prior["id"]] if prior else [])
         keep_id = min(drop_ids)   # reuse the lowest id so the note sorts first
         q = ",".join("?" * len(drop_ids))
         self.store.exec(f"delete from messages where id in ({q})", tuple(drop_ids))
@@ -1360,7 +1502,7 @@ class ChatMixin:
         f.setdefault("model", sess.get("model") or "")
         f.setdefault("endpoint_id", sess.get("endpoint_id") or "")
         f.setdefault("endpoint_url", sess.get("endpoint_url") or "")
-        if message.strip():
+        if message.strip() and not f.get("_user_already_saved"):
             self.add_message(sid, "user", message, {})
         captured = {"memories_used": [], "plugins_used": [], "skills_used": []}
         sink = emit or (lambda obj: None)
@@ -1394,7 +1536,7 @@ class ChatMixin:
     def add_message(self, sid, role, content, metadata):
         if not sid:
             return
-        self.store.exec(
+        return self.store.exec(
             "insert into messages(session_id,role,content,metadata,created_at) values(?,?,?,?,?)",
             (sid, role, content or "", json.dumps(metadata or {}), now_iso()),
         )
@@ -1424,15 +1566,15 @@ class ChatMixin:
         out_tokens = out_chars / 4.0
         tps = round(out_tokens / elapsed, 1) if elapsed and elapsed > 0 else 0.0
         # Prompt ≈ every message stored for this session so far (the assistant
-        # reply isn't persisted yet) + the system prompt and tool schemas. That
-        # overhead was pinned at 1.5k tokens; it's ~2.8k in agent mode, so the
-        # gauge under-read by nearly half. Measure it instead of guessing.
+        # reply isn't persisted yet) + ~1.5k for the system prompt / tool schemas.
         try:
             prompt_chars = sum(len(r.get("content") or "")
                                for r in self.store.rows(
                                    "select content from messages where session_id=?", (sid,)))
         except Exception:
             prompt_chars = 0
+        # The overhead was pinned at 1.5k tokens; it's ~2.8k in agent mode, so the
+        # gauge under-read by nearly half. The caller measures it now.
         used = prompt_chars / 4.0 + overhead_tokens + out_tokens
         window = self._context_window(model)
         ctx = round(min(100.0, max(0.0, 100.0 * used / window)), 1) if window else 0.0
@@ -1454,6 +1596,8 @@ class ChatMixin:
         try:
             with urllib.request.urlopen(req, timeout=180) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
+            self.record_usage(endpoint_id, model, data.get("usage"), len(system) + len(user),
+                              len(json.dumps(data.get("choices") or "")))
             choice = (data.get("choices") or [{}])[0]
             text = (choice.get("message") or {}).get("content")
             if not text and choice.get("finish_reason") == "length" and max_tokens < 4096:

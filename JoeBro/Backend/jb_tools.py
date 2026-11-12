@@ -152,7 +152,7 @@ class ToolsMixin:
         on_phone = (f.get("session") or "") == PHONE_SESSION_ID
         skip = set(drop) | {"find_tools"}
         if not on_phone:
-            skip |= {"muse_recall", "muse_remember", "muse_forget", "notify_me",
+            skip |= {"muse_recall", "muse_remember", "muse_update", "muse_forget", "notify_me",
                      "personal_task_create", "personal_task_list", "personal_task_update",
                      "personal_task_delete", "personal_task_run_now"}
         if self._truthy_flag(f.get("subagent")):
@@ -201,8 +201,10 @@ class ToolsMixin:
             return describe_image_tool(self, self.parse_tool_args(body))
         if name == "find_tools":
             return self.find_tools_tool(body)
-        if name in ("muse_recall", "muse_remember", "muse_forget"):
+        if name in self.MUSE_TOOL_NAMES:
             return self.muse_tool(name, body, form)
+        if name == "manage_autonomy":
+            return self.manage_autonomy_tool(body)
         if name.startswith("personal_task_"):
             return self.ptask_tool(name, body, form)
         if name in TRANSFER_AI_TOOLS:
@@ -651,6 +653,9 @@ class ToolsMixin:
         name = (name or "").strip().lower()
         if name == "write_file" or name in OBSOLETE_AI_TOOLS:
             return None
+        if root is None and name in _FILE_TOOLS:
+            return {"tool": name, "command": self.tool_command_summary(name, body),
+                    "exit_code": 1, "output": "No folder is bound to this chat. Bind a folder before using file tools; no file was created."}
         if readonly and name in WRITE_SIDE_EFFECT_TOOLS:
             return None
         if name.startswith("mcp_"):
@@ -734,7 +739,7 @@ class ToolsMixin:
             event = {"tool": name, "command": self.tool_command_summary(name, body),
                      "output": output, "exit_code": 0}
             if name in ("create_document", "edit_document", "update_document"):
-                event["doc"] = self._doc_event_payload(root, name, body, allow_outside)
+                event["doc"] = self._doc_event_payload(root, name, body, allow_outside, form)
             return event
         except Exception as exc:
             return {"tool": name, "command": self.tool_command_summary(name, body),
@@ -798,15 +803,31 @@ class ToolsMixin:
             sub = sub[2:]
         return ("local-" + sub) in entries or sub.rsplit("/", 1)[-1] in entries
 
-    def _doc_event_payload(self, root, name, body, allow_outside):
+    def _doc_event_payload(self, root, name, body, allow_outside, form=None):
         """The {doc_id,title,language,content} for a document the AI just wrote,
-        so the app can open it / refresh the open tab. Reads the file from disk
-        (natively-opened files have no documents row) and matches the app's
-        "local-<relpath>" id scheme so the open tab updates in place."""
+        so the app can open it / refresh the open tab. Matches the app's
+        "local-<relpath>" id scheme so the open tab updates in place. For a chat
+        bound to a remote DEVICE folder (e.g. a Mac-local folder while this
+        backend runs on the Pi) the file lives on the device, so read it back
+        through the bridge — otherwise the Pi reads a path it can't see and the
+        editor never refreshes."""
+        import posixpath
         try:
             fields = self.parse_tool_fields(body)
             rel = (fields.get("path") or fields.get("title") or "").strip()
-            if not rel or root is None:
+            if not rel:
+                return None
+            bridge = self._device_bridge(self._session_host(form)) if form else None
+            if bridge:
+                sub = rel.lstrip("/")
+                content = self._read_open_doc_content(form, sub)
+                if content is None:
+                    return None
+                base = posixpath.basename(sub) or sub
+                return {"doc_id": "local-" + sub, "title": base,
+                        "language": (os.path.splitext(base)[1].lstrip(".") or "markdown"),
+                        "content": content}
+            if root is None:
                 return None
             target = self.resolve_tool_path(root, rel, allow_outside)
             if not target.is_file():
@@ -819,12 +840,42 @@ class ToolsMixin:
             # Bound-folder files are opened in the editor as "local-<sub>", so the
             # doc event MUST use that id (not a documents-table row id) or the open
             # tab won't match — the edit then won't show live or trigger approval.
-            doc_id = "local-" + sub
-            return {"doc_id": doc_id, "title": target.name,
+            return {"doc_id": "local-" + sub, "title": target.name,
                     "language": target.suffix.lstrip(".") or "markdown",
                     "content": content}
         except Exception:
             return None
+
+    def _read_open_doc_content(self, f, rel):
+        """Read a bound-folder file's text for the app (open-doc context + doc
+        events). Bridges to the device when the chat is bound to a remote host's
+        folder, so a Mac-local folder works even though this backend is the Pi."""
+        bridge = self._device_bridge(self._session_host(f))
+        if bridge:
+            if rel.lower().endswith(".docx"):
+                return self._bridge_docx_text(bridge, self._session_host(f), self._remote_path(f, rel))
+            if rel.lower().endswith(".apkg"):
+                try:
+                    return self._bridge_apkg_text(bridge, self._session_host(f), self._remote_path(f, rel))
+                except Exception:
+                    return None
+            url, token = bridge
+            r = bridge_call(url, token, "/v1/read_file",
+                            {"path": self._remote_path(f, rel), "max_chars": 100_000_000})
+            if r is None or r.get("error"):
+                return None
+            return r.get("content") or ""
+        session = self.store.one("select workdir from sessions where id=?", (f.get("session") or "",))
+        root_text = ((session or {}).get("workdir") or "").strip()
+        if not root_text:
+            return None
+        try:
+            target = self.resolve_in_workdir(Path(root_text).expanduser().resolve(), rel)
+            if target.is_file():
+                return read_doc_text(target)
+        except Exception:
+            pass
+        return None
 
     def tool_command_summary(self, name, body):
         fields = self.parse_tool_fields(body)
@@ -1403,19 +1454,29 @@ class ToolsMixin:
         rows = self.store.rows("select * from skills order by datetime(created_at) desc")
         return json.dumps([self.skill_json(r) for r in rows], ensure_ascii=False)
 
-    def _resolve_chat(self, ref):
-        """Find a session by id, then exact name, then name LIKE. None if no match."""
-        ref = (ref or "").strip()
+    def _resolve_chat(self, ref, folder=""):
+        """Session by id, else name (exact, then substring), optionally scoped to a
+        folder group/bound path. Several substring hits -> error listing them."""
+        ref, folder = (ref or "").strip(), (folder or "").strip()
+        scope, ps = ("", ())
+        if folder:
+            scope, ps = " and (lower(folder)=lower(?) or workdir=?)", (folder, folder)
+        sel = "select * from sessions where id not like 'task\\_session\\_%' escape '\\'" + scope
         if not ref:
-            return None
+            rows = self.store.rows(sel + " order by datetime(created_at) desc limit 6", ps) if folder else []
+            if len(rows) > 1:
+                raise ValueError("several chats in that folder, pass chat: " + "; ".join(f"{r['id']} {r.get('name')}" for r in rows))
+            return rows[0] if rows else None
         row = self.store.one("select * from sessions where id=?", (ref,))
+        if row and (not folder or self.store.one(sel + " and id=?", ps + (ref,))):
+            return row
+        row = self.store.one(sel + " and lower(name)=lower(?) order by datetime(created_at) desc limit 1", ps + (ref,))
         if row:
             return row
-        row = self.store.one("select * from sessions where name=? order by datetime(created_at) desc limit 1", (ref,))
-        if row:
-            return row
-        return self.store.one(
-            "select * from sessions where name like ? order by datetime(created_at) desc limit 1", (f"%{ref}%",))
+        rows = self.store.rows(sel + " and name like ? order by datetime(created_at) desc limit 6", ps + (f"%{ref}%",))
+        if len(rows) > 1:
+            raise ValueError("ambiguous chat, pass its id: " + "; ".join(f"{r['id']} {r.get('name')}" for r in rows))
+        return rows[0] if rows else None
 
     def _resolve_model_endpoint(self, model):
         """The endpoint_id that serves `model`, or None — so set_model points a
@@ -1454,8 +1515,20 @@ class ToolsMixin:
         args = self.parse_tool_args(body)
         action = (args.get("action") or "list").lower()
         if action == "list":
+            folder = (args.get("folder") or "").strip()
+            limit = min(500, max(1, int(args.get("limit") or 20)))
+            offset = max(0, int(args.get("offset") or 0))
+            if folder == "?":   # folder names + chat counts
+                rows = self.store.rows("select coalesce(folder,'') f, count(*) c from sessions where id not like 'bot\\_tg\\_%' escape '\\' "
+                                       "and id not like 'task\\_session\\_%' escape '\\' and id != ? group by lower(coalesce(folder,''))", (PHONE_SESSION_ID,))
+                return json.dumps([{"folder": r["f"], "chats": r["c"]} for r in rows], ensure_ascii=False)
             rows = self.store.rows(
-                "select * from sessions where id not like 'bot\\_tg\\_%' escape '\\' order by datetime(created_at) desc limit 100")
+                "select * from sessions where id not like 'bot\\_tg\\_%' escape '\\' "
+                "and id not like 'task\\_session\\_ptask\\_%' escape '\\' "
+                "and id != ? and (?='' or lower(folder)=lower(?) or workdir=?) "
+                "and (?='' or name like ?) "
+                "order by datetime(created_at) desc limit ? offset ?",
+                (PHONE_SESSION_ID, folder, folder, folder, (args.get("query") or "").strip(), f"%{(args.get('query') or '').strip()}%", limit, offset))
             out = []
             for r in rows:
                 last = self.store.one(
@@ -1480,10 +1553,13 @@ class ToolsMixin:
             q = (args.get("query") or "").strip()
             if not q:
                 raise ValueError("search requires query")
+            fo, ch = (args.get("folder") or "").strip(), (args.get("chat") or "").strip()
             rows = self.store.rows(
                 """select m.session_id, s.name, m.role, m.content, m.created_at
                    from messages m join sessions s on s.id=m.session_id
-                   where m.content like ? order by m.id desc limit 40""", (f"%{q}%",))
+                   where m.content like ? and (?='' or lower(s.folder)=lower(?) or s.workdir=?)
+                   and (?='' or s.id=? or lower(s.name)=lower(?)) order by m.id desc limit 40""",
+                (f"%{q}%", fo, fo, fo, ch, ch, ch))
             return json.dumps([{"chat_id": r["session_id"], "chat": r.get("name"),
                                 "role": r.get("role"), "when": r.get("created_at"),
                                 "snippet": (r.get("content") or "")[:300]} for r in rows], ensure_ascii=False)
@@ -1507,9 +1583,18 @@ class ToolsMixin:
             self._remember_focus(form, new_id, name)
             return json.dumps({"id": new_id, "name": name, "mode": mode,
                                "permission": perm, "folder": folder}, ensure_ascii=False)
-        target = self._resolve_chat(args.get("chat"))
+        target = self._resolve_chat(args.get("chat"), "" if action == "bind_folder" else args.get("folder"))
         if not target:
             raise ValueError(f"chat not found: {args.get('chat') or ''}")
+        if target["id"] == PHONE_SESSION_ID:
+            raise ValueError("The main JoeBro conversation cannot be managed as a delegated chat")
+        if action in ("list_files", "read_file"):
+            bound = (target.get("workdir") or "").strip()
+            if not bound:
+                raise ValueError("That chat has no connected folder")
+            path = str(args.get("path") or ".")
+            result = self.execute_file_tool(Path(bound), action, f"path: {path}" + (f"\nlines: {args['lines']}" if args.get("lines") else ""), allow_outside=False)
+            return json.dumps({"chat":target["id"],"path":path,"output":result[:8000],"truncated":len(result)>8000}, ensure_ascii=False)
         if action == "bind_folder":
             folder = self._phone_bind_ok(form, (args.get("folder") or "").strip())
             self.store.exec("update sessions set workdir=? where id=?", (folder, target["id"]))
@@ -1535,14 +1620,15 @@ class ToolsMixin:
         if action == "read":
             n = max(1, min(100, int(args.get("limit") or 20)))
             rows = self.store.rows(
-                "select role,content,created_at from messages where session_id=? order by id desc limit ?",
+                "select id,role,content,created_at from messages where session_id=? order by id desc limit ?",
                 (target["id"], n))
-            rows = list(reversed(rows))
             return json.dumps({"chat": target.get("name"), "id": target["id"],
                                "mode": target.get("mode") or "chat",
                                "permission": target.get("permission_mode") or "sandbox",
                                "model": target.get("model") or "",
-                               "messages": [{"role": r["role"], "content": r.get("content") or "",
+                               "message_order": "newest_first",
+                               "messages": [{"id": r["id"], "role": r["role"],
+                                             "content": r.get("content") or "",
                                              "when": r.get("created_at")} for r in rows]}, ensure_ascii=False)
         if action == "set_mode":
             mode = (args.get("mode") or "").lower()
@@ -1569,9 +1655,12 @@ class ToolsMixin:
                    "allow_web_search": "true"}
             if perm == "full":
                 sub["allow_bash"] = "true"
-            if bool(self.pref("bot_ask_permissions")):
+            if bool(self.pref("bot_ask_permissions")) or str((form or {}).get("ask_permission") or "").lower() in ("1", "true", "yes"):
                 sub["ask_permission"] = "true"
-                sub["ask_doc_edit"] = "true"
+                # doc-edit approval only for Telegram (no editor there); the phone has none either but no prompt UI for it
+                from_bot = str((form or {}).get("session") or "").startswith("bot_tg_")
+                if (from_bot and bool(self.pref("bot_ask_permissions"))) or str((form or {}).get("ask_doc_edit") or "").lower() in ("1", "true", "yes"):
+                    sub["ask_doc_edit"] = "true"
             reply, _meta = self.bot_run(sub, emit=getattr(self, "_perm_emit", None))
             self._remember_focus(form, target["id"], target.get("name"))
             return json.dumps({"chat": target.get("name"), "reply": reply}, ensure_ascii=False)
@@ -1621,6 +1710,18 @@ class ToolsMixin:
         if name == "read_email":
             uid = args.get("uid") or body.strip()
             return self.email_read_payload(uid, args.get("folder") or "INBOX")
+        if name == "read_email_attachment":
+            return self.email_attachment_payload(args)
+        if name == "save_email_attachment":
+            uid = args.get("uid")
+            index = args.get("index")
+            if not isinstance(uid, str) or not uid.strip():
+                raise ValueError("uid required")
+            if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+                raise ValueError("index must be a non-negative integer from the attachment listing")
+            from artifact_store import save_bytes
+            data, mime, filename = self.email_attachment(uid, index, args.get("folder") or "INBOX")
+            return json.dumps(save_bytes(data, filename, mime, source="email"), ensure_ascii=False)
         if name == "send_email":
             return self.email_send_payload(args)
         if name == "reply_to_email":
@@ -1700,6 +1801,8 @@ class ToolsMixin:
             return self.trigger_research_tool(body, form)
         if name == "manage_research":
             return self.manage_research_tool(body, form)
+        if name == "manage_events":
+            return self.manage_events_tool(body)
         if name == "create_event":
             return self.create_event_tool(body)
         if name in EMAIL_AI_TOOLS:
@@ -1721,7 +1824,20 @@ class ToolsMixin:
             raise ValueError("create_event requires an ISO-8601 start datetime")
         if not end:
             end = start
-        event = {"summary": summary, "dtstart": start, "dtend": end, "all_day": all_day,
+        # Timezone: the zone of the DEPARTURE/origin place for the start time.
+        # Missing or invalid is an error, never a silent reinterpretation.
+        tz_arg = (args.get("timezone") or args.get("tz") or "").strip()
+        assumed = False
+        if not tz_arg and not all_day:
+            raise ValueError("create_event requires `timezone` (IANA id, e.g. Europe/Amsterdam; for travel the "
+                             "DEPARTURE location's zone). Naive times are rejected, never assumed to be the server's zone.")
+        tz = tz_arg or self.backend_zone_name()
+        end_tz = (args.get("end_timezone") or "").strip() or tz
+        self.resolve_zone(tz); self.resolve_zone(end_tz)
+        if not all_day:
+            start = self.localize_event_time(start, tz)
+            end = self.localize_event_time(end, end_tz)
+        event = {"summary": summary, "dtstart": start, "dtend": end, "all_day": all_day, "tz": tz,
                  "location": args.get("location") or "", "description": args.get("description") or ""}
         cfg = self.pref("calendar_connection") or {}
         if cfg.get("type") == "macos":
@@ -1733,7 +1849,9 @@ class ToolsMixin:
                    values(?,?,?,?,?,?,?,?,?,?)""",
                 (uid, summary, start, end, 1 if all_day else 0, event["location"], event["description"], "", "", now_iso()),
             )
-            return json.dumps({"ok": True, "uid": uid, "event": event}, ensure_ascii=False)
+            self.queue_calendar_ops([dict(event, op="create", uid=uid)])
+            return json.dumps({"ok": True, "uid": uid, "event": event, "queued_for_mac": True,
+                               **({"timezone_assumed": f"no timezone was given; read the times as {tz}. Tell the user, and if wrong fix with manage_events."} if assumed else {})}, ensure_ascii=False)
         result = self.create_event_result(event)
         return json.dumps({"ok": True, "uid": result.get("uid", ""), "event": event}, ensure_ascii=False)
 

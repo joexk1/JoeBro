@@ -14,6 +14,7 @@ from jb_agents import AgentsMixin
 from jb_fleet import FleetMixin, pulse_loop
 from jb_briefing import BriefingMixin, briefing_loop
 from jb_autonomy import AutonomyMixin
+from jb_spend import SpendMixin
 from jb_updates import PersonalUpdatesMixin, ensure_tables, claim_scheduled_run, finish_scheduled_run, personal_reply_loop
 from jb_personal import PersonalMixin, reminder_loop
 from jb_muse import MuseMixin, muse_name
@@ -42,7 +43,7 @@ SECRET_MASK = "••••••••"
 _AUTH_FAILS = {"n": 0}      # a count in memory only: how many bad tokens this run has seen
 
 
-class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMixin, PromptMixin, ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, ModelsMixin,
+class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMixin, SpendMixin, PromptMixin, ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, ModelsMixin,
               AssistantMixin, MemoryMixin, FilesMixin, FleetMixin, PersonalMixin, MuseMixin,
               PersonalTasksMixin, AgentsMixin, HeartbeatMixin, LocationMixin, MobileMixin,
               ProactiveMixin, DesktopUseMixin, CodingAgentsMixin, PluginsMixin,
@@ -62,6 +63,15 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
 
     def _query(self):
         return dict(urllib.parse.parse_qsl(self._path().query))
+
+    def _json_or_form_body(self):
+        raw = self._body_bytes()
+        if not raw:
+            return {}
+        if "application/json" in (self.headers.get("content-type") or "").lower():
+            return json.loads(raw.decode("utf-8"))
+        parsed = urllib.parse.parse_qs(raw.decode("utf-8"))
+        return {k: v[-1] for k, v in parsed.items()}
 
     def _body_bytes(self):
         n = int(self.headers.get("content-length") or 0)
@@ -217,6 +227,11 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
             payload = self.agents_payload(
                 kind=(q.get("kind") or "").strip(), status=(q.get("status") or "").strip(),
                 limit=int(q.get("limit") or 100))
+            try:   # chat turns live in this process: lets a client drop a turn whose stream it lost
+                from jb_chat import _ACTIVE_TURNS
+                payload["active_turns"] = sorted(_ACTIVE_TURNS)
+            except Exception:
+                pass
             # Opt-in, so clients that collect coding agents themselves never double-count.
             if "coding" in (q.get("include") or "").split(",") and (q.get("kind") or "coding") == "coding":
                 try:
@@ -310,6 +325,34 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
                 "endpoint_id": (session or {}).get("endpoint_id") or "",
                 "endpoint_url": (session or {}).get("endpoint_url") or "",
             })
+        if path == "/api/spend":
+            return self.json(self.spend_payload(q.get("days") or 30, str(q.get("refresh") or "") in ("1", "true")))
+        if path in ("/api/endpoints", "/api/model-endpoints/config"):
+            return self.json({"endpoints": self.endpoint_config_rows(q)})
+        if path in ("/api/client-settings", "/api/settings/sync"):
+            return self.json({"ok": True, "settings": self.client_settings()})
+        if path in ("/api/briefing", "/api/briefing/latest"):
+            return self.json(self.latest_briefing_payload())
+        if path == "/api/devices":
+            rows = self.store.rows("select * from devices order by is_self desc, name")
+            return self.json({"devices": [{
+                "id": r["id"], "name": r["name"], "is_self": bool(r.get("is_self")),
+                "remote": bool((r.get("bridge_url") or "").strip()) and not r.get("is_self"),
+            } for r in rows]})
+        if path.startswith("/api/email/attachment/"):
+            uid = path.rsplit("/", 1)[-1]
+            try:
+                data, mime, filename = self.email_attachment(uid, q.get("index"), q.get("folder") or "INBOX")
+                encoded = urllib.parse.quote(str(filename or "attachment"), safe="")
+                self.send_response(200)
+                self.send_header("Content-Type", mime or "application/octet-stream")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Content-Disposition", "attachment; filename*=UTF-8''" + encoded)
+                self.end_headers()
+                self.wfile.write(data)
+            except Exception as exc:
+                return self.json({"detail": str(exc)}, 400)
+            return
         if path == "/api/models":
             refresh = str(q.get("refresh") or "").lower() in ("1", "true", "yes")
             return self.json({"models": [], "items": self.model_items(refresh=refresh)})
@@ -665,14 +708,42 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
             return self.json({"ok": True})
         if path.endswith("/mark-stopped"):
             return self.json({"ok": True})
-        if path == "/api/model-endpoints":
-            f = self._form_body()
+        if path in ("/api/model-endpoints", "/api/endpoints"):
+            f = self._json_or_form_body()
             ep_id = "ep_" + os.urandom(5).hex()
             self.store.exec(
-                "insert into endpoints(id,name,base_url,api_key,created_at) values(?,?,?,?,?)",
-                (ep_id, f.get("name") or "Local endpoint", f.get("base_url") or "", f.get("api_key") or "", now_iso()),
+                "insert into endpoints(id,name,base_url,api_key,is_enabled,created_at) values(?,?,?,?,?,?)",
+                (ep_id, f.get("name") or "Local endpoint", f.get("base_url") or f.get("url") or "",
+                 f.get("api_key") or "", 1 if self.bool_body(f, "is_enabled", self.bool_body(f, "enabled", True)) else 0, now_iso()),
             )
-            return self.json({"ok": True, "id": ep_id})
+            return self.json({"ok": True, "id": ep_id,
+                              "endpoint": self.endpoint_config_json(self.store.one("select * from endpoints where id=?", (ep_id,)), include_key=True)})
+        if path == "/api/joebro/reply" or path == "/api/phone/reply":
+            try:
+                return self.json(self.enqueue_personal_reply(self._json_body()), 202)
+            except ValueError as exc:
+                return self.json({"ok": False, "detail": str(exc)}, 400)
+        if path in ("/api/briefing/run", "/api/briefing"):
+            return self.json(self.run_briefing(force=True))
+        if path == "/api/briefing/schedule":
+            b = self._json_body() or {}
+            for key in ("enabled", "interval_hours", "quiet_hours", "notify"):
+                if key in b:
+                    self.set_pref("briefing_" + key, b[key])
+            return self.json({"ok": True, "schedule": self.briefing_config()})
+        if path == "/api/calendar/pending":
+            return self.calendar_pending(self._json_body())
+        if path == "/api/calendar/mirror":
+            return self.sync_calendar_mirror(self._json_body())
+        if path == "/api/email/connect":
+            body = self._json_body()
+            account = self.email_account_from_login(body.get("email") or "", body.get("password") or "")
+            if account["type"] in {"bridge", "hydroxide"}:
+                err = self.ensure_hydroxide_bridge()
+                if err:
+                    return self.json({"ok": False, "error": err}, 400)
+            account_id = self.upsert_email_account(account["type"], account)
+            return self.json({"ok": True, "configured": True, "type": account["type"], "id": account_id})
         if path == "/api/email/connect-imap":
             body = self._json_body()
             self.upsert_email_account("imap", body)
@@ -904,6 +975,10 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
             hidden = self._json_body().get("hidden") or []
             self.set_pref("hidden_models_" + ep_id, hidden)
             return self.json({"ok": True})
+        if path in ("/api/client-settings", "/api/settings/sync"):
+            return self.json({"ok": True, "settings": self.set_client_settings(self._json_body() or {})})
+        if path.startswith("/api/model-endpoints/") or path.startswith("/api/endpoints/"):
+            return self.json(self.upsert_endpoint(self._json_or_form_body(), path.rsplit("/", 1)[-1]))
         return self.not_found()
 
     do_PATCH = do_PUT
@@ -942,7 +1017,7 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
         if path.startswith("/api/session/"):
             self.delete_session_cascade(path.split("/")[3])      # the chat AND its agent records
             return self.json({"ok": True})
-        if path.startswith("/api/model-endpoints/"):
+        if path.startswith(("/api/model-endpoints/", "/api/endpoints/")):
             self.store.exec("delete from endpoints where id=?", (path.rsplit("/", 1)[-1],))
             return self.json({"ok": True})
         if path.startswith("/api/memory/"):
@@ -1039,6 +1114,19 @@ def main():
     if not loopback and not server.auth_token:
         print(f"WARNING: bound to {args.host} with no JOEBRO_TOKEN — anyone who can "
               "reach this port can run tools as you.", flush=True)
+    # A run marked live in the database has no thread behind it after a restart: say so
+    # instead of showing a spinner forever, and never replay a half-done scheduled run.
+    try:
+        _boot = Handler.__new__(Handler)
+        _boot.server = server
+        ensure_tables(server.store)
+        server.store.exec("UPDATE personal_reply_jobs SET status='failed',error='Interrupted by backend restart; open chat to continue' WHERE status='running'")
+        server.store.exec("UPDATE scheduled_runs SET status='failed',error='Interrupted by backend restart; not replayed automatically' WHERE status='running'")
+        _boot.ptask_seed()
+    except Exception as exc:
+        print("boot reconcile failed:", exc, flush=True)
+    threading.Thread(target=personal_reply_loop, args=(server,), daemon=True).start()
+    threading.Thread(target=briefing_loop, args=(server,), daemon=True).start()
     threading.Thread(target=_task_scheduler, args=(server,), daemon=True).start()
     threading.Thread(target=reminder_loop, args=(server,), daemon=True).start()
     threading.Thread(target=pulse_loop, args=(server,), daemon=True).start()   # heartbeat + pulse, both off until enabled
@@ -1085,32 +1173,102 @@ def main():
     server.serve_forever()
 
 
-def _task_scheduler(server):
-    """Fire active scheduled tasks once a day at their scheduled_time (HH:MM).
-    Lightweight: one check a minute, dedup via the task's last_run date."""
+def _local_date(iso):
+    """The LOCAL calendar date of a stored timestamp. last_run is written in UTC
+    (now_iso), so comparing its first 10 characters against a local date is wrong
+    by a day for part of every evening — which is how a task could fire twice
+    just after midnight."""
+    if not iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+    except ValueError:
+        return str(iso)[:10]
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone().strftime("%Y-%m-%d")
+
+
+def _task_due(row, now, today):
+    """Due = its slot has passed today and it has not run today.
+
+    Deliberately NOT an exact HH:MM match. The old code fired only if a tick
+    landed inside the target minute, so any restart near the slot — or any task
+    sharing a slot with a slower one — silently skipped the whole day."""
+    st = (row.get("scheduled_time") or "").strip()[:5]
+    if len(st) < 4 or ":" not in st:
+        return False
+    try:
+        hh, mm = int(st.split(":")[0]), int(st.split(":")[1])
+    except (ValueError, IndexError):
+        return False
+    sched = (row.get("schedule") or "daily").strip().lower()
+    if sched == "once" and row.get("scheduled_date") != today:
+        return False
+    if sched == "weekly" and now.weekday() != int(row.get("repeat_day") or 0):
+        return False
+    if sched == "monthly" and now.day != 1:
+        return False
+    if now.hour * 60 + now.minute < hh * 60 + mm:
+        return False                       # slot hasn't arrived yet today
+    # Creating or changing a 09:00 task at 15:00 must schedule tomorrow's
+    # 09:00, not launch it immediately. A task that already existed before
+    # today's slot can still catch up after a backend restart.
+    changed = row.get("updated_at") or row.get("created_at") or ""
+    if _local_date(changed) == today:
+        try:
+            changed_at = datetime.fromisoformat(str(changed).replace("Z", "+00:00"))
+            if changed_at.tzinfo is None:
+                changed_at = changed_at.replace(tzinfo=timezone.utc)
+            local_changed = changed_at.astimezone()
+            if (local_changed.hour * 3600 + local_changed.minute * 60 + local_changed.second) > hh * 3600 + mm * 60:
+                return False
+        except ValueError:
+            pass
+    return _local_date(row.get("last_run")) != today
+
+
+def _run_task_thread(server, task_id, slot=None):
     import types as _types
+    h = Handler.__new__(Handler)
+    h.server = _types.SimpleNamespace(store=server.store)
+    try:
+        result = h.execute_task(task_id)
+        if slot:
+            if getattr(h, "_task_skipped", False):
+                finish_scheduled_run(server.store, task_id, slot, "Background budget unavailable", retry_safe=True)
+            else:
+                finish_scheduled_run(server.store, task_id, slot)
+    except Exception as exc:
+        if slot:
+            finish_scheduled_run(server.store, task_id, slot, str(exc),
+                                 retry_safe=not getattr(h, "_task_write_performed", True))
+        traceback.print_exc()
+
+
+def _task_scheduler(server):
+    """Fire active scheduled tasks once a day, at or after their slot.
+
+    Each run goes on its own thread, so one slow task can no longer hide every
+    other task due at the same time (the memory and skill audits are both 07:00).
+    The slot is claimed in the database before the thread starts, so a second
+    tick during a long run cannot start it twice."""
     while True:
         try:
             now = datetime.now().astimezone()
-            hhmm, today = now.strftime("%H:%M"), now.strftime("%Y-%m-%d")
+            today = now.strftime("%Y-%m-%d")
             for row in server.store.rows("select * from tasks where status='active'"):
-                st = (row.get("scheduled_time") or "").strip()[:5]
-                sched = (row.get("schedule") or "daily").strip().lower()
-                # ponytail: weekly = Mondays, monthly = 1st; dedup still by date
-                if sched == "weekly" and now.weekday() != int(row.get("repeat_day") or 0):
+                if not _task_due(row, now, today):
                     continue
-                if sched == "monthly" and now.day != 1:
-                    continue
-                if st and st == hhmm and (row.get("last_run") or "")[:10] != today:
-                    h = Handler.__new__(Handler)
-                    h.server = _types.SimpleNamespace(store=server.store)
-                    try:
-                        h.execute_task(row["id"])
-                    except Exception:
-                        pass
+                if (row.get("scope") or "general") == "personal":
+                    paused = server.store.one("SELECT value FROM prefs WHERE key='personal_automation_paused'")
+                    if paused and str(paused["value"]).lower() in ("true", "1", "yes", "on"): continue
+                slot = claim_scheduled_run(server.store, row, now)
+                if slot:
+                    threading.Thread(target=_run_task_thread, args=(server, row["id"], slot), daemon=True).start()
         except Exception:
-            pass
-        time.sleep(50)
+            traceback.print_exc()
+        time.sleep(30)
 
 
 if __name__ == "__main__":
