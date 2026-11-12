@@ -16,6 +16,7 @@ it reads has changed. Every action is deterministically validated: the model's
 quote must appear verbatim in the source record, dates must parse and lie in
 the future, and a durable semantic key means nothing is added twice.
 """
+import jb_ext
 import hashlib
 import json
 import os
@@ -596,6 +597,9 @@ class ProactiveMixin:
                 records[rid] = dict(d, source="docs", id=rid)
         except Exception:
             pass
+        for extra in jb_ext.call("proactive_records", self, now):     # more sources an extension reads
+            if isinstance(extra, dict):
+                records.update(extra)
         for r in self.store.rows("SELECT id,summary,dtstart FROM events ORDER BY dtstart DESC LIMIT 60"):
             rid = "cal:" + str(r["id"])
             records[rid] = {"source": "calendar", "id": rid, "title": str(r.get("summary") or ""), "text": str(r.get("dtstart") or ""),

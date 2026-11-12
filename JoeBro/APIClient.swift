@@ -76,7 +76,7 @@ final class APIClient {
     // MARK: Sessions
 
     func sessions() async throws -> [ChatSessionInfo] {
-        let (data, resp) = try await session.data(for: request("api/sessions"))
+        let (data, resp) = try await session.data(for: request(Flavor.deviceName.isEmpty ? "api/sessions" : "api/sessions?device=" + Flavor.deviceName))
         try check(data, resp)
         return try JSONDecoder().decode([ChatSessionInfo].self, from: data)
     }
@@ -643,6 +643,8 @@ final class APIClient {
             "permission_mode": permissionMode,
         ]
         fields.merge(memoryRetrievalFields(for: message)) { _, new in new }
+        // A remote backend must know which device this is, so device tools run here.
+        if !Flavor.deviceName.isEmpty { fields["device"] = Flavor.deviceName }
         if allowBash { fields["allow_bash"] = "true" }
         if askPermission { fields["ask_permission"] = "true" }
         if let activeDocID, !activeDocID.isEmpty { fields["active_doc_id"] = activeDocID }
@@ -960,11 +962,6 @@ final class APIClient {
         let (data, resp) = try await session.data(for: req)
         try check(data, resp)
         return (data, (resp as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? "application/octet-stream")
-    }
-
-    /// The latest self-scheduled briefing.
-    func latestBriefing() async throws -> BriefingEnvelope {
-        try await getJSON("api/briefing")
     }
 
     func getJSON<T: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> T {

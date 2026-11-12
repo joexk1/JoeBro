@@ -619,7 +619,11 @@ struct FileTreeSection: View {
                 .buttonStyle(.borderless)
                 .padding(.horizontal, 8)
                 .sheet(isPresented: $showBind) {
+                    #if PERSONAL
+                    PersonalFolderPicker()
+                    #else
                     FolderPickerSheet()
+                    #endif
                 }
             }
 

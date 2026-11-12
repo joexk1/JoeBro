@@ -19,7 +19,7 @@ DAY = 86400
 def default_config(data=None):
     from jb_core import data_dir
     data = Path(data) if data else data_dir()
-    return {
+    cfg = {
         "data": data, "tmp": Path("/tmp"),
         "artifacts": data / "artifacts",
         "scratch": [data / "transfer-tmp"],
@@ -28,6 +28,16 @@ def default_config(data=None):
         "db": data / "joebro.sqlite3",
         "state": data / "janitor_state.json",
     }
+    # An extension can add scratch folders / temp patterns it creates (hook
+    # `janitor_scratch(data) -> {"scratch": [paths], "tmp_patterns": [globs]}`).
+    try:
+        import jb_ext
+        for extra in jb_ext.call("janitor_scratch", data):
+            cfg["scratch"] += [Path(p) for p in extra.get("scratch", [])]
+            cfg["tmp_patterns"] += list(extra.get("tmp_patterns", []))
+    except Exception:
+        pass
+    return cfg
 
 
 def real_dir(p):

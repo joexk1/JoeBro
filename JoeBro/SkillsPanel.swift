@@ -500,7 +500,7 @@ struct LearnSkillsSheet: View {
     @State private var detail = ""
     @State private var made: [String] = []
     @State private var error: String?
-    private let sourceDevice = ""
+    private let sourceDevice = Flavor.deviceName
 
     var body: some View {
         VStack(spacing: 0) {

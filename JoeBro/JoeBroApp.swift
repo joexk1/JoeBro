@@ -10,6 +10,15 @@ final class LocalBackend {
     var url: URL { URL(string: "http://127.0.0.1:\(port)")! }
 
     func start() {
+        #if PERSONAL
+        // The personal build is a client of one fixed remote backend: it never spawns its own.
+        PersonalSetup.configureRemoteBackend()
+        #else
+        startBundled()
+        #endif
+    }
+
+    private func startBundled() {
         UserDefaults.standard.set(url.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")), forKey: "serverURL")
         guard process?.isRunning != true else { return }
         guard let script = backendScriptURL() else {

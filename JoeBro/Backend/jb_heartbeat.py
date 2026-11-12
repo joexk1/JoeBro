@@ -17,6 +17,7 @@ with the same text; the user answers it in that chat. A small ledger
 (heartbeat_seen) makes each changed revision notify at most once: the row is
 reserved BEFORE the push, so a crash can lose a notification but never repeat one.
 """
+import jb_ext
 import hashlib
 import re
 import threading
@@ -211,6 +212,9 @@ class HeartbeatMixin:
                                  "order by datetime(finished_at) desc limit 10"):
             data["tasks"].append({"id": r["ref_id"], "title": _clean(r.get("title"), 80),
                                   "text": _clean(r.get("result"), 240) + " @" + str(r.get("finished_at") or "")})
+        for extra in jb_ext.call("bg_sources", self, now):          # more sources an extension reads
+            if isinstance(extra, dict):
+                data.update(extra)
         _SHARED.update(key=key, at=_t.time(), data=data)
         return data
 
