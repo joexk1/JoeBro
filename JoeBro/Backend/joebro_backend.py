@@ -12,6 +12,9 @@ from jb_memory import MemoryMixin
 from jb_files import FilesMixin
 from jb_agents import AgentsMixin
 from jb_fleet import FleetMixin, pulse_loop
+from jb_briefing import BriefingMixin, briefing_loop
+from jb_autonomy import AutonomyMixin
+from jb_updates import PersonalUpdatesMixin, ensure_tables, claim_scheduled_run, finish_scheduled_run, personal_reply_loop
 from jb_personal import PersonalMixin, reminder_loop
 from jb_muse import MuseMixin, muse_name
 from jb_ptasks import PersonalTasksMixin
@@ -39,7 +42,7 @@ SECRET_MASK = "••••••••"
 _AUTH_FAILS = {"n": 0}      # a count in memory only: how many bad tokens this run has seen
 
 
-class Handler(*jb_ext.mixins(), PromptMixin, ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, ModelsMixin,
+class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMixin, PromptMixin, ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, ModelsMixin,
               AssistantMixin, MemoryMixin, FilesMixin, FleetMixin, PersonalMixin, MuseMixin,
               PersonalTasksMixin, AgentsMixin, HeartbeatMixin, LocationMixin, MobileMixin,
               ProactiveMixin, DesktopUseMixin, CodingAgentsMixin, PluginsMixin,

@@ -27,12 +27,24 @@ class AssistantMixin:
         """Run a saved task through the agent loop (so it can actually use tools —
         e.g. the skill audit calls manage_skills, the email summary reads mail).
         Output lands in a persistent '[TASK] <name>' chat. Returns the reply."""
+        from jb_updates import task_lock
+        lock = task_lock(task_id)
+        if not lock.acquire(blocking=False):
+            raise RuntimeError("This task is already running")
+        try:
+            return self._execute_task_locked(task_id)
+        finally:
+            lock.release()
+
+    def _execute_task_locked(self, task_id):
         row = self.store.one("select * from tasks where id=?", (task_id,))
         if not row:
             return None
         personal = (row.get("scope") or "general") == "personal"
         if personal and str(self.pref("personal_automation_paused")).lower() in ("true", "1", "yes", "on"):
             return "Phone automation is paused. Resume it in Settings > Mobile to run this task."
+        self._task_skipped = False           # read by the scheduler to decide whether the slot may be retried
+        self._task_write_performed = False
         ep, model = self._task_endpoint()
         tsid = "task_session_" + task_id
         # Every task run is a registry run, so "did my task happen?" is a question
@@ -40,9 +52,23 @@ class AssistantMixin:
         aid = self.agent_open("task", row.get("title") or "Task", session_id=tsid,
                               model=model, endpoint_id=ep, ref_id=task_id,
                               prompt=row.get("prompt") or "", progress="Starting")
+        if personal:
+            det = self.ptask_deterministic(row)         # page watches / extension tasks: no model
+            if det is not None:
+                self.store.exec("update tasks set last_run=?, updated_at=? where id=?", (now_iso(), now_iso(), task_id))
+                self.agent_close(aid, "done", result=det)
+                self.ptask_report(row, det)
+                return det
+            if not self.bg_budget_ok():
+                self._task_skipped = True
+                self.agent_close(aid, "failed", error="daily background LLM budget reached; scheduled retry pending")
+                return "NOTHING"
+            bep, bmodel = self.bg_model()
+            ep, model = bep or ep, bmodel or model
+            u = self.bg_usage(); u["n"] += 1; self.set_pref("bg_usage", u)
         if not ep:
             self.agent_close(aid, "failed", error="no model endpoint configured")
-            return "No model endpoint configured — add one in Settings."
+            raise RuntimeError("No model endpoint configured — add one in Settings.")
         if not self.store.one("select id from sessions where id=?", (tsid,)):
             self.store.exec(
                 "insert into sessions(id,name,model,endpoint_url,endpoint_id,workdir,created_at) values(?,?,?,?,?,?,?)",
@@ -59,7 +85,8 @@ class AssistantMixin:
         # mode only governs file access (default: the safe sandbox).
         pmode = (row.get("permission_mode") or "sandbox").strip() or "sandbox"
         f = {"session": tsid, "message": prompt, "endpoint_id": ep, "model": model,
-             "permission_mode": pmode, "max_tokens": "4000", "allow_web_search": "true"}
+             "permission_mode": pmode, "max_tokens": "4096", "allow_web_search": "true", "thinking": "false",
+             "_scheduled_task": True}
         f["mode"] = "agent"   # forced last — cannot be overridden
         if personal:
             f["phone_tools"] = "true"     # the phone toolset (weather, reminders, agents...)
@@ -80,6 +107,9 @@ class AssistantMixin:
             meta["tool_events"] = [{k: v for k, v in e.items() if k != "doc"} for e in events]
         self.add_message(tsid, "assistant", reply, meta)
         self.store.exec("update tasks set last_run=?, updated_at=? where id=?", (now_iso(), now_iso(), task_id))
+        self._task_visualizations = [e["visualization"] for e in events if e.get("visualization")]
+        if (row.get("schedule") or "").lower() == "once":
+            self.store.exec("update tasks set status='done' where id=?", (task_id,))
         if self.agent_run_cancelled(aid):
             self.agent_close(aid, "cancelled", result=(reply or "").strip(),
                              error="stopped on request; partial output kept")
@@ -305,7 +335,15 @@ class AssistantMixin:
             rday = max(0, min(6, int(rday or 0)))
         except (TypeError, ValueError):
             rday = 0
-        # scope is fixed at creation: phone-agent tasks get a ptask_ id and never change sides.
+        scheduled_date = body.get("date") or body.get("scheduled_date") or (existing or {}).get("scheduled_date") or ""
+        if schedule and schedule not in ("once", "daily", "weekly", "monthly"):
+            raise ValueError("schedule must be once, daily, weekly or monthly")
+        if scheduled_time and not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", scheduled_time):
+            raise ValueError("time must be HH:MM in local time")
+        if schedule == "once":
+            try: datetime.strptime(scheduled_date, "%Y-%m-%d")
+            except ValueError: raise ValueError("one-shot tasks need date=YYYY-MM-DD")
+        # scope is fixed at creation: personal tasks get a ptask_ id and never change sides.
         scope = (existing or {}).get("scope") or ("personal" if str(body.get("scope") or "").lower() == "personal" else "general")
         if not existing and scope == "personal" and not str(tid).startswith("ptask_"):
             tid = "ptask_" + os.urandom(6).hex()
@@ -319,6 +357,7 @@ class AssistantMixin:
                 "insert into tasks(id,title,prompt,schedule,scheduled_time,status,permission_mode,repeat_day,scope,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)",
                 (tid, title, prompt, schedule, scheduled_time, status, pmode, rday, scope, now, now),
             )
+        self.store.exec("UPDATE tasks SET scheduled_date=? WHERE id=?", (scheduled_date, tid))
         return {"ok": True, "task": self.task_json(self.store.one("select * from tasks where id=?", (tid,)))}
 
     def upsert_skill(self, body, skill_id=None):
@@ -408,6 +447,11 @@ class AssistantMixin:
         """(filename, text) for every readable document in the folder, one
         sublevel deep. ponytail: 24 files / 8k chars each is plenty to learn a
         craft from; image-only scans need OCR we don't do."""
+        if device:
+            bridge = self._device_bridge(device)
+            if not bridge:
+                raise ValueError(f"device '{device}' has no bridge configured")
+            return self._gather_sources_bridged(bridge, device, path)
         import time as _time
         root = Path(path).expanduser()
         if not root.is_dir():
@@ -479,10 +523,6 @@ class AssistantMixin:
         if aid:
             self.agent_close(aid, status, error=error)   # result is read from research.content
 
-    def _research_run_id(self, rid):
-        row = self.store.one("select id from agents where kind='research' and ref_id=?", (rid,))
-        return (row or {}).get("id") or ""
-
     def _research_cancelled(self, rid):
         with _RESEARCH_GUARD:
             if rid in _RESEARCH_CANCEL:
@@ -511,6 +551,10 @@ class AssistantMixin:
             out = [f"![]({images[0]})", ""] + out
         return "\n".join(out)
 
+    def _research_run_id(self, rid):
+        row = self.store.one("select id from agents where kind='research' and ref_id=?", (rid,))
+        return (row or {}).get("id") or ""
+
     def _set_research_progress(self, rid, phase, message=""):
         self.store.exec("update research set progress=?, updated_at=? where id=?",
                         (json.dumps({"phase": phase, "message": message}), now_iso(), rid))
@@ -523,10 +567,20 @@ class AssistantMixin:
     def _run_research(self, rid, query, endpoint_id, model):
         try:
             if self._research_cancelled(rid):
+                self._close_research_run(rid, "cancelled")
                 return
             self._set_research_progress(rid, "Searching the web", query)
             results = self.search_web(query, count=12)
+            # Long, sentence-shaped prompts can return nothing from a search
+            # engine even when the topic has plenty of material. Retry with a
+            # concise query before allowing the model to write a report.
+            if not results and len(query.split()) > 8:
+                short_query = " ".join(query.split()[:8])
+                results = self.search_web(short_query, count=12)
+            if not results:
+                raise RuntimeError("No web sources were found. Try a narrower topic or check web search.")
             if self._research_cancelled(rid):
+                self._close_research_run(rid, "cancelled")
                 return
             self._set_research_progress(rid, "Reading sources", f"{len(results)} sources")
             images = self.search_images(query, count=2)   # best-effort, rendered inline (not in the .md)
@@ -564,6 +618,7 @@ class AssistantMixin:
                     max_tokens=8000,
                 )
             if self._research_cancelled(rid):
+                self._close_research_run(rid, "cancelled")
                 return
             content = (report.strip() + "\n\n## Sources\n" + sources_md) if report else (
                 f"# {query}\n\n## Sources\n{sources_md}")
@@ -572,8 +627,9 @@ class AssistantMixin:
             self._close_research_run(rid, "done")
         except Exception as exc:
             if self._research_cancelled(rid):
+                self._close_research_run(rid, "cancelled")
                 return
-            self.store.exec("update research set status='completed', content=?, progress=?, updated_at=? where id=?",
+            self.store.exec("update research set status='failed', content=?, progress=?, updated_at=? where id=?",
                             (f"# {query}\n\nResearch failed: {exc}",
                              json.dumps({"phase": "Complete", "message": "failed"}), now_iso(), rid))
             self._close_research_run(rid, "failed", error=str(exc)[:500])
@@ -600,6 +656,8 @@ class AssistantMixin:
             "mode": r.get("mode") or "chat",
             "archived": bool(r.get("archived")),
             "is_important": bool(r.get("is_important")),
+            "host_id": r.get("host_id") or "",
+            "workdir": r.get("workdir") or "",
             "folder": r.get("folder") or None,
             "sort_order": r.get("sort_order"),
             "created_at": r.get("created_at"),
@@ -611,9 +669,12 @@ class AssistantMixin:
             "uid": r["id"],
             "id": r["id"],
             "summary": r["summary"],
-            "dtstart": r["dtstart"],
-            "dtend": r["dtend"],
+            "dtstart": event_time_out(r["dtstart"], r["all_day"]),
+            "dtend": event_time_out(r["dtend"], r["all_day"]),
             "all_day": bool(r["all_day"]),
+            # The raw stored values, for anything that needs the instant verbatim.
+            "dtstart_utc": r["dtstart"],
+            "dtend_utc": r["dtend"],
             "location": r["location"],
             "description": r["description"],
         }
@@ -628,6 +689,7 @@ class AssistantMixin:
             "prompt": r.get("prompt") or "",
             "schedule": r.get("schedule") or "",
             "scheduled_time": r.get("scheduled_time") or "",
+            "scheduled_date": r.get("scheduled_date") or "",
             "status": r.get("status") or "active",
             "permission_mode": r.get("permission_mode") or "sandbox",
             "repeat_day": int(r.get("repeat_day") or 0),
@@ -655,8 +717,8 @@ class AssistantMixin:
 
     @classmethod
     def research_json(cls, r):
-        # The bibliography lives in the Markdown body; expose it as structured
-        # data too, for the readers that want links without parsing Markdown.
+        # Older reports stored their bibliography only in the Markdown body.
+        # Expose it as structured data too, as the macOS and iOS readers expect.
         content = r.get("content") or ""
         bibliography = re.split(r"(?m)^## Sources\s*$", content, maxsplit=1)
         sources = []
@@ -668,9 +730,9 @@ class AssistantMixin:
             "id": r["id"],
             "query": r.get("query") or "",
             "status": r.get("status") or "queued",
+            "content": content,
             "sources": sources,
             "source_count": len(sources),
-            "content": content,
             "progress": cls.loads(r.get("progress")) or {},
             "archived": bool(r.get("archived")),
             "created_at": r.get("created_at"),
