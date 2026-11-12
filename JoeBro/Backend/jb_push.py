@@ -466,6 +466,13 @@ def _activity_schema(store):
 _HEX_RX = re.compile(r"[a-fA-F0-9]{32,400}")
 
 
+def _start_scene_column(store):
+    try:
+        store.exec("ALTER TABLE push_start_tokens ADD COLUMN scene TEXT DEFAULT ''")
+    except Exception:
+        pass   # already there
+
+
 def register_activity(store, args):
     """Live Activity tokens. One body may carry a push-to-start token (`push_to_start_token` +
     `install_id`), a per-activity update token (`token`, or `push_token`, optional install_id/activity_id),
@@ -473,6 +480,7 @@ def register_activity(store, args):
     if not isinstance(args, dict):
         raise PushError("invalid activity token")
     _activity_schema(store)
+    _start_scene_column(store)
     env = args.get("environment")
     install = str(args.get("install_id") or "")[:100]
     start = args.get("push_to_start_token")
@@ -495,6 +503,10 @@ def register_activity(store, args):
                    "ON CONFLICT(install_id) DO UPDATE SET token=excluded.token,environment=excluded.environment,"
                    "updated_at=excluded.updated_at", (install, start.lower(), env, now))
         out["start_token"] = True
+    scene = args.get("scene")
+    if install and isinstance(scene, str) and len(scene) <= 60:
+        # The header scene the app shows; a push-started Live Activity uses it as its backdrop.
+        store.exec("UPDATE push_start_tokens SET scene=? WHERE install_id=?", (scene, install))
     if token is not None:
         if not isinstance(token, str) or not _HEX_RX.fullmatch(token):
             raise PushError("invalid activity token")
@@ -657,14 +669,16 @@ class LiveActivityPusher:
         st = self.state(runs, now)
         sig = json.dumps([(r["id"], str(r.get("detail", ""))[:40], r.get("queued"), r.get("subagents", 0), bool(r.get("waiting"))) for r in runs])
         struct = json.dumps([(r["id"], r.get("subagents", 0), bool(r.get("waiting"))) for r in runs])
+        _start_scene_column(self.store)
         installs_with_activity = {r["install_id"] for r in self.store.rows("SELECT install_id FROM push_activities") if r["install_id"]}
         for row in self.store.rows("SELECT * FROM push_start_tokens"):
             if row["install_id"] in installs_with_activity or now - self.last_start.get(row["install_id"], 0) < START_EVERY:
                 continue
             self.last_start[row["install_id"]] = now
             attrs = {"id": "agents", "destination": "joebro://agents"}
-            if self.scene:
-                attrs["sceneName"] = str(self.scene)
+            scene = (row.get("scene") if hasattr(row, "get") else None) or self.scene
+            if scene:
+                attrs["sceneName"] = str(scene)
             payload = {"aps": {"timestamp": int(now), "event": "start", "attributes-type": "JoeBroActivityAttributes",
                                "attributes": attrs, "content-state": st, "stale-date": int(now) + 900,
                                "relevance-score": _relevance(st),
