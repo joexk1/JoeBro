@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Night Shift.** Queue coding tasks. They run overnight, each in its own git branch and worktree, on whichever linked machine has the repo, with Claude Code, Codex or OpenCode. Morning review cards show the diff, the test result and a summary; approve (keep or merge locally), reject or ask for a follow-up, from the Night Shift panel or the iPhone lock screen. It never pushes.
+- **Shared Memory.** One project memory that every agent reads and writes over MCP. `joebro-agents memory import --write` brings in CLAUDE.md and AGENTS.md once and leaves a short pointer. The session brief is capped at about 400 tokens; in testing a 1,460-token CLAUDE.md became 454 tokens per session. Facts strengthen when used and fade when not; nothing is deleted. Personal facts never reach a repo or a coding agent.
+- **One Memory screen.** JoeBro's own memory (Brain and phone memory) is now part of Shared Memory: scope filter, search, strength, provenance, pin, edit, archive and history.
+- **Live subagents.** Subagents appear nested under their parent in the Agents panel, with a count. Claude Code is verified; Codex and OpenCode are best effort.
+- **Push-to-start** for the Dynamic Island, so new runs and subagents appear while the phone app is in the background.
+- **Resume.** The personal agent can list and resume recent coding sessions ("pick up what I was working on yesterday and add tests"). Recent sessions have a Resume button in the Night Shift panel.
+- **Morning briefing and proactive autonomy** are now part of the shipped app, including review cards in the briefing.
+- **Demo mode** for screenshots: launch with `-JoeBroDemo`.
 - **Long documents in parts.** `create_document` takes `append=true`, so a long file is written in several calls at the same path. Each part is saved, and shows in the editor, as it lands. If a tool call is cut off at the model's output limit, JoeBro now says so and the model retries in smaller parts instead of failing with a misleading error.
 - **Safer edits.** `edit_document` find/replace refuses an ambiguous match, says how many it found and where, and takes `replace_all` or `occurrence`.
 - **Paged reads.** `read_file` takes `lines` and `read_pdf` takes `pages`. A long file or PDF comes back one window at a time with a footer saying what was shown and how to ask for the next.

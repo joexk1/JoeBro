@@ -5,13 +5,75 @@
 <h1 align="center">JoeBro</h1>
 
 <p align="center">
-  A native macOS AI workspace that's actually yours.<br>
-  Local-first. Private. Built to get things done.
+  The free way to bring all your existing agents under one umbrella.<br>
+  Claude Code, Codex and OpenCode, plus your own API keys and local models.<br>
+  On your Mac, your iPhone and your own hardware.
 </p>
 
 <p align="center"><a href="https://joebro.pages.dev/"><b>joebro.pages.dev</b></a></p>
 
 **Sister repo:** the iPhone app is **[JoeBro Mobile](https://github.com/joexk1/JoeBro-Mobile)**. It talks to this app on your Mac, with no cloud in between.
+
+---
+
+## One umbrella for your agents
+
+You probably already use more than one AI agent. Claude Code for one job, Codex for another, OpenCode with a local model for a third. Each has its own memory file, its own sessions and its own place to check on it.
+
+JoeBro puts them in one place. Link them once with [joebro-plugins](https://github.com/joexk1/joebro-plugins) and they show up together on your Mac, your iPhone and your own hardware, next to your chats on any model, whether that is a local one or your own API key. It is free, and nothing goes through a JoeBro server, because there isn't one.
+
+New in 1.5:
+
+- **Night Shift.** Queue coding tasks. They run overnight, each in its own git branch, on whichever machine has the repo. In the morning you get review cards with the diff, the test result and a summary. Approve or reject from the Mac or from your iPhone lock screen. It never pushes.
+- **Shared Memory.** One project memory that every agent reads and writes over MCP. It replaces CLAUDE.md and AGENTS.md sprawl.
+- **Live agents and subagents.** They appear in the Agents panel as they start, and on the phone and in the Dynamic Island, even with the app in the background.
+- **Resume.** Your personal agent can pick up a coding session. "Pick up what I was working on yesterday and add tests."
+- **Morning briefing and proactive mode** are now in the shipped app.
+
+---
+
+## Night Shift
+
+Add a task from the Mac or from your phone: a repo, a prompt and optionally a test command. Choose Claude Code, Codex or OpenCode. When the night window opens, JoeBro runs the next task in its own git branch and worktree, on whichever linked machine has the repo.
+
+In the morning each task is a review card: the diff, whether the tests passed, and a summary. **Approve** keeps the branch (or merges it locally, into a clean checkout of the base branch). **Reject** deletes the branch. You can also ask for a follow-up. On the iPhone you can do all of this from the lock screen.
+
+Night Shift never pushes. Agents run with pushing switched off, and you decide what happens to the branch. Set a time window, a time limit per task and a budget where the agent supports one.
+
+![Night Shift: the queue and the morning review cards](README_assets/night_shift.png)
+
+---
+
+## Shared Memory
+
+Every agent used to keep its own notes: CLAUDE.md, AGENTS.md, rules files. They drift, they repeat each other and they get loaded in full every session.
+
+Shared Memory is one store per project. Claude Code, Codex and OpenCode read and write it over MCP. Each session starts with a short brief, capped at about 400 tokens, and agents can search for more when they need it. In testing, a 1,460-token CLAUDE.md came down to 454 tokens per session. `joebro-agents memory import --write` brings in your existing files once, backs them up, and leaves a short pointer behind. A memory file under about 450 tokens won't save you anything, so those are left alone.
+
+- **Strengthens with use, fades without it.** Facts that get used grow stronger. Facts that don't, fade. Nothing is deleted. Old and replaced facts stay in history and can be restored.
+- **Provenance.** Every fact shows which agent wrote it, with what model, on which machine.
+- **Your personal facts stay yours.** They never reach a repo or a coding agent.
+- **One Memory screen.** JoeBro's own memory (the Brain) is now part of this. You see you, your projects and global facts in one place, with search, pin, edit and archive.
+
+![Shared Memory: one project memory every agent reads and writes](README_assets/shared_memory.png)
+
+---
+
+## Agents and subagents, live
+
+Linked agents appear in the Agents panel while they work. When an agent spawns a subagent, it shows up nested under its parent, with a count on the parent row. The iPhone and the Dynamic Island show the same thing. New runs appear on the Island even when the app is in the background, using push-to-start (you bring your own Apple push key, as before).
+
+Subagent reporting is verified with Claude Code. Codex and OpenCode are supported on a best-effort basis.
+
+![The Agents panel with subagents nested under their parent](README_assets/agents.png)
+
+---
+
+## Resume a coding session
+
+JoeBro records your recent coding sessions. Ask your personal agent to pick one up: "pick up what I was working on yesterday and add tests". Or press Resume on a session in the Night Shift panel. It starts the agent again in the repo, in tmux, on the machine that has it.
+
+![Resuming a coding session](README_assets/resume.png)
 
 ---
 
