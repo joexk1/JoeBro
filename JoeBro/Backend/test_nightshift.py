@@ -242,6 +242,12 @@ class Sessions(Base):
         self.assertEqual((task["kind"], task["status"], task["resume_id"]), ("session", "launched", "sess-2"))
         self.assertEqual(h.night_review_cards(), [])                                # a session is not a review
         self.assertIn("No earlier session", H().start_coding_session_tool(json.dumps({"repo": self.repo, "prompt": "x", "resume": True})))
+        # the apps' Resume button: POST api/coding-agents/start {resume: <agent id>, session_id, title} resumes exactly that session
+        os.remove(rec)
+        out = h.start_coding_session_tool({"resume": "code:mac:claude:sess-1", "session_id": "", "title": "x"})
+        self.assertIn("Resumed Claude Code", out)
+        self.assertEqual(json.load(open(rec))[-3:-1], ["--resume", "sess-1"])
+        self.assertIn("No recorded session", h.start_coding_session_tool({"resume": "code:mac:claude:nope"}))
         self.assertIn("start_coding_session", WRITE_SIDE_EFFECT_TOOLS)              # hidden from read-only chats
 
 

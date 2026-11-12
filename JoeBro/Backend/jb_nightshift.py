@@ -486,7 +486,19 @@ class NightShiftMixin:
         sessions = jb_sharedmem.recent_sessions(self.store, p["key"], 10) if p else []
         if agent:
             sessions = [s for s in sessions if s["agent"] == agent]
-        if args.get("resume"):
+        if isinstance(args.get("resume"), str) and args["resume"].strip() not in ("", "true", "false"):
+            # exact session: a recorded session id, or a coding-agent id (code:host:source:session)
+            rid = args["resume"].strip()
+            hit = next((x for x in jb_sharedmem.recent_sessions(self.store, None, 50) if x["id"] == rid or x["resume_id"] == rid), None)
+            if not hit:
+                self._coding_table()
+                row = self.store.one("SELECT * FROM coding_agents WHERE id=?", (rid,)) if rid.startswith("code:") else None
+                if row and row["cwd"]:
+                    hit = {"repo": row["cwd"], "agent": row["source"], "resume_id": row["session_id"]}
+            if not hit:
+                return "No recorded session with that id to resume."
+            repo, agent, resume_id = hit["repo"], hit["agent"], hit["resume_id"]
+        elif args.get("resume"):
             if not sessions:
                 return "No earlier session to resume there. Call again with resume=false to start a fresh one."
             last = sessions[0]
@@ -495,8 +507,8 @@ class NightShiftMixin:
         if not repo:
             return "I don't know where that project lives. Give me the repo path."
         try:
-            r = self.night_add({"repo": repo, "prompt": args.get("prompt") or "", "agent": agent or "any",
-                                "title": "Session: " + str(args.get("prompt") or "")[:60]}, kind="session", run_now=True, resume_id=resume_id)
+            r = self.night_add({"repo": repo, "prompt": args.get("prompt") or ("Continue where you left off." if resume_id else ""), "agent": agent or "any",
+                                "title": (args.get("title") or "Session: " + str(args.get("prompt") or ""))[:60]}, kind="session", run_now=True, resume_id=resume_id)
             for _, t in self.night_tick():
                 t.join(25)
             t = self.night_out(self.night_task(r["id"]))

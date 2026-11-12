@@ -909,6 +909,14 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
                 return self.json(self.coding_keys(aid, b.get("keys")))
             except ValueError as exc:
                 return self.json({"ok": False, "detail": str(exc)}, 400)
+        if path == "/api/coding-agents/start":     # the apps' Resume button (and "start a session"): start_coding_session
+            try:
+                b = self._json_body() or {}
+                msg = self.start_coding_session_tool(b)
+                ok = msg.startswith(("Started", "Resumed", "Queued"))
+                return self.json({"ok": ok, "detail": msg, "started": msg.startswith(("Started", "Resumed"))}, 200 if ok else 400)
+            except (ValueError, TypeError) as exc:
+                return self.json({"ok": False, "detail": str(exc)}, 400)
         if path in ("/api/coding-agents/event", "/api/coding-agents/ping", "/api/proactive", "/api/shopping",
                     "/api/personal/health") or path.startswith(("/api/proactive/undo/", "/api/proactive/approve/")):
             try:
