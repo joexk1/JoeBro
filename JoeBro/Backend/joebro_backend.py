@@ -2,6 +2,7 @@
 methods: the jb_* mixins composed into Handler below."""
 from jb_core import *  # noqa: F401,F403
 from jb_chat import ChatMixin
+from jb_email import _bridge_types
 from jb_tools import ToolsMixin
 from jb_email import EmailMixin
 from jb_docs import DocsMixin
@@ -303,10 +304,13 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
             # itself is hidden unless the user asked to see it (show_phone_session).
             show_phone = str(self.pref("show_phone_session")).lower() in ("1", "true", "yes", "on")
             rows = self.store.rows(
-                "select id,name,model,mode,archived,is_important,folder,sort_order,created_at from sessions "
+                "select id,name,model,mode,archived,is_important,host_id,workdir,folder,sort_order,created_at from sessions "
                 "where id not like 'bot\\_tg\\_%' escape '\\' and id not like 'task\\_session\\_ptask\\_%' escape '\\' "
                 "and (id != ? or ?) order by coalesce(sort_order, -julianday(created_at)) asc",
                 (PHONE_SESSION_ID, 1 if show_phone else 0))
+            device = (q.get("device") or q.get("host_id") or "").strip()
+            if device:          # a client on a linked device sees its own chats plus this host's
+                rows = [r for r in rows if (r.get("host_id") or "") in ({""} | LOCAL_HOST_IDS | {device})]
             return self.json([self.session_json(r) for r in rows])
         if path.startswith("/api/session/") and path.endswith("/tip"):
             # Cheap freshness probe for the open chat — the app polls this and
@@ -750,8 +754,8 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
         if path == "/api/email/connect":
             body = self._json_body()
             account = self.email_account_from_login(body.get("email") or "", body.get("password") or "")
-            if account["type"] in {"bridge", "hydroxide"}:
-                err = self.ensure_hydroxide_bridge()
+            if account["type"] in _bridge_types():
+                err = self.ensure_mail_bridge()
                 if err:
                     return self.json({"ok": False, "error": err}, 400)
             account_id = self.upsert_email_account(account["type"], account)

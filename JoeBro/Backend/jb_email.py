@@ -5,6 +5,11 @@ from email.mime.base import MIMEBase
 from email import encoders
 
 
+def _bridge_types():
+    """Account types served by a local mail bridge an extension provides (hook `email_bridge_types`)."""
+    return {"bridge"}.union(*[set(t) for t in jb_ext.call("email_bridge_types")])
+
+
 class EmailMixin:
     _email_cache_lock = threading.Lock()
     _email_cache_refreshing = set()
@@ -19,7 +24,7 @@ class EmailMixin:
         except OSError:
             return False
 
-    def ensure_hydroxide_bridge(self):
+    def ensure_mail_bridge(self):
         """Start a local mail bridge an extension provides (hook `email_bridge_ensure`).
         Core ships plain IMAP/SMTP only. Returns an error string, or None when ready."""
         return jb_ext.first("email_bridge_ensure", self)
@@ -87,7 +92,7 @@ class EmailMixin:
         }
 
     def upsert_email_account(self, kind, body):
-        is_bridge = kind in {"bridge", "hydroxide"}
+        is_bridge = kind in _bridge_types()
         display = body.get("email") or body.get("imap_user") or body.get("host") or "Email account"
         account_id = body.get("id") or "mail_" + os.urandom(6).hex()
         now = now_iso()
@@ -133,7 +138,7 @@ class EmailMixin:
         return (sources[0] if sources else None), raw
 
     # --- pooled, persistent IMAP connections -------------------------------
-    # Measured: hydroxide re-loads the whole mailbox (~35-90 s for 6.5k
+    # Measured: a local mail bridge re-loads the whole mailbox (~35-90 s for 6.5k
     # messages) whenever its LAST IMAP session closes; while any session stays
     # logged in, every command is ~15-30 ms. The old code opened and logged out
     # a connection per request, so every cold list/read paid the reload. We now
@@ -234,7 +239,7 @@ class EmailMixin:
             time.sleep(self.IMAP_PING_AFTER)
 
     def email_keepalive_once(self):
-        """Keep one warm session per account (so hydroxide never unloads the
+        """Keep one warm session per account (so the local mail bridge never unloads the
         mailbox) and NOOP idle pooled sessions; forget removed accounts."""
         accounts = self.email_sources()
         live = {self._imap_key(a): a for a in accounts}
@@ -266,7 +271,7 @@ class EmailMixin:
                     self._imap_checkin(key, entry[0], healthy=False)
 
     def _imap_warm(self, account, key):
-        """Open the anchor session and touch the mailbox so hydroxide loads it now."""
+        """Open the anchor session and touch the mailbox so the local mail bridge loads it now."""
         conn = self.imap_connect(account)
         with EmailMixin._imap_lock:
             EmailMixin._imap_out[key] = EmailMixin._imap_out.get(key, 0) + 1
@@ -280,10 +285,10 @@ class EmailMixin:
         self._imap_checkin(key, conn)
 
     def imap_connect(self, account):
-        # Bridge accounts (ProtonMail/hydroxide) need the local bridge running;
+        # Bridge accounts (a local IMAP/SMTP bridge) need the local bridge running;
         # ensure it for every IMAP op (list, mark-read, archive, …), not just connect.
-        if account.get("type") in {"bridge", "hydroxide"} or str(account.get("imap_host")) == "127.0.0.1":
-            self.ensure_hydroxide_bridge()
+        if account.get("type") in _bridge_types() or str(account.get("imap_host")) == "127.0.0.1":
+            self.ensure_mail_bridge()
         cls = imaplib.IMAP4_SSL if int(account.get("imap_ssl") or 0) else imaplib.IMAP4
         conn = cls(account["imap_host"], int(account["imap_port"]), timeout=self.IMAP_TIMEOUT)
         if account.get("imap_user") or account.get("imap_password"):
@@ -784,10 +789,10 @@ class EmailMixin:
         if not sources:
             raise ValueError("No mailbox connected")
         account = sources[0]
-        # For the ProtonMail/hydroxide bridge the SMTP server on :1025 must be
+        # For the local mail bridge the SMTP server on :1025 must be
         # running before we can send. Starting it is idempotent and cheap.
-        if account.get("type") in ("bridge", "hydroxide"):
-            err = self.ensure_hydroxide_bridge()
+        if account.get("type") in _bridge_types():
+            err = self.ensure_mail_bridge()
             if err:
                 raise RuntimeError(err)
         msg = MIMEMultipart("mixed")
@@ -861,7 +866,7 @@ class EmailMixin:
             smtp = smtplib.SMTP_SSL(host, port, timeout=30)
         else:
             # Plain connection that must be upgraded with STARTTLS before AUTH.
-            # This covers submission port 587 AND the local hydroxide bridge on
+            # This covers submission port 587 AND the local mail bridge on
             # :1025, which also requires STARTTLS+AUTH.
             smtp = smtplib.SMTP(host, port, timeout=30)
         try:

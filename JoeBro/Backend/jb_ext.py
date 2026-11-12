@@ -19,6 +19,36 @@ Core code calls named hooks where behaviour is extensible:
 A failing extension is logged and skipped; it never takes the backend down. A hook may
 refuse a request on purpose by raising ValueError (or a subclass): that propagates to the
 caller, which reports it to the user like any other validation error.
+
+Hook names core calls today (each is optional; absent = the generic behaviour):
+
+  pref_default(key) -> value              default for a pref the user never set
+  ptask_seeds() -> [(id,title,prompt,schedule,time,weekday,status)]   phone-agent tasks seeded once
+  ptask_run(handler,row) -> reply|None    run a phone-agent task without a model
+  autonomy_routines() -> {id: {title,enabled,every_days,at,timezone,quiet_hours,report}}
+                                          no-model scheduled routines (see jb_autonomy)
+  autonomy_precheck(routine,cfg) -> reason|None   refuse a run (e.g. a watchlist is empty)
+  phone_tool_schemas() -> [schema]        add or replace phone-toolset function schemas
+  phone_tool(handler,name,body,form) -> text|None   implement or override a phone-toolset tool
+  route_tool_schemas(handler,form,schemas) -> schemas   trim/reorder the schema list for a turn
+  tool_advice() -> ({tool: advice}, {tool: advice_key})  per-tool lines for the system prompt
+  mcp_extra_tools(server_row) -> [tool def]       extra tools a stored MCP server offers
+  mcp_call(handler,row,tool,args) -> event|None   serve an MCP tool yourself
+  mcp_output(row,tool,text) -> text|None          rewrite an MCP result (e.g. shrink it)
+  vision_default_target(handler) -> (endpoint_id, model)   fallback image-caption model
+  email_account_from_login(address,secret) -> account|None  provider settings, e.g. a local bridge
+  email_bridge_ensure(handler) -> error|None      start that bridge;  email_bridge_types() -> {types}
+  notify_chat_kinds() -> {kinds}          notice kinds that live in the phone chat, not the Inbox
+  bg_sources(handler,now) -> {source: [items]}    extra sources for the heartbeat and pulse
+  proactive_records(handler,now) -> {key: record} extra records for the proactive pass
+  transfer_parse(scheme,role,rest,query) -> {"kind":..}|None;  transfer_export(h,p,filename) -> ref|None
+  transfer_deliver(h,p,ref,data,filename,args) -> result|None;  transfer_outbound_kinds() -> {kinds}
+  transfer_preview(p) -> {..};  transfer_prepare(p,ref,args);  transfer_folder_written(root,folder) -> {..}
+  janitor_scratch(data_dir) -> {"scratch":[..],"tmp_patterns":[..],"config":{..}};  janitor_run(janitor)
+
+Extensions also reach the core by importing it (every jb_* module is loaded first). They add tool
+names to jb_core.PRODUCTION_AI_TOOLS / PHONE_TOOL_NAMES when they add tools.
+
 Stdlib only, like the rest of the backend.
 """
 import importlib.util
