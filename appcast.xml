@@ -3,6 +3,14 @@
     <channel>
         <title>JoeBro</title>
         <item>
+            <title>1.5.0</title>
+            <pubDate>Thu, 12 Nov 2026 17:31:15 +0100</pubDate>
+            <sparkle:version>8</sparkle:version>
+            <sparkle:shortVersionString>1.5.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.5.0/JoeBro-1.5.0.dmg" length="10704681" type="application/octet-stream" sparkle:edSignature="hgrLwUrAvLRv0nMqVH+5FRF4FkbnSOAzKAz54uSslnnBs8QIB7KDFfAh3ongGoq6hYxegeKY6CqHGEPS5B8dCQ=="/>
+        </item>
+        <item>
             <title>1.4.0</title>
             <pubDate>Tue, 03 Nov 2026 12:48:49 +0100</pubDate>
             <sparkle:version>7</sparkle:version>
@@ -30,20 +38,6 @@
                 <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.3.0/JoeBro6-3.delta" sparkle:deltaFrom="3" length="3445282" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="2BY9Zob+hSTlvJ99WrsOQEJNKEYTb/MoBAmfN44XlmYl0RdOMaTmY0f9Ljownvl3JTI0qyXNWcTBWTdQROPtCA=="/>
                 <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.3.0/JoeBro6-2.delta" sparkle:deltaFrom="2" length="3505934" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="2/Dah5U2uWJOAYHphhuHWd8EVJfcFUtEEj1o/VPxLENoMk8NLIkbRN6adznqtsBgG/+XW6vcPi2QKo4A/M7eBA=="/>
                 <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.3.0/JoeBro6-1.delta" sparkle:deltaFrom="1" length="3660454" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="8rUrt0obU+zis0ROWNMCzAbdu4GFYRoxVoN8pjfz+YAtUEqc5YekdHOO/7Ogz7wEFzjri7ZVFYwwBOADwOn6Ag=="/>
-            </sparkle:deltas>
-        </item>
-        <item>
-            <title>1.2.1</title>
-            <pubDate>Mon, 13 Jul 2026 13:55:56 +0100</pubDate>
-            <sparkle:version>5</sparkle:version>
-            <sparkle:shortVersionString>1.2.1</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.2.1/JoeBro-1.2.1.dmg" length="8345039" type="application/octet-stream" sparkle:edSignature="kKVg7ZL6gptTDle9TXxjv4n6Vd4MopoYe4VhhahxmlD0kcIdO7gpWnEsCJc0c8ZsFOWg+dbmZV8MFbuwaxZZBQ=="/>
-            <sparkle:deltas>
-                <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.2.1/JoeBro5-4.delta" sparkle:deltaFrom="4" length="1267670" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="K2TDB3KlJsVDVmLY2uolc3ZjtebygCpsMSrSBF5OdxjmNiDlh8MP38HCbltwekMyhmh+x1CMw0Crnhxz1MRqDQ=="/>
-                <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.2.1/JoeBro5-3.delta" sparkle:deltaFrom="3" length="1530950" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="nw/WGMuVNPwhY45EXmcHbZbI9Na8kiv5pTSHnrZRtP1TjcU7Jah0vzI6r3GAy7Nlir6Kw0V/Qgoskje0x/CZDA=="/>
-                <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.2.1/JoeBro5-2.delta" sparkle:deltaFrom="2" length="1764222" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="WFuxG6W0lvv8zYL24phUIUN27eY9M75U43yoNlTzBHNkLU23f/EsegHC/FEEqQP6bKpwLutyrBkCfVNTuzlYBg=="/>
-                <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.2.1/JoeBro5-1.delta" sparkle:deltaFrom="1" length="2189274" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977616" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="ZrcnFbssaHnPXjWl2jVi0WrxXCDbx7GdO1PN4X3w2SBnmOblHusQNnvXnvv7cWDBA+Nfgme51HPWwTSXt4bGBw=="/>
             </sparkle:deltas>
         </item>
     </channel>
