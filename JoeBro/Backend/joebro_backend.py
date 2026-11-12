@@ -26,6 +26,7 @@ from jb_proactive import ProactiveMixin, proactive_loop
 from jb_desktop import DesktopUseMixin
 from jb_coding import CodingAgentsMixin, coding_loop
 from jb_plugins import PluginsMixin, PluginError
+import jb_ext
 import gzip
 import hmac
 
@@ -36,7 +37,7 @@ SECRET_MASK = "••••••••"
 _AUTH_FAILS = {"n": 0}      # a count in memory only: how many bad tokens this run has seen
 
 
-class Handler(PromptMixin, ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, ModelsMixin,
+class Handler(*jb_ext.mixins(), PromptMixin, ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, ModelsMixin,
               AssistantMixin, MemoryMixin, FilesMixin, FleetMixin, PersonalMixin, MuseMixin,
               PersonalTasksMixin, AgentsMixin, HeartbeatMixin, LocationMixin, MobileMixin,
               ProactiveMixin, DesktopUseMixin, CodingAgentsMixin, PluginsMixin,
@@ -176,6 +177,8 @@ class Handler(PromptMixin, ChatMixin, ToolsMixin, EmailMixin, DocsMixin, Calenda
         if not self._guard():
             return
         path = self._path().path
+        if jb_ext.route(self, "GET", path, self._query()):
+            return
         q = self._query()
         if path in ("/api/ping", "/api/health"):
             return self.json({"ok": True, "local": True})
@@ -439,6 +442,8 @@ class Handler(PromptMixin, ChatMixin, ToolsMixin, EmailMixin, DocsMixin, Calenda
         if not self._guard():
             return
         path = self._path().path
+        if jb_ext.route(self, "POST", path, self._query()):
+            return
         if path == "/api/mobile/enable":
             out, code = self.mobile_enable(self._json_body() or {})
             return self.json(out, code)
@@ -830,6 +835,8 @@ class Handler(PromptMixin, ChatMixin, ToolsMixin, EmailMixin, DocsMixin, Calenda
         if not self._guard():
             return
         path = self._path().path
+        if jb_ext.route(self, "PUT", path, self._query()):
+            return
         if path.startswith("/api/muse/"):
             try:
                 self.muse_write(path.split("/")[3], (self._json_body() or {}).get("content") or "")
@@ -900,6 +907,8 @@ class Handler(PromptMixin, ChatMixin, ToolsMixin, EmailMixin, DocsMixin, Calenda
         if not self._guard():
             return
         path = self._path().path
+        if jb_ext.route(self, "DELETE", path, self._query()):
+            return
         if path.startswith("/api/mobile/devices/"):
             return self.json(remove_device(self.store, path.rsplit("/", 1)[-1]))
         if path == "/api/mobile/apns":
@@ -1031,6 +1040,7 @@ def main():
     threading.Thread(target=janitor_loop, args=(server,), daemon=True).start()  # deletes only if enabled
     threading.Thread(target=proactive_loop, args=(server,), daemon=True).start()  # off until enabled
     threading.Thread(target=coding_loop, args=(server,), daemon=True).start()     # linked coding agents
+    jb_ext.start_loops(server)                                                   # private add-ons, if any
     try:
         _h = Handler.__new__(Handler); _h.server = server
         _h.reconcile_agents_on_boot()      # a restart killed any run still marked live
