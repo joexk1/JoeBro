@@ -300,7 +300,10 @@ struct EditorPane: View {
                               },
                               onSaved: {
                                   guard store.openDocs.indices.contains(i) else { return }
-                                  if let j = store.docIndex(store.openDocs[i].id) { store.openDocs[j].dirty = false }
+                                  let id = store.openDocs[i].id
+                                  if let j = store.docIndex(id) { store.openDocs[j].dirty = false }
+                                  // Remote docs save to a local temp: push the bytes back.
+                                  store.pushRemoteDocxBody(docID: id)
                               },
                               onSelectionSize: { richFontSize = Double($0.rounded()) },
                               onSelectionFont: { richFontName = $0 },

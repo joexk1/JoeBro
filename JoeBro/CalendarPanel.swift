@@ -131,8 +131,12 @@ struct CalendarPanel: View {
         do {
             calendarStatus = try? await APIClient.shared.calendarStatus()
             if calendarStatus?.type == "macos" {
+                // Shows the system permission prompt when access is undetermined.
+                _ = await MacCalendarBridge.shared.requestFullAccess()
                 guard MacCalendarBridge.shared.authorizationAllowsEvents() else {
-                    events = .failed("Open Settings and connect macOS Calendar to grant full calendar access.")
+                    events = .failed(MacCalendarBridge.shared.isDeniedOrRestricted
+                        ? "Calendar access is turned off for JoeBro. Enable it in System Settings > Privacy & Security > Calendars."
+                        : "Calendar access was not granted.")
                     return
                 }
                 events = .loaded(macOSEvents(start: rangeStart, end: rangeEnd))

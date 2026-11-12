@@ -12,16 +12,7 @@ struct AttachmentChipsView: View {
         VStack(alignment: .leading, spacing: 6) {
             // Images render inline, right in the bubble
             ForEach(attachments.filter { $0.mime.hasPrefix("image/") }) { att in
-                AsyncImage(url: APIClient.shared.baseURL.appendingPathComponent("api/upload/\(att.id)")) { phase in
-                    if case .success(let img) = phase {
-                        img.resizable().scaledToFit()
-                    } else if case .failure = phase {
-                        Label(att.name, systemImage: "photo")
-                            .font(.system(size: 11))
-                    } else {
-                        ProgressView().controlSize(.small)
-                    }
-                }
+                AuthedUploadImage(att: att)
                 .frame(maxWidth: 320, maxHeight: 240)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .contentShape(RoundedRectangle(cornerRadius: 12))
@@ -138,5 +129,29 @@ struct QuickLookPreview: NSViewRepresentable {
 
     func updateNSView(_ view: QLPreviewView, context: Context) {
         view.previewItem = url as NSURL
+    }
+}
+
+/// Inline image for an uploaded attachment, fetched with the backend token.
+private struct AuthedUploadImage: View {
+    let att: Attachment
+    @State private var image: NSImage?
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image).resizable().scaledToFit()
+            } else if failed {
+                Label(att.name, systemImage: "photo").font(.system(size: 11))
+            } else {
+                ProgressView().controlSize(.small)
+            }
+        }
+        .task(id: att.id) {
+            if let d = try? await APIClient.shared.uploadData(id: att.id), let i = NSImage(data: d) {
+                image = i
+            } else { failed = true }
+        }
     }
 }

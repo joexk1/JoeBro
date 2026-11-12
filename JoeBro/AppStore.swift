@@ -13,12 +13,14 @@ final class AppStore {
     // Conversation
     var messages: [Message] = []
     var isStreaming = false
+    private var stopPending = false
     var workingSessions: Set<String> = []   // sessions generating in the background (sidebar spinner)
     var loadError: String?
 
     // Models
     var models: [ModelChoice] = []
     var selectedModel: ModelChoice?
+    private var serverDefaultModelID: String?
 
     // Workspace
     var activeTab: WorkspaceTab = .chat {
@@ -170,6 +172,8 @@ final class AppStore {
         await loadMCPServers()
     }
 
+    enum BackendStatus { case up, slow, down, checking }
+
     // Composer options
     var agentMode = false
     var useWeb = true          // web search on by default; the composer toggle gates it
@@ -207,6 +211,7 @@ final class AppStore {
 
     // Bound folder (workdir) file tree — shown in the sidebar
     var workdirPath: String?
+    var workdirRemote = false   // bound folder lives on the Pi/another host (list via backend)
     var treeEntries: [String: [WorkdirEntry]] = [:]   // sub-path → entries
     var expandedDirs: Set<String> = []
 
@@ -417,7 +422,7 @@ final class AppStore {
         messages = []
         // Clear the bound-folder tree synchronously so we never show the chat
         // you just left's files while the new one's tree loads.
-        workdirPath = nil; treeEntries = [:]; expandedDirs = []
+        workdirPath = nil; workdirRemote = false; treeEntries = [:]; expandedDirs = []
         // Restore this chat's editor exactly as it was left (or empty for a
         // chat we haven't opened this session).
         let snap = id.flatMap { editorStateBySession[$0] }
@@ -600,6 +605,10 @@ final class AppStore {
         stopStreaming()
         activeTab = .chat
         selectedSessionID = nil
+        if let id = serverDefaultModelID, let choice = models.first(where: { $0.id == id }) {
+            selectedModel = choice
+        }
+        Task { await refreshDefaultForNewChat() }
         messages = []
         openDocs = []
         activeDocID = nil
@@ -809,14 +818,35 @@ final class AppStore {
                 all.append(.appleIntelligence)
             }
             models = all
+            if let prefs = try? await api.getPrefs(),
+               let model = prefs["default_model"]?.stringValue,
+               let endpoint = prefs["default_endpoint_id"]?.stringValue {
+                let id = model + "@" + endpoint
+                serverDefaultModelID = all.contains(where: { $0.id == id }) ? id : nil
+            } else {
+                serverDefaultModelID = nil
+            }
             if selectedModel == nil {
                 let savedID = UserDefaults.standard.string(forKey: "selectedModelID")
-                selectedModel = all.first { $0.id == savedID }
+                selectedModel = all.first { $0.id == serverDefaultModelID }
+                    ?? all.first { $0.id == savedID }
                     ?? all.first { $0.category == "local" }
                     ?? all.first
             }
         } catch {
             loadError = "Models: " + error.localizedDescription
+        }
+    }
+
+    private func refreshDefaultForNewChat() async {
+        guard let prefs = try? await api.getPrefs() else { return }
+        let model = prefs["default_model"]?.stringValue ?? ""
+        let endpoint = prefs["default_endpoint_id"]?.stringValue ?? ""
+        let id = model + "@" + endpoint
+        serverDefaultModelID = models.contains(where: { $0.id == id }) ? id : nil
+        if selectedSessionID == nil, let id = serverDefaultModelID,
+           let choice = models.first(where: { $0.id == id }) {
+            selectedModel = choice
         }
     }
 
@@ -885,27 +915,10 @@ final class AppStore {
         }
     }
 
-    /// Write an event the AI created (via the create_event tool) into the real
-    /// macOS Calendar through EventKit. The AI parses the natural-language
-    /// date/time itself and sends ISO datetimes — we just persist them.
-    /// The backend's create_event tool only stores macOS events locally (it
-    /// can't touch EventKit). Parse its JSON output and write the event into the
-    /// real macOS Calendar here. No-op for non-macOS calendars (caldav events
-    /// are already created server-side).
-    private func writeAgentCalendarEvent(fromToolOutput output: String) async {
-        guard let data = output.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let ev = obj["event"] as? [String: Any] else { return }
-        guard (try? await api.calendarStatus())?.type == "macos" else { return }
-        let summary = (ev["summary"] as? String) ?? "New event"
-        guard let start = parseISO((ev["dtstart"] as? String) ?? "") else { return }
-        let end = parseISO((ev["dtend"] as? String) ?? "") ?? start.addingTimeInterval(3600)
-        let allDay = (ev["all_day"] as? Bool) ?? false
-        _ = try? await writeMacCalendarEvent(summary: summary, start: start, end: end, allDay: allDay)
-    }
-
     @discardableResult
-    func writeMacCalendarEvent(summary: String, start: Date, end: Date, allDay: Bool) async throws -> String {
+    func writeMacCalendarEvent(summary: String, start: Date, end: Date, allDay: Bool,
+                               location: String = "", notes: String = "",
+                               timeZone: TimeZone? = nil) async throws -> String {
         guard await MacCalendarBridge.shared.requestFullAccess() else {
             throw NSError(domain: "JoeBroCalendar", code: 2, userInfo: [NSLocalizedDescriptionKey: "macOS Calendar permission was not granted."])
         }
@@ -920,8 +933,139 @@ final class AppStore {
         event.startDate = start
         event.endDate = end
         event.isAllDay = allDay
+        // Pin the event's zone explicitly (start/end are absolute instants) instead of
+        // inheriting whatever zone this Mac happens to be in. All-day events stay floating.
+        if !allDay, let timeZone { event.timeZone = timeZone }
+        if !location.isEmpty { event.location = location }
+        if !notes.isEmpty { event.notes = notes }
         try store.save(event, span: .thisEvent, commit: true)
         return event.eventIdentifier ?? "macos-event"
+    }
+
+    /// Push the Mac's calendar into the backend's mirror table. The backend
+    /// can't read EventKit, so without this the agent's manage_events tool only
+    /// ever sees events JoeBro itself created — it could never move the rest.
+    /// ponytail: fixed ±window rather than paging; ~a few hundred events is a
+    /// single small POST. Widen it if you keep a decade of calendar.
+    private var drainingCalendar = false
+
+    func syncCalendarMirror() async {
+        guard (try? await api.calendarStatus())?.type == "macos",
+              MacCalendarBridge.shared.authorizationAllowsEvents() else { return }
+        let store = EKEventStore()          // fresh store: the shared one serves stale data
+        let now = Date()
+        let from = Calendar.current.date(byAdding: .year, value: -1, to: now) ?? now
+        let to = Calendar.current.date(byAdding: .year, value: 2, to: now) ?? now
+        let df = ISO8601DateFormatter()
+        let events = store.events(matching: store.predicateForEvents(withStart: from, end: to, calendars: nil))
+            // ponytail: recurring series are skipped. Every occurrence shares one
+            // eventIdentifier, so mirroring them would collapse the series to a
+            // single row and any edit would silently hit the wrong occurrence.
+            // Give occurrences a compound id and resolve them back if the agent
+            // ever needs to move a repeating event.
+            .filter { !$0.hasRecurrenceRules }
+            .map { ev -> [String: Any] in
+                ["uid": "macos:" + ev.eventIdentifier,
+                 "summary": ev.title ?? "Untitled event",
+                 "dtstart": df.string(from: ev.startDate),
+                 "dtend": df.string(from: ev.endDate ?? ev.startDate.addingTimeInterval(3600)),
+                 "all_day": ev.isAllDay,
+                 "location": ev.location ?? "",
+                 "description": ev.notes ?? ""]
+            }
+        try? await api.syncCalendarMirror(events)
+    }
+
+    /// Apply the agent's queued calendar writes (create / update / delete) to the
+    /// real macOS Calendar. The backend can't touch EventKit and the agent may
+    /// have run from any client (iPhone, Telegram, a task), so it queues each
+    /// write at /api/calendar/pending; this drains that queue, acks what landed,
+    /// and re-mirrors. Runs at launch, on a timer, and after any create_event /
+    /// manage_events tool result in a Mac chat.
+    func drainCalendarOps() async {
+        guard !drainingCalendar else { return }
+        drainingCalendar = true
+        defer { drainingCalendar = false }
+        guard (try? await api.calendarStatus())?.type == "macos",
+              let ops = try? await api.calendarPending(ack: []), !ops.isEmpty else { return }
+        guard await ensureCalendarAccess() else { return }
+        let store = MacCalendarBridge.shared.store
+        var ids: [String: String] = [:]      // backend placeholder uid -> EventKit id
+        var acked: [String] = []
+        var problems: [String] = []
+        for op in ops {
+            let opID = (op["id"] as? String) ?? ""
+            let kind = (op["op"] as? String) ?? "update"
+            let raw = (op["uid"] as? String) ?? ""
+            do {
+                if kind == "create" {
+                    let tzName = (op["tz"] as? String) ?? ""
+                    let zone: TimeZone? = tzName.isEmpty ? nil : TimeZone(identifier: tzName)
+                    if !tzName.isEmpty && zone == nil {
+                        // Unknown zone id: don't guess, leave it queued and tell the user.
+                        problems.append("create: unknown timezone \(tzName)"); continue
+                    }
+                    let allDayOp = (op["all_day"] as? Bool) ?? false
+                    // A time with an explicit offset is absolute. A legacy naive time is
+                    // read in the op's zone, never in this Mac's current zone.
+                    guard let start = parseISO((op["dtstart"] as? String) ?? "", in: zone) else {
+                        problems.append("create: unreadable start time"); acked.append(opID); continue
+                    }
+                    if zone == nil && !allDayOp && !hasExplicitOffset((op["dtstart"] as? String) ?? "") {
+                        // Naive time and no zone: ambiguous. Refuse rather than guess.
+                        problems.append("create: \"\((op["summary"] as? String) ?? "event")\" has no timezone; not applied"); continue
+                    }
+                    let end = parseISO((op["dtend"] as? String) ?? "", in: zone) ?? start.addingTimeInterval(3600)
+                    let id = try await writeMacCalendarEvent(
+                        summary: (op["summary"] as? String) ?? "New event", start: start,
+                        end: max(end, start), allDay: allDayOp,
+                        location: (op["location"] as? String) ?? "", notes: (op["description"] as? String) ?? "",
+                        timeZone: zone)
+                    ids[raw] = id
+                    acked.append(opID)
+                    continue
+                }
+                let uid = ids[raw] ?? raw.replacingOccurrences(of: "macos:", with: "")
+                guard let event = store.event(withIdentifier: uid) else {
+                    // Stale mirror: report it, and drop the op so it can't loop forever.
+                    problems.append("\(kind): event not found in macOS Calendar"); acked.append(opID); continue
+                }
+                if kind == "delete" {
+                    try store.remove(event, span: .thisEvent, commit: true)
+                } else {
+                    if let s = op["summary"] as? String, !s.isEmpty { event.title = s }
+                    let upZone: TimeZone? = (op["tz"] as? String).flatMap { TimeZone(identifier: $0) }
+                    if let upZone, !(event.isAllDay) { event.timeZone = upZone }
+                    if let d = parseISO((op["dtstart"] as? String) ?? "", in: upZone ?? event.timeZone) { event.startDate = d }
+                    if let d = parseISO((op["dtend"] as? String) ?? "", in: upZone ?? event.timeZone) {
+                        event.endDate = max(d, event.startDate.addingTimeInterval(60))
+                    }
+                    if let a = op["all_day"] as? Bool { event.isAllDay = a }
+                    if let l = op["location"] as? String { event.location = l.isEmpty ? nil : l }
+                    if let n = op["description"] as? String { event.notes = n.isEmpty ? nil : n }
+                    try store.save(event, span: .thisEvent, commit: true)
+                }
+                acked.append(opID)
+            } catch {
+                // Leave it queued; the next drain retries.
+                problems.append("\(kind) failed: \(error.localizedDescription)")
+            }
+        }
+        if !acked.isEmpty { _ = try? await api.calendarPending(ack: acked) }
+        if !problems.isEmpty { loadError = "Calendar: " + problems.joined(separator: "; ") }
+        await syncCalendarMirror()
+    }
+
+    /// Show the real macOS permission prompt when access is undetermined. Only
+    /// if it was previously denied (the OS won't re-prompt) do we point at
+    /// System Settings.
+    @discardableResult
+    func ensureCalendarAccess() async -> Bool {
+        if await MacCalendarBridge.shared.requestFullAccess() { return true }
+        if MacCalendarBridge.shared.isDeniedOrRestricted {
+            loadError = "Calendar access is turned off for JoeBro. Enable it in System Settings > Privacy & Security > Calendars."
+        }
+        return false
     }
 
     // MARK: Send / stream
@@ -1224,7 +1368,12 @@ final class AppStore {
                         // returns the event JSON; write it into the real macOS
                         // Calendar via EventKit (backend only stores it locally).
                         if tool == "create_event", exitCode == 0 {
-                            await writeAgentCalendarEvent(fromToolOutput: output)
+                            await drainCalendarOps()
+                        }
+                        // manage_events edits the backend's mirror and returns
+                        // the changes to make for real in EventKit.
+                        if tool == "manage_events", exitCode == 0 {
+                            await drainCalendarOps()
                         }
                     case .permissionRequest(let id, let tool, let command):
                         if !autoApproveOpenDocEdit(id: id, tool: tool, command: command) {
@@ -1348,7 +1497,7 @@ final class AppStore {
     // Reasoning-effort support — frontier models only
     var effort: String = UserDefaults.standard.string(forKey: "effort") ?? "medium"
 
-    private func supportsEffort(_ model: ModelChoice?) -> Bool {
+    func supportsEffort(_ model: ModelChoice?) -> Bool {
         guard let m = model?.modelID.lowercased() else { return false }
         return ["gpt-5", "o1", "o3", "o4", "gpt-oss"].contains { m.contains($0) }
     }
@@ -1429,16 +1578,24 @@ final class AppStore {
     }
 
     func stopStreaming() {
-        guard isStreaming else { return }
-        streamTask?.cancel()
-        if let sid = selectedSessionID {
-            Task {
-                await api.stopStream(sessionID: sid)
-                await self.loadSessions()
-            }
+        guard isStreaming, !stopPending else { return }
+        if selectedModel?.isAppleIntelligence == true {
+            streamTask?.cancel()
+            mutateLast { $0.isStreaming = false }
+            isStreaming = false
+            return
         }
-        mutateLast { $0.isStreaming = false }
-        isStreaming = false
+        guard let sid = selectedSessionID else { return }
+        stopPending = true
+        Task {
+            defer { stopPending = false }
+            do {
+                // Keep consuming the partial reply until the server closes the
+                // cancelled turn. Disconnecting first can lose its final state.
+                try await api.stopStream(sessionID: sid)
+                await self.loadSessions()
+            } catch { loadError = "Could not stop JoeBro: " + error.localizedDescription }
+        }
     }
 
     private func ensureSession(firstMessage: String) async throws -> String {
@@ -1579,11 +1736,41 @@ final class AppStore {
             return
         }
         if let xlsxURL = doc.xlsxURL {
-            // .xlsx-backed grid: content is CSV — convert and write the workbook.
+            // .xlsx-backed grid: content is CSV — convert and write the workbook
+            // to the local file. (Must precede the local-/remote save branches.)
             Task {
                 do {
                     let data = try await api.csvToXLSX(doc.content)
                     try data.write(to: xlsxURL)
+                    if let j = docIndex(id) { openDocs[j].dirty = false }
+                } catch {
+                    loadError = "Save \(doc.title): " + error.localizedDescription
+                }
+            }
+            return
+        }
+        if let sub = doc.remoteSub, let sid = doc.remoteSession {
+            // File on a remote (Pi) bound folder — save through the backend.
+            Task {
+                do {
+                    try await api.saveWorkdirFile(sid: sid, sub: sub, content: doc.content)
+                    if let j = docIndex(id) { openDocs[j].dirty = false }
+                } catch {
+                    loadError = "Save \(doc.title): " + error.localizedDescription
+                }
+            }
+            return
+        }
+        // A bound-folder file whose remote linkage was dropped — e.g. the AI
+        // created/edited it, so it arrived via handleDocUpdate (id "local-<sub>")
+        // without remoteSub. Save it back through the workdir bridge, NOT the
+        // documents table (which 404s "doc not found").
+        if doc.localPath == nil, doc.id.hasPrefix("local-"),
+           let sid = doc.remoteSession ?? selectedSessionID {
+            let sub = String(doc.id.dropFirst("local-".count))
+            Task {
+                do {
+                    try await api.saveWorkdirFile(sid: sid, sub: sub, content: doc.content)
                     if let j = docIndex(id) { openDocs[j].dirty = false }
                 } catch {
                     loadError = "Save \(doc.title): " + error.localizedDescription
@@ -1607,6 +1794,25 @@ final class AppStore {
                 if let j = docIndex(id) { openDocs[j].dirty = false }
             } catch {
                 loadError = "Save: " + error.localizedDescription
+            }
+        }
+    }
+
+    /// Push a natively-edited remote .doc/.docx back to its Pi bound folder.
+    /// The rich editor saves to a local temp file; without this round-trip the
+    /// re-serialized bytes would never reach the Pi (work-loss).
+    func pushRemoteDocxBody(docID: String) {
+        guard let i = docIndex(docID), openDocs[i].richDoc,
+              let sub = openDocs[i].remoteSub, let sid = openDocs[i].remoteSession,
+              let url = openDocs[i].localFileURL,
+              let data = try? Data(contentsOf: url) else { return }
+        let title = openDocs[i].title
+        Task {
+            do {
+                try await api.saveWorkdirRaw(sid: sid, sub: sub, data: data)
+                if let j = docIndex(docID) { openDocs[j].dirty = false }
+            } catch {
+                loadError = "Save \(title): " + error.localizedDescription
             }
         }
     }
@@ -1829,18 +2035,38 @@ final class AppStore {
     func loadWorkdir() async {
         stopWorkdirAccess()
         workdirPath = nil
+        workdirRemote = false
         treeEntries = [:]
         expandedDirs = []
         guard let sid = selectedSessionID else { return }
         let path = try? await api.sessionWorkdir(sid: sid)
         // The session may have changed while we awaited — never apply a stale
-        // chat's folder over the one now selected.
+        // chat's folder over the one now selected (last-write-wins was showing
+        // the previous chat's files).
         guard selectedSessionID == sid else { return }
         workdirPath = path
         if let path {
-            startWorkdirAccess(path)
-            treeEntries[""] = listEntries("")
+            // If the bound folder isn't on this Mac (e.g. a Pi/Nextcloud path),
+            // list it through the backend instead of local FileManager.
+            workdirRemote = !FileManager.default.fileExists(atPath: path)
+            if workdirRemote {
+                let entries = (try? await api.workdirList(sid: sid, sub: "")) ?? []
+                guard selectedSessionID == sid else { return }
+                treeEntries[""] = entries
+            } else {
+                startWorkdirAccess(path)
+                treeEntries[""] = listEntries("")
+            }
         }
+    }
+
+    /// Entries for a sub-path — backend for remote folders, local FS otherwise.
+    private func fetchEntries(_ sub: String) async -> [WorkdirEntry] {
+        if workdirRemote {
+            guard let sid = selectedSessionID else { return [] }
+            return (try? await api.workdirList(sid: sid, sub: sub)) ?? []
+        }
+        return listEntries(sub)
     }
 
     func bindWorkdir(_ path: String, device: String? = nil) async throws {
@@ -1863,20 +2089,30 @@ final class AppStore {
         }
         expandedDirs.insert(sub)
         if treeEntries[sub] == nil {
-            treeEntries[sub] = listEntries(sub)
+            if workdirRemote {
+                Task { treeEntries[sub] = await fetchEntries(sub) }
+            } else {
+                treeEntries[sub] = listEntries(sub)
+            }
         }
     }
 
     func refreshTree() {
-        treeEntries[""] = listEntries("")
-        for sub in expandedDirs {
-            treeEntries[sub] = listEntries(sub)
+        if workdirRemote {
+            let subs = [""] + Array(expandedDirs)
+            Task { for sub in subs { treeEntries[sub] = await fetchEntries(sub) } }
+        } else {
+            treeEntries[""] = listEntries("")
+            for sub in expandedDirs {
+                treeEntries[sub] = listEntries(sub)
+            }
         }
     }
 
     /// Open a file from the bound folder in the editor pane. Text files
     /// keep their on-disk path so saves write straight back to the file.
     func openWorkdirFile(sub: String) {
+        if workdirRemote { openRemoteWorkdirFile(sub: sub); return }
         guard let url = workdirURL(sub) else { return }
         let ext = url.pathExtension.lowercased()
         let name = url.lastPathComponent
@@ -2023,6 +2259,62 @@ final class AppStore {
         editorVisible = true
     }
 
+    /// Open a file from a remote (Pi) bound folder via the backend. Text files
+    /// open editable (saves round-trip through the backend); PDFs/images/Word
+    /// download to a temp file and open there.
+    private func openRemoteWorkdirFile(sub: String) {
+        guard let sid = selectedSessionID else { return }
+        let name = (sub as NSString).lastPathComponent
+        let ext = (name as NSString).pathExtension.lowercased()
+        let id = "local-" + sub
+        // Re-clicking any already-open tab (text, pdf or image) just focuses it.
+        for existing in [id, "img-" + sub, "pdf-" + sub] where docIndex(existing) != nil {
+            activeDocID = existing; editorVisible = true; return
+        }
+
+        let binary = ["png", "jpg", "jpeg", "webp", "gif", "heic", "mp4", "mov",
+                      "zip", "xlsx", "pptx", "key", "numbers", "pages", "pdf", "doc", "docx"].contains(ext)
+        Task {
+            if binary {
+                // Pull the bytes down and open the local copy (PDF/image/Word).
+                guard let tmp = try? await api.downloadWorkdirFile(sid: sid, sub: sub, filename: name) else {
+                    loadError = "Open \(name): could not download from the Pi"; return
+                }
+                if ext == "pdf" || ext == "doc" || ext == "docx" {
+                    var d = EditorDoc(id: id, title: name, language: ext == "pdf" ? "pdf" : ext, content: "")
+                    d.localFileURL = tmp
+                    d.richDoc = (ext == "doc" || ext == "docx")
+                    // Word docs edit in a local temp; remember the Pi origin so the
+                    // re-serialized bytes get pushed back (see pushRemoteDocxBody).
+                    if d.richDoc { d.remoteSub = sub; d.remoteSession = sid }
+                    openDocs.append(d); activeDocID = id; editorVisible = true
+                    if d.richDoc { loadDocxExtrasIfNeeded(id: id, sub: sub, ext: ext) }
+                } else if Self.imageExts.contains(ext) {
+                    // Images open in the editor pane, same as PDFs.
+                    let imgID = "img-" + sub
+                    var d = EditorDoc(id: imgID, title: name, language: "image", content: "")
+                    d.localFileURL = tmp
+                    openDocs.append(d); activeDocID = imgID; editorVisible = true
+                } else {
+                    quickLookURL = tmp
+                }
+                return
+            }
+            do {
+                let doc = try await api.openWorkdirFile(sid: sid, sub: sub)
+                var d = EditorDoc(id: id, title: name,
+                                  language: Self.languageFromTitle(name) ?? "markdown",
+                                  content: doc.currentContent ?? "")
+                d.remoteSub = sub
+                d.remoteSession = sid
+                d.flashcards = ext == "apkg"   // saves round-trip via write_doc_text
+                openDocs.append(d); activeDocID = id; editorVisible = true
+            } catch {
+                loadError = "Open \(name): " + error.localizedDescription
+            }
+        }
+    }
+
     private func loadDocxExtrasIfNeeded(id: String, sub: String, ext: String) {
         guard ext == "docx", let sid = selectedSessionID else { return }
         Task {
@@ -2037,17 +2329,34 @@ final class AppStore {
 
     /// Delete a file in the bound folder (right-click in Files).
     func deleteWorkdirFile(sub: String) {
+        let name = (sub as NSString).lastPathComponent
+        // Close any editor tab mirroring the dead file.
+        let closeTab = {
+            if let i = self.openDocs.firstIndex(where: { $0.title == name }) {
+                let id = self.openDocs[i].id
+                self.openDocs.remove(at: i)
+                if self.activeDocID == id { self.activeDocID = self.openDocs.last?.id }
+                if self.openDocs.isEmpty { self.editorVisible = false }
+            }
+        }
+        if workdirRemote {
+            // File on the Pi/another host — delete via the backend.
+            guard let sid = selectedSessionID else { return }
+            Task {
+                do {
+                    try await api.deleteWorkdirFile(sid: sid, sub: sub)
+                    closeTab()
+                    refreshTree()
+                } catch {
+                    loadError = "Delete \(name): " + error.localizedDescription
+                }
+            }
+            return
+        }
         guard let url = workdirURL(sub) else { return }
-        let name = url.lastPathComponent
         do {
             try FileManager.default.removeItem(at: url)
-            // Close any editor tab mirroring the dead file.
-            if let i = openDocs.firstIndex(where: { $0.title == name }) {
-                let id = openDocs[i].id
-                openDocs.remove(at: i)
-                if activeDocID == id { activeDocID = openDocs.last?.id }
-                if openDocs.isEmpty { editorVisible = false }
-            }
+            closeTab()
             refreshTree()
         } catch {
             loadError = "Delete \(name): " + error.localizedDescription
@@ -2056,21 +2365,36 @@ final class AppStore {
 
     /// Rename a file or folder in the bound folder (right-click in Files).
     func renameWorkdirFile(sub: String, newName: String) {
-        guard let url = workdirURL(sub) else { return }
-        let oldName = url.lastPathComponent
+        let oldName = (sub as NSString).lastPathComponent
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != oldName, !trimmed.contains("/") else { return }
+        // Close any editor tab mirroring the renamed file so a later save can't
+        // write to the stale path (reopen it under the new name).
+        let closeTab = {
+            if let i = self.openDocs.firstIndex(where: { $0.title == oldName }) {
+                let id = self.openDocs[i].id
+                self.openDocs.remove(at: i)
+                if self.activeDocID == id { self.activeDocID = self.openDocs.last?.id }
+                if self.openDocs.isEmpty { self.editorVisible = false }
+            }
+        }
+        if workdirRemote {
+            guard let sid = selectedSessionID else { return }
+            Task {
+                do {
+                    try await api.renameWorkdirFile(sid: sid, sub: sub, newName: trimmed)
+                    closeTab(); refreshTree()
+                } catch {
+                    loadError = "Rename \(oldName): " + error.localizedDescription
+                }
+            }
+            return
+        }
+        guard let url = workdirURL(sub) else { return }
         let dst = url.deletingLastPathComponent().appendingPathComponent(trimmed)
         do {
             try FileManager.default.moveItem(at: url, to: dst)
-            // Close any editor tab mirroring the renamed file (reopen under new name).
-            if let i = openDocs.firstIndex(where: { $0.title == oldName }) {
-                let id = openDocs[i].id
-                openDocs.remove(at: i)
-                if activeDocID == id { activeDocID = openDocs.last?.id }
-                if openDocs.isEmpty { editorVisible = false }
-            }
-            refreshTree()
+            closeTab(); refreshTree()
         } catch {
             loadError = "Rename \(oldName): " + error.localizedDescription
         }

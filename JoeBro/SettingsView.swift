@@ -7,6 +7,7 @@ struct SettingsView: View {
     @State private var autoUpdate = UpdaterManager.shared.automaticallyChecksForUpdates
     @AppStorage("serverURL") private var serverURL = "http://127.0.0.1:8765"
     @AppStorage("emailLoadCount") private var emailLoadCount = 0
+    @State private var backendToken = BackendToken.load() ?? ""
     @State private var showWallpaperImporter = false
     @State private var showEmailSheet = false
     @State private var showCalDAVSheet = false
@@ -108,6 +109,9 @@ struct SettingsView: View {
             Section("Server") {
                 TextField("Server URL", text: $serverURL)
                     .font(.system(size: 13, design: .monospaced))
+                SecureField("Backend bearer token (only for a remote backend)", text: $backendToken)
+                    .font(.system(size: 13, design: .monospaced))
+                    .onChange(of: backendToken) { _, v in BackendToken.save(v) }
                 Text("JoeBro runs a private local backend on this Mac. Model endpoints can still point at local or Tailscale devices.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -322,6 +326,8 @@ struct ModelsSettingsTab: View {
     @State private var epModels: [String: [EndpointModelInfo]] = [:]
     @State private var showAdd = false
     @State private var defaultModelID: String?
+    @State private var subagentModelID: String?
+    @State private var subagentAuto = false
     @State private var error: String?
 
     var body: some View {
@@ -351,6 +357,8 @@ struct ModelsSettingsTab: View {
             } header: {
                 Text("Defaults")
             }
+
+            subagentsSection
 
             Section {
                 switch endpoints {
@@ -389,6 +397,47 @@ struct ModelsSettingsTab: View {
         }
     }
 
+    private var subagentsSection: some View {
+        Section {
+            LabeledContent("Subagent model") {
+                Picker("", selection: Binding(
+                    get: { subagentModelID ?? "" },
+                    set: { setSubagentModel($0) }
+                )) {
+                    Text("Same as default").tag("")
+                    ModelPickerItems(models: store.models)
+                }
+                .labelsHidden()
+                .fixedSize()
+                .disabled(subagentAuto)
+                .opacity(subagentAuto ? 0.4 : 1)
+            }
+            Toggle("Let the main agent choose the model per task", isOn: Binding(
+                get: { subagentAuto },
+                set: { setSubagentAuto($0) }
+            ))
+            Text("Subagents are helpers the main agent spawns for side tasks. When the switch is on, the agent picks a model for each one and the fixed model above is not used.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } header: {
+            Text("Subagents")
+        }
+    }
+
+    private func setSubagentModel(_ id: String) {
+        subagentModelID = id.isEmpty ? nil : id
+        let choice = store.models.first { $0.id == id }
+        Task {
+            await APIClient.shared.setPref("subagent_model", value: choice?.modelID)
+            await APIClient.shared.setPref("subagent_endpoint_id", value: choice?.endpointID)
+        }
+    }
+
+    private func setSubagentAuto(_ on: Bool) {
+        subagentAuto = on
+        Task { await APIClient.shared.setPref("subagent_model_auto", value: on ? "true" : "false") }
+    }
+
     private var appleRow: some View {
         HStack {
             Image(systemName: "apple.logo")
@@ -422,6 +471,10 @@ struct ModelsSettingsTab: View {
             let model = prefs["default_model"]?.stringValue
             let ep = prefs["default_endpoint_id"]?.stringValue
             if let model, let ep { defaultModelID = model + "@" + ep }
+            if let sm = prefs["subagent_model"]?.stringValue,
+               let se = prefs["subagent_endpoint_id"]?.stringValue { subagentModelID = sm + "@" + se }
+            let auto = prefs["subagent_model_auto"]
+            subagentAuto = auto?.boolValue ?? (auto?.stringValue?.lowercased() == "true")
         }
     }
 
@@ -753,6 +806,11 @@ final class MacCalendarBridge {
                 }
             }
         }
+    }
+
+    var isDeniedOrRestricted: Bool {
+        let st = EKEventStore.authorizationStatus(for: .event)
+        return st == .denied || st == .restricted
     }
 
     func authorizationAllowsEvents() -> Bool {

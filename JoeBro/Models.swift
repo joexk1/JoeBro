@@ -1133,7 +1133,7 @@ func extractThinking(_ content: String) -> ThinkingSplit {
         var bestClose: Range<String.Index>?
         for tag in closeTags {
             if let close = body.range(of: tag, range: afterOpen..<body.endIndex),
-               bestClose == nil || close.lowerBound < bestClose!.lowerBound {
+               bestClose.map({ close.lowerBound < $0.lowerBound }) ?? true {
                 bestClose = close
             }
         }

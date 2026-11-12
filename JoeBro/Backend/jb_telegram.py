@@ -12,21 +12,30 @@ import types as _types
 import html as _htmllib
 
 API = "https://api.telegram.org/bot{token}/{method}"
-HELP = ("📲 **JoeBro Message Bot**\n"
-        "I'm your orchestrator — I manage and drive all your chats and agents: I search and read "
-        "them, create chats and bind them to folders, set their mode and permissions, and delegate "
-        "work to them. I also use your email, calendar, memory, web search and deep research.\n\n"
-        "Just talk to me. Commands:\n"
-        "**/chats** — list all your chats\n"
-        "**/compact** — summarize & shrink this conversation\n"
-        "**/help** — this message")
+HELP = ("📲 **JoeBro**\n"
+        "Your assistant, and the orchestrator over all your chats and agents. Talk to me normally — "
+        "or send a photo (I'll look at it), a file (I'll save and read it), or use a command.\n\n"
+        "**Personal**\n"
+        "/remind 18:00 call the bank — one-off reminder, I ping you here\n"
+        "/reminders — what's pending\n"
+        "/pulse — my background check on you; /pulse add <thing> to give me a standing instruction\n"
+        "/pulse now — run it this second\n"
+        "/inbox — what I've sent you\n\n"
+        "**Work**\n"
+        "/chats — your chats · /new <name> — start one\n"
+        "/plan — where the current job is up to\n"
+        "/agents — background agents · /tasks — scheduled ones\n"
+        "/memory <query> — what I know\n"
+        "/compact — shrink this conversation\n"
+        "/help — this")
 
 _TOOL_LABELS = {
     "manage_chats": "checking your chats", "manage_memory": "recalling memory",
     "web_search": "searching the web", "trigger_research": "starting deep research",
     "manage_research": "checking research", "list_emails": "reading email",
-    "read_email": "reading email", "send_email": "sending email",
-    "create_event": "adding a calendar event", "manage_tasks": "managing tasks",
+    "read_email": "reading email", "read_email_attachment": "reading an attachment", "send_email": "sending email",
+    "create_event": "adding a calendar event", "manage_events": "updating your calendar",
+    "manage_tasks": "managing tasks",
     "manage_skills": "managing skills",
 }
 
@@ -109,6 +118,48 @@ def _edit(token, chat_id, mid, text, html=False):
     return bool(out and out.get("ok"))
 
 
+def _buttons(token, chat_id, text, rows):
+    """Send with inline buttons. `rows` is [[(label, callback_data), …], …]."""
+    kb = {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in row] for row in rows]}
+    return _tg(token, "sendMessage", {"chat_id": chat_id, "text": text, "reply_markup": kb}, timeout=20)
+
+
+def _answer_callback(token, cb_id, text=""):
+    _tg(token, "answerCallbackQuery", {"callback_query_id": cb_id, "text": text}, timeout=10)
+
+
+def _download(token, file_id, max_bytes=20_000_000):
+    """(filename, bytes) for a Telegram file, or (None, None). Telegram caps bot
+    downloads at 20 MB, which is also as much as we want to hold in memory."""
+    info = _tg(token, "getFile", {"file_id": file_id}, timeout=20)
+    path = ((info or {}).get("result") or {}).get("file_path")
+    if not path:
+        return None, None
+    url = f"https://api.telegram.org/file/bot{token}/{path}"
+    try:
+        with urllib.request.urlopen(url, timeout=60) as resp:
+            data = resp.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            return None, None
+        return os.path.basename(path), data
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return None, None
+
+
+def _save_upload(h, name, data):
+    """Store an incoming file the way the app's uploader does, so the agent can
+    see images and read documents by the same attachment id."""
+    uid = "up_" + os.urandom(8).hex()
+    dest = h.store.root / "uploads" / f"{uid}-{name}"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with open(dest, "wb") as fh:
+        fh.write(data)
+    mime = mimetypes.guess_type(name)[0] or ""
+    h.store.exec("insert into uploads(id,name,path,mime,created_at) values(?,?,?,?,?)",
+                 (uid, name, str(dest), mime, now_iso()))
+    return {"id": uid, "name": name, "mime": mime, "path": str(dest)}
+
+
 def _typing(token, chat_id):
     _tg(token, "sendChatAction", {"chat_id": chat_id, "action": "typing"}, timeout=10)
 
@@ -189,7 +240,114 @@ def _resolve_permission(rid, decision):
 
 # --- message handling ---
 
-def _handle(server, token, chat_id, text, pending_perm, busy):
+def _slash(h, token, chat_id, text, sid, cfg):
+    """Deterministic commands, answered straight from the database — no model
+    call, so /reminders and /pulse come back instantly and cost nothing.
+    Returns True when the message was a command and is now dealt with."""
+    parts = text.strip().split(None, 1)
+    cmd = parts[0].lower().split("@")[0]
+    rest = (parts[1] if len(parts) > 1 else "").strip()
+
+    def tool(fn, **args):
+        """Tool results are sometimes a JSON object, sometimes a bare list, and
+        sometimes a plain sentence. Callers below handle list-or-dict."""
+        try:
+            return json.loads(fn(json.dumps(args)))
+        except json.JSONDecodeError as exc:
+            return {"ok": True, "text": str(exc.doc)}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    if cmd in ("/start", "/help"):
+        _send(token, chat_id, HELP, html=True)
+    elif cmd == "/compact":
+        h.manual_compact(sid)
+        _send(token, chat_id, "🧹 Compacted this conversation.")
+    elif cmd == "/chats":
+        rows = h.store.rows(
+            "select name,mode from sessions where id not like 'bot\\_tg\\_%' escape '\\' "
+            "and id not like 'agent\\_session\\_%' escape '\\' order by datetime(created_at) desc limit 50")
+        _send(token, chat_id, "\n".join(["**Your chats:**"] + [
+            f"• {r.get('name') or 'Untitled'} ({r.get('mode') or 'chat'})" for r in rows]) or "No chats yet.", html=True)
+    elif cmd == "/new":
+        if not rest:
+            _send(token, chat_id, "Name it: /new Law essay")
+        else:
+            out = tool(h.manage_chats_tool, action="create", name=rest)
+            _send(token, chat_id, f"✅ Created **{rest}**." if out.get("ok", True) else f"⚠️ {out.get('error')}", html=True)
+    elif cmd == "/reminders":
+        out = tool(h.manage_reminders_tool, action="list")
+        rems = out.get("reminders") or []
+        _send(token, chat_id, "\n".join(["**Pending reminders:**"] + [
+            f"• {r['text']} — {r['due_at'][:16].replace('T', ' ')}" for r in rems]) if rems
+            else "Nothing pending. Set one: /remind 18:00 call the bank", html=True)
+    elif cmd == "/inbox":
+        rows = h.inbox_rows(limit=10)
+        _send(token, chat_id, "\n".join(["**Recent:**"] + [
+            f"• {(r.get('title') or r.get('kind') or '').strip()} — {(r.get('body') or '')[:120]}" for r in rows])
+            if rows else "Inbox is empty.", html=True)
+        h.mark_inbox_read()
+    elif cmd == "/agents":
+        out = tool(h.manage_agents_tool, action="list")
+        ags = out.get("agents") or []
+        _send(token, chat_id, "\n".join(["**Background agents:**"] + [
+            f"• {a['title']} — {a['status']}" for a in ags]) if ags else "No background agents.", html=True)
+    elif cmd == "/tasks":
+        out = tool(h.manage_tasks_tool, action="list")
+        rows = out if isinstance(out, list) else (out.get("tasks") or out.get("items") or [])
+        _send(token, chat_id, "\n".join(["**Scheduled tasks:**"] + [
+            f"• {t.get('title')} — {t.get('schedule', '')} {t.get('time', '') or t.get('scheduled_time', '')}"
+            for t in rows]) if rows else "No scheduled tasks.", html=True)
+    elif cmd == "/plan":
+        focus = h.pref("bot_focus_" + sid) or {}
+        target = focus.get("id") if isinstance(focus, dict) else None
+        steps = h.plan_get(target or sid)
+        _send(token, chat_id, "\n".join(["**Plan:**"] + [
+            f"{'✅' if st.get('status') == 'done' else '▫️'} {st['text']}" for st in steps])
+            if steps else "No plan on the go.", html=True)
+    elif cmd == "/memory":
+        if not rest:
+            _send(token, chat_id, "What about? /memory dentist")
+        else:
+            out = tool(h.manage_memory_tool, action="search", text=rest)
+            hits = out if isinstance(out, list) else (out.get("memories") or [])
+            _send(token, chat_id, "\n".join(["**I know:**"] + [
+                f"• {(m.get('text') if isinstance(m, dict) else str(m))[:200]}" for m in hits[:8]])
+                if hits else "Nothing on that.", html=True)
+    elif cmd == "/pulse":
+        sub = rest.split(None, 1)
+        verb = (sub[0].lower() if sub else "")
+        arg = sub[1] if len(sub) > 1 else ""
+        if verb in ("now", "run"):
+            _send(token, chat_id, "💓 Beating…")
+            res = h.run_pulse(force=True)
+            if not res.get("spoke"):
+                _send(token, chat_id, "Nothing worth bothering you with." if res.get("ran")
+                      else f"Didn't run: {res.get('reason', 'unknown')}")
+        elif verb in ("on", "resume"):
+            h.set_pref("pulse_enabled", True); _send(token, chat_id, "💓 Pulse on.")
+        elif verb in ("off", "pause", "stop"):
+            h.set_pref("pulse_enabled", False); _send(token, chat_id, "💤 Pulse paused.")
+        elif verb == "add" and arg:
+            tool(h.manage_pulse_tool, action="set", add=arg)
+            _send(token, chat_id, f"✅ Added to my checklist: {arg}")
+        elif verb == "every" and arg:
+            mins = re.sub(r"[^0-9]", "", arg.split()[0]) or "60"
+            out = tool(h.manage_pulse_tool, action="set", interval_minutes=int(mins))
+            _send(token, chat_id, f"⏱ Every {mins} minutes." if out.get("ok") else f"⚠️ {out.get('error')}")
+        else:
+            c = h.pulse_config()
+            _send(token, chat_id,
+                  f"**Pulse** — {'on' if c['enabled'] else 'off'}, every {c['interval_minutes']}m, "
+                  f"quiet {c['quiet_hours']}\nLast run: {(c['last_run'] or 'never')[:16].replace('T', ' ')}\n\n"
+                  f"**Checklist:**\n{c['checklist']}\n"
+                  "_/pulse add <thing> · /pulse now · /pulse every 30m · /pulse off_", html=True)
+    else:
+        return False
+    return True
+
+
+def _handle(server, token, chat_id, text, pending_perm, busy, attachments=None):
     lock = busy.setdefault(chat_id, threading.Lock())
     if not lock.acquire(blocking=False):
         _send(token, chat_id, "⏳ Still working on your last message…")
@@ -198,24 +356,20 @@ def _handle(server, token, chat_id, text, pending_perm, busy):
         h = _new_handler(server)
         cfg = _cfg(h)
         sid = _session(h, chat_id, cfg)
-        low = text.lower()
-        if low in ("/start", "/help"):
-            _send(token, chat_id, HELP, html=True)
-            return
-        if low.startswith("/compact"):
-            h.manual_compact(sid)
-            _send(token, chat_id, "🧹 Compacted this conversation.")
-            return
-        if low.startswith("/chats"):
-            rows = h.store.rows(
-                "select name,mode from sessions where id not like 'bot\\_tg\\_%' escape '\\' "
-                "order by datetime(created_at) desc limit 50")
-            if not rows:
-                _send(token, chat_id, "No chats yet.")
-            else:
-                lines = ["**Your chats:**"] + [f"• {r.get('name') or 'Untitled'} ({r.get('mode') or 'chat'})" for r in rows]
-                _send(token, chat_id, "\n".join(lines), html=True)
-            return
+        # Remember where to push to: the pulse, reminders and finished agents all
+        # reach the user through this chat id.
+        if str(h.pref("bot_push_chat_id") or "") != str(chat_id):
+            h.set_pref("bot_push_chat_id", str(chat_id))
+        if text.lower().startswith("/remind "):
+            text = ("Set a one-off reminder with remind_me, resolving the time against right now: "
+                    + text[8:].strip())
+        if text.startswith("/"):
+            try:
+                if _slash(h, token, chat_id, text, sid, cfg):
+                    return
+            except Exception as exc:
+                _send(token, chat_id, f"⚠️ {exc}")
+                return
         if not cfg["model"]:
             _send(token, chat_id,
                   "⚠️ No model selected. Open JoeBro → Settings → Message Bot and choose a model, then try again.")
@@ -247,15 +401,20 @@ def _handle(server, token, chat_id, text, pending_perm, busy):
                 st["status"] = "🔧 " + _friendly_tool(obj.get("tool")) + "…"
                 _stream()
             elif obj.get("type") == "permission_request" and cfg["ask_permissions"]:
-                pending_perm[chat_id] = obj.get("request_id")
+                rid = obj.get("request_id")
+                pending_perm[chat_id] = rid
                 cmd = (obj.get("command") or "")[:300]
-                _send(token, chat_id, f"🔐 Allow {obj.get('tool')}?\n{cmd}\n\nReply y or n.")
+                if not _buttons(token, chat_id, f"🔐 Allow {obj.get('tool')}?\n{cmd}",
+                                [[("✅ Allow", f"perm:{rid}:allow"), ("🚫 Deny", f"perm:{rid}:deny")]]):
+                    _send(token, chat_id, f"🔐 Allow {obj.get('tool')}?\n{cmd}\n\nReply y or n.")
 
         # The bot is the ORCHESTRATOR: it manages/delegates, never codes or touches
         # files itself. Approval prompts come from the chats it delegates into
         # (manage_chats send), routed back here via this emit.
         f = {"session": sid, "message": text, "model": cfg["model"],
              "endpoint_id": cfg["endpoint_id"], "mode": "agent", "orchestrator": "true"}
+        if attachments:
+            f["attachments"] = json.dumps(attachments)
         reply, meta = h.bot_run(f, emit=emit)
         pending_perm.pop(chat_id, None)
 
@@ -297,12 +456,62 @@ def telegram_bot_loop(server):
                 continue
             for u in updates:
                 offset = u["update_id"] + 1
+                # Inline buttons (permission prompts) come back as callback queries.
+                cb = u.get("callback_query")
+                if cb:
+                    data = (cb.get("data") or "")
+                    cb_chat = ((cb.get("message") or {}).get("chat") or {}).get("id")
+                    if data.startswith("perm:"):
+                        _, rid, decision = (data.split(":", 2) + ["", ""])[:3]
+                        _resolve_permission(rid, decision)
+                        pending_perm.pop(cb_chat, None)
+                        _answer_callback(token, cb.get("id"), "Allowed" if decision == "allow" else "Denied")
+                        _send(token, cb_chat, "✅ Allowed." if decision == "allow" else "🚫 Denied.")
+                    else:
+                        _answer_callback(token, cb.get("id"))
+                    continue
                 msg = u.get("message") or u.get("edited_message")
                 if not msg:
                     continue
                 chat_id = (msg.get("chat") or {}).get("id")
-                text = (msg.get("text") or "").strip()
-                if chat_id is None or not text:
+                if chat_id is None:
+                    continue
+                text = (msg.get("text") or msg.get("caption") or "").strip()
+                attachments = []
+                # Photos, files and voice notes. A photo becomes a vision
+                # attachment; a document is saved where the agent can read it.
+                if cfg["allowed"] and str(chat_id) not in cfg["allowed"]:
+                    pass                      # authorization is checked below
+                elif msg.get("photo") or msg.get("document") or msg.get("voice") or msg.get("audio"):
+                    h0 = _new_handler(server)
+                    if msg.get("photo"):
+                        best = sorted(msg["photo"], key=lambda p: p.get("file_size") or 0)[-1]
+                        name, data = _download(token, best.get("file_id"))
+                        if data:
+                            up = _save_upload(h0, name or "photo.jpg", data)
+                            attachments.append(up["id"])
+                            text = text or "Look at this photo and tell me what's useful about it."
+                        else:
+                            _send(token, chat_id, "⚠️ Couldn't fetch that photo.")
+                            continue
+                    elif msg.get("document"):
+                        doc = msg["document"]
+                        name, data = _download(token, doc.get("file_id"))
+                        if data:
+                            up = _save_upload(h0, doc.get("file_name") or name or "file", data)
+                            attachments.append(up["id"])
+                            text = (text or "I've sent you a file.") + (
+                                f"\n\n[The user attached `{up['name']}`. It is saved at `{up['path']}` — "
+                                "read it from there if you need its contents.]")
+                        else:
+                            _send(token, chat_id, "⚠️ That file is too big for me (20 MB limit).")
+                            continue
+                    else:
+                        _send(token, chat_id,
+                              "🎙 I can't transcribe voice notes yet — the Pi has no speech model. "
+                              "Type it, or send it as text.")
+                        continue
+                if not text:
                     continue
                 # Authorization: allowlist of numeric Telegram chat IDs.
                 if cfg["allowed"] and str(chat_id) not in cfg["allowed"]:
@@ -320,7 +529,7 @@ def telegram_bot_loop(server):
                     _send(token, chat_id, "✅ Allowed." if decision == "allow" else "🚫 Denied.")
                     continue
                 threading.Thread(target=_handle,
-                                 args=(server, token, chat_id, text, pending_perm, busy),
+                                 args=(server, token, chat_id, text, pending_perm, busy, attachments),
                                  daemon=True).start()
         except Exception:
             time.sleep(3)

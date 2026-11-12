@@ -16,6 +16,7 @@ Read-only sessions never see these tools (WRITE_SIDE_EFFECT_TOOLS).
 import hashlib, hmac, ipaddress, json, mimetypes, os, re, socket, threading, time, urllib.error, urllib.parse, urllib.request, uuid
 from pathlib import Path, PurePosixPath
 
+import jb_ext
 import artifact_store as store
 from artifact_store import ArtifactError, safe_name
 
@@ -62,6 +63,10 @@ def parse_uri(uri, role, roots=()):
         return {"kind": "url", "url": rest}
     rest, _, query = rest.partition("?")
     q = {k: v[0] for k, v in urllib.parse.parse_qs(query).items()}
+    # An extension may add schemes (or reinterpret one) -> {"kind": ...}; it is asked first.
+    custom = jb_ext.first("transfer_parse", scheme, role, rest, q)
+    if custom is not None:
+        return custom
     if scheme == "email":
         if role == "source":
             raise TransferError("email attachments are not a transfer source; use the email tools")
@@ -112,7 +117,10 @@ def split_folder_target(parsed, filename=None):
 
 
 def is_outbound(parsed):
-    return parsed["kind"] in OUTBOUND
+    """Sends that leave this machine need the preview + confirm_token round trip.
+    Extensions declare theirs with hook `transfer_outbound_kinds` -> iterable of kinds."""
+    extra = set().union(*[set(k) for k in jb_ext.call("transfer_outbound_kinds")])
+    return parsed["kind"] in OUTBOUND or parsed["kind"] in extra
 
 
 # ----------------------------------------------------------------------------- confirmation
@@ -283,7 +291,10 @@ def _roots():
 def export_to_artifact(h, source, filename=None):
     p = parse_uri(source, "source", _roots())
     k = p["kind"]
-    if k == "artifact":
+    ref = jb_ext.first("transfer_export", h, p, filename)       # an extension's own source, asked first
+    if ref is not None:
+        pass
+    elif k == "artifact":
         ref = store.artifact_info(p["artifact_id"])
     elif k == "url":
         ref = fetch_url(p["url"], filename=filename)
@@ -329,6 +340,7 @@ def deliver_artifact(h, artifact_id, to, a):
     if k == "email":
         p["subject"] = a.get("subject") or p["subject"] or ref["filename"]
         p["body"] = a.get("body") or p["body"] or f"Attached: {ref['filename']}"
+    jb_ext.call("transfer_prepare", p, ref, a)      # let an extension fill defaults before the preview
     if is_outbound(p):
         dest = {key: p[key] for key in sorted(p) if key != "kind"}
         extra = [k, filename or ""]
@@ -336,10 +348,14 @@ def deliver_artifact(h, artifact_id, to, a):
             return {"status": "needs_confirmation", "sent": False,
                     "preview": {"channel": k, "to": p.get("to"), "file": filename or ref["filename"],
                                 "mime_type": ref["mime_type"], "size_bytes": ref["size_bytes"],
-                                "subject": p["subject"], "body": p["body"]},
+                                "subject": p.get("subject", ""), "body": p.get("body", ""),
+                                **(jb_ext.first("transfer_preview", p) or {})},
                     "confirm_token": issue_token(artifact_id, ref["sha256"], dest, extra),
                     "next": "NOTHING WAS SENT. Show the user the recipient, file and text and ask. Only after they say yes, call again with the same arguments plus this confirm_token (valid 10 min, single use)."}
     path = store.resolve_artifact(artifact_id)
+    out = jb_ext.first("transfer_deliver", h, p, ref, path.read_bytes() if k not in ("artifact", "folder") else b"", filename)
+    if out is not None:                                          # an extension's own sink, asked first
+        return out
     if k == "artifact":
         return {"delivered": "artifact", "artifact": ref}
     if k == "folder":
