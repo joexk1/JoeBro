@@ -209,7 +209,9 @@ class Run(Base):
 
     def test_default_commands_use_the_agents_own_clis_with_a_budget(self):
         self.assertEqual(worker.agent_argv("claude", "do it", "opus", 5)[-4:], ["--model", "opus", "--max-budget-usd", "5"])
-        self.assertEqual(worker.agent_argv("codex", "do it")[:3], ["codex", "exec", "--full-auto"])
+        self.assertEqual(worker.agent_argv("codex", "do it")[:4], ["codex", "exec", "-s", "workspace-write"])   # --full-auto is gone in codex 0.167
+        self.assertNotIn("--full-auto", worker.COMMANDS["codex"])
+        self.assertEqual(worker.agent_argv("opencode", "go", resume_id="ses_1")[-2:], ["--session", "ses_1"])
         self.assertEqual(worker.session_argv("claude", "go on", resume_id="abc"), ["claude", "--resume", "abc", "go on"])
         self.assertEqual(worker.session_argv("codex", "go on", resume_id="abc"), ["codex", "resume", "abc", "go on"])
 
@@ -249,6 +251,40 @@ class Sessions(Base):
         self.assertEqual(json.load(open(rec))[-3:-1], ["--resume", "sess-1"])
         self.assertIn("No recorded session", h.start_coding_session_tool({"resume": "code:mac:claude:nope"}))
         self.assertIn("start_coding_session", WRITE_SIDE_EFFECT_TOOLS)              # hidden from read-only chats
+
+
+class NodeRunner(Base):
+    def test_claim_report_park_decision_and_timeout(self):
+        h = H()
+        t = h.night_add({"repo": self.repo, "prompt": "x", "title": "Node job", "agent": "claude"})
+        other = h.night_add({"repo": self.repo, "prompt": "y", "host": "elsewhere"})
+        tid = t["id"] if isinstance(t, dict) else t
+        with self.assertRaises(PermissionError): h.night_claim(other["id"], {"node": "box"})          # pinned to another computer
+        c = h.night_claim(tid, {"node": "box"})
+        self.assertEqual((c["task"]["status"], c["task"]["runner"], c["task"]["attempts"]), ("running", "node:box", 1))
+        self.assertIn("Never push", c["prompt"])
+        with self.assertRaises(PermissionError): h.night_claim(tid, {"node": "box2"})                  # atomic: one winner
+        with self.assertRaises(PermissionError): h.night_report(tid, {"node": "box2", "status": "failed"})
+        png = __import__("base64").b64encode(b"\x89PNG fake").decode()
+        h.night_report(tid, {"node": "box", "status": "review", "branch": "night/x", "head_commit": "abc", "agent": "claude",
+                             "result": {"summary": "done", "learned": ["Modules live at the repo root."], "commits": 1},
+                             "diff_text": "diff --git a b\n", "screenshot_b64": png})
+        r = h.night_out(h.night_task(tid))
+        self.assertEqual((r["status"], r["branch"], r["result"]["summary"]), ("review", "night/x", "done"))
+        self.assertTrue(os.path.isfile(os.path.join(h._night_dir(tid), "screenshot.png")))
+        self.assertEqual(h.night_task(tid)["diff_text"], "diff --git a b\n")
+        self.assertTrue(h.store.one("select 1 from shared_facts where text like 'Modules live%' and source='night_shift'"))
+        out = h.night_decide(tid, {"decision": "approve", "mode": "merge"})                              # parked, no git run here
+        self.assertTrue(out["parked"]); self.assertEqual(h.night_out(h.night_task(tid))["pending_action"], "approve:merge")
+        self.assertEqual(h.night_task(tid)["status"], "review")
+        h.night_report(tid, {"node": "box", "decision": {"decision": "approve", "mode": "merge", "merged": True, "detail": "merged"}})
+        r = h.night_out(h.night_task(tid))
+        self.assertEqual((r["status"], r["pending_action"], r["decision"]["merged"]), ("approved", "", True))
+        t2 = h.night_add({"repo": self.repo, "prompt": "z", "max_minutes": 5})
+        h.night_claim(t2["id"], {"node": "box"})
+        h.night_tick(time.time() + 20 * 60); self.assertEqual(h.night_task(t2["id"])["status"], "running")
+        h.night_tick(time.time() + 40 * 60); self.assertEqual(h.night_task(t2["id"])["status"], "failed")
+        self.assertIn("node went away", h.night_task(t2["id"])["error"])
 
 
 if __name__ == "__main__":

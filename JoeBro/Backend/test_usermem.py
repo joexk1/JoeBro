@@ -100,5 +100,51 @@ class Migration(unittest.TestCase):
         self.assertEqual(hits[0]["scope"], "project")
 
 
+class CallerGate(unittest.TestCase):
+    """The user scope never reaches a coding agent / MCP / node, whatever the request body says."""
+    def setUp(self):
+        self.store, _ = fixture()
+        um.ensure(self.store)
+        sm.remember(self.store, sm.resolve_project(self.store, project="demo"), "The demo repo deploys with make ship to staging.")
+
+    def H(self, ua="Python-urllib/3.12", lan=False, hdr=None):
+        import types
+        return types.SimpleNamespace(server=types.SimpleNamespace(is_lan=lan), headers=dict({"User-Agent": ua}, **(hdr or {})))
+
+    def call(self, caller, rest, method="POST", **body):
+        return sm._dispatch(self.store, method, rest, body if method == "GET" else {}, body if method != "GET" else {}, caller)
+
+    def test_caller_comes_from_the_auth_path(self):
+        self.assertEqual(sm.caller_of(self.H()), "agent")                                  # MCP / plugin / node / curl
+        self.assertEqual(sm.caller_of(self.H(ua="JoeBro/1.0 CFNetwork/1498 Darwin/23")), "app")
+        self.assertEqual(sm.caller_of(self.H(lan=True)), "app")                           # authenticated phone listener
+        os.environ["JOEBRO_APP_TOKEN"] = "s3cret"
+        try:
+            self.assertEqual(sm.caller_of(self.H(ua="JoeBro CFNetwork")), "agent")        # a UA is not enough once a token is set
+            self.assertEqual(sm.caller_of(self.H(hdr={"X-JoeBro-App": "s3cret"})), "app")
+        finally:
+            del os.environ["JOEBRO_APP_TOKEN"]
+
+    def test_mcp_style_all_projects_recall_gets_zero_user_facts(self):
+        for body in ({"query": "coffee flatmate Sam bakery", "all_projects": True},
+                     {"query": "coffee flatmate Sam bakery", "all_projects": True, "include_user": True, "project": "global"},
+                     {"query": "coffee", "all_projects": True, "include_archived": True}):
+            r = self.call("agent", "recall", **body)
+            self.assertFalse([f for f in r["facts"] if f["scope"] == "user"], body)
+        self.assertTrue(self.call("agent", "recall", query="deploys staging", all_projects=True)["facts"])   # projects still work
+        self.assertTrue([f for f in self.call("app", "recall", query="coffee", all_projects=True)["facts"] if f["scope"] == "user"])
+
+    def test_every_other_door_is_closed_for_agents(self):
+        self.assertNotIn("user", [p["key"] for p in self.call("agent", "projects", "GET")["projects"]])
+        self.assertIn("user", [p["key"] for p in self.call("app", "projects", "GET")["projects"]])
+        self.assertFalse([f for f in self.call("agent", "", "GET")["facts"] if f["scope"] == "user"])
+        self.assertFalse([f for f in self.call("agent", "", "GET", q="coffee")["facts"] if f["scope"] == "user"])
+        for call in (lambda: self.call("agent", "brief", "GET", project="user"), lambda: self.call("agent", "recall", project="user", query="coffee"),
+                     lambda: self.call("agent", "", text="Joe likes tea a lot.", project="user"), lambda: self.call("agent", "mem_a1", "GET"),
+                     lambda: self.call("agent", "mem_a1/pin")):
+            with self.assertRaises(LookupError):
+                call()
+
+
 if __name__ == "__main__":
     unittest.main()

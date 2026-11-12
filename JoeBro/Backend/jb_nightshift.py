@@ -9,6 +9,7 @@ The same dispatcher starts or resumes an interactive coding session right now
 (kind `session`: tmux by default, the Agent Control terminal when preferred), which
 is what the personal agent's `start_coding_session` tool uses."""
 import json
+import re
 import os
 import threading
 import time
@@ -82,6 +83,16 @@ class NightShiftMixin:
             branch TEXT NOT NULL DEFAULT '', base_branch TEXT NOT NULL DEFAULT '', base_commit TEXT NOT NULL DEFAULT '', head_commit TEXT NOT NULL DEFAULT '',
             worktree TEXT NOT NULL DEFAULT '', created REAL NOT NULL, updated REAL NOT NULL, started REAL, finished REAL,
             error TEXT NOT NULL DEFAULT '', followups TEXT NOT NULL DEFAULT '[]', result TEXT NOT NULL DEFAULT '{}', decision TEXT NOT NULL DEFAULT '{}')""")
+        if not getattr(self.store, "_night_cols", False):     # node-runner columns (a node reports its diff; decisions park for it)
+            for col in ("pending_action TEXT NOT NULL DEFAULT ''", "diff_text TEXT NOT NULL DEFAULT ''", "diff_truncated INTEGER NOT NULL DEFAULT 0"):
+                try:
+                    self.store.exec("ALTER TABLE night_tasks ADD COLUMN " + col)
+                except Exception:
+                    pass
+            try:
+                self.store._night_cols = True
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------ config
     def night_config(self):
@@ -133,7 +144,7 @@ class NightShiftMixin:
         out.update(repo_name=os.path.basename(r["repo"].rstrip("/")), on_approve=r["on_approve"] or self.night_config()["on_approve"],
                    run_now=bool(r["run_now"]), created_at=_iso(r["created"]), updated_at=_iso(r["updated"]), started_at=_iso(r["started"]),
                    finished_at=_iso(r["finished"]), followups=json.loads(r["followups"] or "[]"),
-                   result=json.loads(r["result"] or "{}") or None, decision=json.loads(r["decision"] or "{}") or None, pending_action="")
+                   result=json.loads(r["result"] or "{}") or None, decision=json.loads(r["decision"] or "{}") or None, pending_action=r.get("pending_action") or "")
         try:
             out["project"] = jb_sharedmem.resolve_project(self.store, path=r["repo"])
         except Exception:
@@ -258,6 +269,9 @@ class NightShiftMixin:
                 if r["id"] not in _RUNNING and r["runner"] == "local":
                     self._night_set(r["id"], status="failed", finished=now,
                                     error="interrupted (the backend restarted during the run); the worktree is kept")
+            for r in self.store.rows("SELECT * FROM night_tasks WHERE status='running' AND runner LIKE 'node:%'"):
+                if now - r["updated"] > (r["max_minutes"] + 30) * 60:        # the node claimed it and never reported
+                    self._night_set(r["id"], status="failed", finished=now, error="node went away (no report within the time cap + 30 minutes)")
             free = int(cfg["parallel"]) - len(_RUNNING)
             for r in self.store.rows("SELECT * FROM night_tasks WHERE status='queued' ORDER BY run_now DESC, position"):
                 if r["kind"] == "task" and free <= 0:
@@ -423,12 +437,94 @@ class NightShiftMixin:
             pass
         return True
 
+    # ------------------------------------------------------------------ node runner (a linked computer that has the repo)
+    def night_claim(self, tid, body):
+        """A node takes a queued task. Atomic: only one claimer wins. Returns what the node needs to run it."""
+        node = re.sub(r"[^A-Za-z0-9_.-]", "", str(body.get("node") or ""))[:40]
+        if not node:
+            raise ValueError("node is required")
+        r = self.night_task(tid)
+        if r["host"] and r["host"] != node:
+            raise PermissionError("that task is pinned to " + r["host"])
+        cfg = self.night_config()
+        # Sessions start at once. A task is held back by the master switch or its own schedule (run_after / its own window);
+        # the default night window is the node's own timer (it is asked to run overnight), not a second gate here.
+        if r["kind"] == "task" and not r["run_now"] and (
+                not cfg["enabled"] or (r["run_after"] and _iso(time.time()) < r["run_after"])
+                or ((r["window_start"] or r["window_end"]) and not in_window(r["window_start"] or cfg["window_start"], r["window_end"] or cfg["window_end"]))):
+            raise PermissionError("not due yet")
+        with self.store.lock, self.store.db() as db:
+            cur = db.execute("UPDATE night_tasks SET status='running', runner=?, started=?, attempts=attempts+1, error='', run_now=0, "
+                             "pending_action='', updated=? WHERE id=? AND status='queued'", ("node:" + node, time.time(), time.time(), tid))
+            won = cur.rowcount == 1
+            db.commit()
+        if not won:
+            raise PermissionError("not queued")
+        r = self.night_task(tid)
+        branch = r["branch"] or "%s%s-%s" % (worker.BRANCH_PREFIX, tid, worker.slug(r["title"]))
+        return {"ok": True, "task": self.night_out(r), "prompt": self._night_prompt(r, branch), "commands": self._night_commands(),
+                "default_agent": self.night_config()["default_agent"]}
+
+    def night_report(self, tid, body):
+        """A node files its run (like _night_run does at the end) or the outcome of a parked decision."""
+        r = self.night_task(tid)
+        node = str(body.get("node") or "")
+        if not r["runner"].startswith("node:") or (node and r["runner"] != "node:" + node):
+            raise PermissionError("that task is not running on this node")
+        if body.get("decision"):
+            d = body["decision"] if isinstance(body["decision"], dict) else {}
+            dec = {"decision": str(d.get("decision") or ""), "mode": str(d.get("mode") or ""), "merged": bool(d.get("merged")),
+                   "detail": str(d.get("detail") or "")[:400], "at": _iso(time.time())}
+            if dec["decision"] not in ("approve", "reject"):
+                raise ValueError("decision is approve or reject")
+            self._night_set(tid, status="approved" if dec["decision"] == "approve" else "rejected", decision=dec, worktree="", pending_action="")
+            try:
+                self.store.exec("update inbox set read=1 where kind='night_review' and source=?", (tid,))
+            except Exception:
+                pass
+            return {"ok": True, "task": self.night_out(self.night_task(tid))}
+        status = str(body.get("status") or "")
+        if status not in ("review", "failed", "launched"):
+            raise ValueError("status is review, failed or launched")
+        fields = {k: str(body[k])[:500] for k in ("branch", "worktree", "base_branch", "base_commit", "head_commit", "resume_id", "agent")
+                  if isinstance(body.get(k), str)}
+        result = body.get("result") if isinstance(body.get("result"), dict) else {}
+        self._night_set(tid, status=status, finished=time.time(), error=str(body.get("error") or "")[:300], result=result,
+                        diff_text=str(body.get("diff_text") or "")[:400000], diff_truncated=int(bool(body.get("diff_truncated"))), **fields)
+        if body.get("screenshot_b64"):
+            import base64
+            try:
+                png = base64.b64decode(str(body["screenshot_b64"]), validate=True)
+            except ValueError:
+                png = b""
+            if 0 < len(png) <= 8 * 1024 * 1024:
+                os.makedirs(self._night_dir(tid), exist_ok=True)
+                with open(os.path.join(self._night_dir(tid), "screenshot.png"), "wb") as f:
+                    f.write(png)
+        for fact in result.get("learned") or []:          # what was learned goes into Shared Memory
+            try:
+                jb_sharedmem.remember(self.store, jb_sharedmem.resolve_project(self.store, path=r["repo"]), str(fact), "", "learned",
+                                      prov={"agent": fields.get("agent") or r["agent"], "model": r["model"], "session": tid, "source": "night_shift"})
+            except (ValueError, OSError):
+                pass
+        if status == "review":
+            self._night_notify(self.night_task(tid))
+        return {"ok": True, "task": self.night_out(self.night_task(tid))}
+
     def night_decide(self, tid, body):
         """The explicit user decision. The only place a destructive git command is run."""
         r = self.night_task(tid)
         decision = str(body.get("decision") or "")
         if r["kind"] != "task" or r["status"] not in ("review", "failed"):
             raise ValueError("that task is not waiting for a decision")
+        if r["runner"].startswith("node:") and decision in ("approve", "reject"):
+            # the repo and worktree live on the node: park the action, the node runs it on its next pass and reports a decision
+            mode = body.get("mode") or r["on_approve"] or self.night_config()["on_approve"]
+            if decision == "approve" and (mode not in ("keep", "merge") or r["status"] != "review"):
+                raise ValueError("mode is keep or merge, and only a task in review can be approved")
+            self._night_set(tid, pending_action=("approve:" + mode) if decision == "approve" else "reject")
+            return {"ok": True, "task": self.night_out(self.night_task(tid)), "parked": True,
+                    "detail": "Waiting for %s to carry it out on its next pass." % r["runner"][5:]}
         if decision == "followup":
             text = str(body.get("text") or "").strip()[:4000]
             if not text:
@@ -546,6 +642,9 @@ def route(h, method, path, q):
                 out = {"ok": True, "config": h.night_config()}
             elif action == "diff":
                 r = h.night_task(head)
+                if r["runner"].startswith("node:"):       # the repo is on the node: serve what it reported
+                    h.json({"ok": True, "diff": r["diff_text"], "truncated": bool(r["diff_truncated"])})
+                    return True
                 text, cut = worker.diff_text(r["repo"], r["base_commit"], r["head_commit"]) if r["head_commit"] else ("", False)
                 out = {"ok": True, "diff": text, "truncated": cut}
             elif action == "screenshot":
@@ -573,6 +672,17 @@ def route(h, method, path, q):
                 out = one(h.night_run_now(head))
             elif action == "decide":
                 out = h.night_decide(head, b)
+            elif action == "node-decide":      # park a decision for the node (same as decide on a node-run task)
+                act = str(b.get("action") or "")
+                if act not in ("approve:keep", "approve:merge", "reject"):
+                    raise ValueError("action is approve:keep, approve:merge or reject")
+                if not h.night_task(head)["runner"].startswith("node:"):
+                    raise ValueError("only a task a node ran can have a decision parked")
+                out = h.night_decide(head, {"decision": act.split(":")[0], "mode": act.partition(":")[2]})
+            elif action == "claim":
+                out = h.night_claim(head, b)
+            elif action == "report":
+                out = h.night_report(head, b)
             else:
                 raise LookupError("not found")
         else:
@@ -580,6 +690,8 @@ def route(h, method, path, q):
         h.json(out)
     except LookupError as exc:
         h.json({"ok": False, "detail": str(exc)}, 404)
+    except PermissionError as exc:
+        h.json({"ok": False, "error": str(exc), "detail": str(exc)}, 409)
     except (ValueError, TypeError) as exc:
         h.json({"ok": False, "detail": str(exc) or "invalid request"}, 400)
     return True

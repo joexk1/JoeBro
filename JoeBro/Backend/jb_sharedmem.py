@@ -594,13 +594,53 @@ def _fill_provenance(store, body):
     return p
 
 
-def _dispatch(store, method, rest, q, b):
+def caller_of(h):
+    """Who is asking, decided server-side from how the request arrived, never from a flag in the request.
+    "app": the phone listener (token-authenticated), a request carrying the app token (env JOEBRO_APP_TOKEN, header
+    X-JoeBro-App), or, when no app token is configured, a native JoeBro client (URLSession user agent).
+    Everything else (the joebro-agents MCP server, plugins, node runner, curl, scripts) is "agent": project + global only.
+    The personal agent's own tool calls are in-process and never come through here."""
+    import hmac
+    server = getattr(h, "server", None)
+    if getattr(server, "is_lan", False):
+        return "app"
+    want = os.environ.get("JOEBRO_APP_TOKEN", "")
+    if want:
+        got = (getattr(h, "headers", None) or {}).get("X-JoeBro-App") or ""
+        return "app" if got and hmac.compare_digest(got.encode(), want.encode()) else "agent"
+    ua = ((getattr(h, "headers", None) or {}).get("User-Agent") or "")
+    return "app" if ("CFNetwork" in ua or ua.startswith("JoeBro")) else "agent"
+
+
+def _dispatch(store, method, rest, q, b, caller="app"):
+    if caller != "app":
+        return _dispatch_agent(store, method, rest, q, b)
+    return _dispatch_inner(store, method, rest, q, b)
+
+
+def _dispatch_agent(store, method, rest, q, b):
+    """A coding agent / MCP / node: the `user` scope does not exist for it."""
+    keyed = lambda src: str(src.get("project") or "").strip() == "user"
+    head = rest.strip("/").split("/")[0] if rest.strip("/") else ""
+    if keyed(q) or keyed(b):
+        raise LookupError("not found")
+    if head and head not in ("projects", "brief", "mirror", "sessions", "review", "recall", "consolidate", "import"):
+        r = store.one("SELECT project FROM shared_facts WHERE id=?", (head,))
+        if r and r["project"] == "user":
+            raise LookupError("not found")
+    if method == "POST" and head == "recall":
+        b = dict(b, include_user=False)
+    out = _dispatch_inner(store, method, rest, q, b, hide_user=True)
+    return out
+
+
+def _dispatch_inner(store, method, rest, q, b, hide_user=False):
     key = lambda src: resolve_project(store, src.get("project"), src.get("path"), src.get("remote"), src.get("project_name") or "")
     parts = [p for p in rest.split("/") if p]
     head = parts[0] if parts else ""
     if method == "GET":
         if head == "projects":
-            return {"ok": True, "projects": list_projects(store)}
+            return {"ok": True, "projects": [p for p in list_projects(store) if not (hide_user and p["key"] == "user")]}
         if head == "brief":
             k = key(q)
             text, facts, used = brief(store, k, q.get("budget") or BRIEF_TOKENS)
@@ -613,7 +653,7 @@ def _dispatch(store, method, rest, q, b):
             return {"ok": True, "sessions": recent_sessions(store, k, q.get("limit") or 10)}
         if head == "review":
             k = key(q) if (q.get("project") or q.get("path")) else None
-            return {"ok": True, "facts": [f for f in browse(store, k) if not f["pinned"] and f["strength"] < 0.2]}
+            return {"ok": True, "facts": [f for f in browse(store, k) if not f["pinned"] and f["strength"] < 0.2 and not (hide_user and f["scope"] == "user")]}
         if head:
             r = _row(store, head)
             chain, cur = [r], r
@@ -627,10 +667,12 @@ def _dispatch(store, method, rest, q, b):
                     "log": [dict(l, at=_iso(l["at"])) for l in log]}
         k = key(q) if (q.get("project") or q.get("path") or q.get("remote")) else None
         if q.get("q"):
-            keys = [k] if k else [p["key"] for p in list_projects(store)]
+            keys = [k] if k else [p["key"] for p in list_projects(store) if not (hide_user and p["key"] == "user")]
             facts = search(store, k, q["q"], q.get("limit") or 20, (q.get("status") or "active") != "active", keys=keys)
         else:
             facts = browse(store, k, q.get("status") or "active", q.get("topic") or "", q.get("kind") or "", q.get("limit") or 200)
+            if hide_user:
+                facts = [f for f in facts if f["scope"] != "user"]
         return {"ok": True, "project": project_info(store, k) if k else None, "facts": facts, "count": len(facts)}
     if method == "DELETE" and head:
         return {"ok": True, "fact": fact_out(store, archive(store, head, "archived in the app", "app"))}
@@ -645,7 +687,7 @@ def _dispatch(store, method, rest, q, b):
     if head == "recall":
         k = key(b)
         if b.get("all_projects"):       # the personal agent, on request: every scope
-            keys = [p["key"] for p in list_projects(store)]
+            keys = [p["key"] for p in list_projects(store) if not (hide_user and p["key"] == "user")]
         else:
             keys = _scopes(k, b.get("include_global", True))
         facts = search(store, k, b.get("query") or "", b.get("limit") or RECALL_LIMIT, bool(b.get("include_archived")),
@@ -685,7 +727,7 @@ def route(h, method, path, q):
         body = (h._json_body() or {}) if method in ("POST", "PUT") else {}
         if not isinstance(body, dict):
             raise ValueError("body must be a JSON object")
-        h.json(_dispatch(h.store, method, path[len("/api/shared-memory"):], q, body))
+        h.json(_dispatch(h.store, method, path[len("/api/shared-memory"):], q, body, caller_of(h)))
     except LookupError as exc:
         h.json({"ok": False, "detail": str(exc)}, 404)
     except (ValueError, TypeError) as exc:
