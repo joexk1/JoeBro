@@ -1178,6 +1178,12 @@ def main():
         _h.reconcile_agents_on_boot()      # a restart killed any run still marked live
     except Exception:
         pass
+    try:
+        added = jb_usermem.migrate(server.store)   # Brain + muse files -> Shared Memory "user" scope; idempotent
+        if any(added.values()):
+            print("Shared Memory: imported", added, flush=True)
+    except Exception as exc:
+        print("Shared Memory import skipped:", exc, flush=True)
     if args.lan_host:
         from jb_mobile import load_mobile
         cfg = dict(load_mobile(server.store), host=args.lan_host, port=args.lan_port)
