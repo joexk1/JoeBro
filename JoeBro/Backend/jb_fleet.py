@@ -496,6 +496,7 @@ class FleetMixin:
             "quiet_hours": self.pref("pulse_quiet_hours") or "23:00-07:30",
             "model": self.pref("pulse_model") or self.pref("default_model") or "",
             "endpoint_id": self.pref("pulse_endpoint_id") or self.pref("default_endpoint_id") or "",
+            "ping_level": __import__("jb_importance").level_of(self.pref("pulse_ping_level")),
             "last_run": self.pref("pulse_last_run") or "",
             "last_spoke": self.pref("pulse_last_spoke") or "",
         }
@@ -559,6 +560,11 @@ class FleetMixin:
                 self.set_pref("pulse_interval_minutes", mins)
             if args.get("quiet_hours"):
                 self.set_pref("pulse_quiet_hours", str(args["quiet_hours"]))
+            if args.get("ping_level"):
+                lvl = str(args["ping_level"]).strip().lower()
+                if lvl not in ("important", "normal"):
+                    raise ValueError("ping_level must be important or normal")
+                self.set_pref("pulse_ping_level", lvl)
             if args.get("model"):
                 self.set_pref("pulse_model", str(args["model"]))
             # Editing the checklist never switches the pulse on: that is the

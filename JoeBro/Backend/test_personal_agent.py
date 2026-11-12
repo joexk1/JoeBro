@@ -73,6 +73,11 @@ class Proactive(unittest.TestCase):
         text = "Booking confirmed: Dinner Thursday at 19:00, table for 2"
         r = self.run_pass(rec(text, ident="email:1", source="email"), self.ev("Dinner Thursday at 19:00"))
         self.assertEqual(len(self.f.created), 1, r)
+        self.assertEqual(len(self.f.notes), 0)     # quiet by default: saved to the chat, no push
+        self.assertEqual(len(self.f.posts), 1)
+        self.f.set_pref("pulse_ping_level", "normal"); self.f.posts.clear()
+        self.f.notes.clear(); self.f.bg_now = lambda: datetime.now(TZ)
+        self.f._announce({"events_added": [{"title": "Dinner", "when": "Thu"}], "shopping_added": [], "events_suggested": []})
         self.assertEqual(len(self.f.notes), 1)
         self.run_pass(rec(text + " (updated)", ident="email:1", source="email"), self.ev("Dinner Thursday at 19:00"))
         self.assertEqual(len(self.f.created), 1)   # same plan -> no duplicate

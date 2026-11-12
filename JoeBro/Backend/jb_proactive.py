@@ -322,8 +322,12 @@ class ProactiveMixin:
             self.phone_post(msg, "proactive", title=title)
         except Exception:
             pass
+        # Routine calendar/shopping actions are saved to the chat, not pushed (importance gate):
+        # a push only at level "normal", still rate limited and de-duplicated.
         try:
-            self.notify(msg, title=title, kind="proactive", source="proactive", channel="auto", session=PHONE_SESSION_ID)
+            import jb_importance
+            if jb_importance.level_of(self.pref("pulse_ping_level")) == "normal" and self.bg_may_ping(msg, "proactive"):
+                self.notify(msg, title=title, kind="proactive", source="proactive", channel="auto", session=PHONE_SESSION_ID)
         except Exception:
             pass
 
