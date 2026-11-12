@@ -954,6 +954,7 @@ PRODUCTION_AI_TOOLS = {
     "trigger_research", "manage_research", "manage_memory", "manage_tasks", "manage_skills",
     "manage_chats", "create_event", "manage_events",
     "shopping_list", "health_data", "coding_agents", "proactive_actions", "desktop_use",
+    "recent_coding_sessions", "start_coding_session",
 } | EMAIL_AI_TOOLS | PHONE_TOOL_NAMES
 WRITE_SIDE_EFFECT_TOOLS = {
     "bash", "python",
@@ -962,7 +963,7 @@ WRITE_SIDE_EFFECT_TOOLS = {
     "manage_chats", "create_event", "manage_events", "desktop_use",
     "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "save_email_attachment",
     "remind_me", "manage_reminders", "notify_me", "manage_pulse", "manage_autonomy",
-    "spawn_agent", "spawn_subagent", "manage_agents",
+    "spawn_agent", "spawn_subagent", "manage_agents", "start_coding_session",
     "muse_remember", "muse_update", "muse_forget",
     "personal_task_create", "personal_task_update", "personal_task_delete", "personal_task_run_now",
 } | TRANSFER_AI_TOOLS
@@ -1086,7 +1087,8 @@ FUNCTION_TOOL_SCHEMAS = [
 # Health, proactive actions, coding agents). Deferred like the rest (DEFERRED_GROUPS).
 from jb_proactive import SHOPPING_TOOL as _SHOP, HEALTH_TOOL as _HEALTH, PROACTIVE_TOOL as _PROACTIVE  # noqa: E402
 from jb_coding import CODING_AGENTS_TOOL as _CODING  # noqa: E402
-FUNCTION_TOOL_SCHEMAS += [_SHOP, _HEALTH, _PROACTIVE, _CODING]
+from jb_nightshift import RECENT_SESSIONS_TOOL as _RECENT, START_SESSION_TOOL as _START  # noqa: E402
+FUNCTION_TOOL_SCHEMAS += [_SHOP, _HEALTH, _PROACTIVE, _CODING, _RECENT, _START]
 
 # The phone agent's tools (see PHONE_TOOL_NAMES). Kept out of FUNCTION_TOOL_SCHEMAS
 # so tools_for() only offers them where they belong.

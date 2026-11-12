@@ -119,6 +119,16 @@ class CodingAgentsMixin:
             self.store.exec("UPDATE coding_agents SET status='ended' WHERE host=? AND pid=? AND id<>? AND status<>'ended'",
                             (host, pid, aid))
         self.store.exec("DELETE FROM coding_agents WHERE last_activity<?", (now - 3 * 86400,))
+        if kind in ("stop", "end"):       # one compact session record in Shared Memory (no model call)
+            try:
+                import jb_sharedmem
+                last = text if kind == "stop" else ""
+                last = last or next((d[2:] for d in reversed(detail) if d.startswith("✓ ")), "") or \
+                    next((d[2:] for d in reversed(detail) if d.startswith("› ")), "")
+                jb_sharedmem.record_session(self.store, {"id": aid, "cwd": cwd, "source": source, "model": model, "host": host,
+                                                         "session_id": sid}, last, str(ev.get("branch") or ""))
+            except Exception:
+                pass
         return {"ok": True, "id": aid, "status": status}
 
     def coding_nodes(self, include_idle=True):
@@ -574,6 +584,12 @@ def coding_loop(server):
                 pass
             if len(pushed) > 400:
                 pushed.clear()
+            try:                   # Night Shift scheduler + the nightly memory consolidation
+                h.night_tick()
+                import jb_sharedmem
+                jb_sharedmem.nightly(server.store)
+            except Exception:
+                pass
             if now - last_reconcile > 90 and server.store.one("SELECT 1 AS x FROM coding_agents WHERE status<>'ended' LIMIT 1"):
                 last_reconcile = now
                 try:

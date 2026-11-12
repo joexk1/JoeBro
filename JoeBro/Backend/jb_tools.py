@@ -70,7 +70,7 @@ DEFERRED_GROUPS = {
                  r"\b(?:shop\w*|groceries|grocery|buy|supermarket|need (some|more)|run out|ran out|out of|\blist\b|tick)"),
     "health": ({"health_data"},
                r"\b(?:health|sleep|slept|steps|workout|exercise|heart|hrv|resting|weight|fitness|calories|kcal|tired|energy|\brun\b|gym|apple health|recovery)"),
-    "coding": ({"coding_agents"},
+    "coding": ({"coding_agents", "recent_coding_sessions", "start_coding_session"},
                r"\b(?:agents?|claude|codex|opencode|coding|session|terminal|running|working on|build|deploy|repo|pr\b|project)"),
     "proactive": ({"proactive_actions"},
                   r"\b(?:proactive|spotted|background|you added|did you add|undo|suggest\w*|approve)"),
@@ -736,6 +736,14 @@ class ToolsMixin:
             return {"tool": name, "command": "health_data", "exit_code": 0, "output": self.health_tool(body)}
         if name == "coding_agents":
             return {"tool": name, "command": "coding_agents", "exit_code": 0, "output": self.coding_agents_tool(body)}
+        if name == "recent_coding_sessions":
+            return {"tool": name, "command": name, "exit_code": 0, "output": self.recent_coding_sessions_tool(body)}
+        if name == "start_coding_session":
+            # Launches an autonomous agent with file and shell access: Full-access sessions only.
+            if (form.get("permission_mode") or "") != "full":
+                return {"tool": name, "command": name, "exit_code": 1,
+                        "output": "Starting a coding session needs Full access for this chat. Ask the user to allow it."}
+            return {"tool": name, "command": name, "exit_code": 0, "output": self.start_coding_session_tool(body)}
         if name == "proactive_actions":
             if readonly and (self.parse_tool_args(body) or {}).get("action", "list") != "list":
                 return {"tool": name, "command": name, "exit_code": 1, "output": "Read-only access: can only list proactive actions."}

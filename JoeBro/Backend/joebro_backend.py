@@ -32,6 +32,9 @@ from jb_proactive import ProactiveMixin, proactive_loop
 from jb_desktop import DesktopUseMixin
 from jb_coding import CodingAgentsMixin, coding_loop
 from jb_plugins import PluginsMixin, PluginError
+from jb_nightshift import NightShiftMixin
+import jb_nightshift
+import jb_sharedmem
 import jb_ext
 import traceback
 import gzip
@@ -49,7 +52,7 @@ _AUTH_FAILS = {"n": 0}      # a count in memory only: how many bad tokens this r
 class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMixin, SpendMixin, ReachMixin, PromptMixin, ChatMixin, ToolsMixin, EmailMixin, DocsMixin, CalendarMixin, ModelsMixin,
               AssistantMixin, MemoryMixin, FilesMixin, FleetMixin, PersonalMixin, MuseMixin,
               PersonalTasksMixin, AgentsMixin, HeartbeatMixin, LocationMixin, MobileMixin,
-              ProactiveMixin, DesktopUseMixin, CodingAgentsMixin, PluginsMixin,
+              ProactiveMixin, DesktopUseMixin, CodingAgentsMixin, PluginsMixin, NightShiftMixin,
               BaseHTTPRequestHandler):
     server_version = "JoeBroLocal/1.0"
 
@@ -198,6 +201,8 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
         if jb_ext.route(self, "GET", path, self._query()):
             return
         path = self._path().path          # an extension may have rewritten an alias to its canonical route
+        if jb_sharedmem.route(self, "GET", path, self._query()) or jb_nightshift.route(self, "GET", path, self._query()):
+            return
         q = self._query()
         if path in ("/api/ping", "/api/health"):
             return self.json({"ok": True, "local": True})
@@ -508,6 +513,8 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
         if jb_ext.route(self, "POST", path, self._query()):
             return
         path = self._path().path          # an extension may have rewritten an alias to its canonical route
+        if jb_sharedmem.route(self, "POST", path, self._query()) or jb_nightshift.route(self, "POST", path, self._query()):
+            return
         if path == "/api/mobile/enable":
             out, code = self.mobile_enable(self._json_body() or {})
             return self.json(out, code)
@@ -930,6 +937,8 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
         if jb_ext.route(self, "PUT", path, self._query()):
             return
         path = self._path().path          # an extension may have rewritten an alias to its canonical route
+        if jb_sharedmem.route(self, "PUT", path, self._query()) or jb_nightshift.route(self, "PUT", path, self._query()):
+            return
         if path.startswith("/api/muse/"):
             try:
                 self.muse_write(path.split("/")[3], (self._json_body() or {}).get("content") or "")
@@ -1007,6 +1016,8 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
         if jb_ext.route(self, "DELETE", path, self._query()):
             return
         path = self._path().path          # an extension may have rewritten an alias to its canonical route
+        if jb_sharedmem.route(self, "DELETE", path, self._query()) or jb_nightshift.route(self, "DELETE", path, self._query()):
+            return
         if path.startswith("/api/mobile/devices/"):
             return self.json(remove_device(self.store, path.rsplit("/", 1)[-1]))
         if path == "/api/mobile/apns":

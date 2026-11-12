@@ -284,6 +284,7 @@ class BriefingMixin:
                               ("inbox", lambda: self.briefing_inbox_facts(since)),
                               ("agents", self.briefing_agent_facts),
                               ("coding agents", lambda: self.briefing_coding_facts(since)),
+                              ("night shift", self.briefing_night_facts),
                               ("email", self.briefing_email_facts),
                               ("weather", self.briefing_weather_facts)):
                 self.agent_progress(aid, f"Reading {label}")
@@ -336,8 +337,12 @@ class BriefingMixin:
         row = self.latest_briefing_row()
         running = row if row and self.agent_status(row) in ("queued", "running") else None
         cfg = self.briefing_config()
+        try:
+            cards = self.night_review_cards()       # Night Shift review cards ride along with the briefing
+        except Exception:
+            cards = []
         return {
-            "ok": True,
+            "ok": True, "cards": cards,
             "briefing": self.agent_record(row, full=True) if row else None,
             "age": self._ago((row or {}).get("finished_at")) if row else "never",
             "writing_now": self.agent_record(running) if running else None,

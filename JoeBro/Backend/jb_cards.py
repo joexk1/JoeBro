@@ -3,7 +3,7 @@ import hashlib
 import json
 import re
 
-KINDS={'calendar','weather','tasks','reminders','shopping','agents','memory','health','research','email','plan','integration'}
+KINDS={'calendar','weather','tasks','reminders','shopping','agents','memory','health','research','email','plan','integration','review'}
 
 
 def _text(value, limit=180):
