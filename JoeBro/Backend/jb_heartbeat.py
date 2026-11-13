@@ -386,7 +386,8 @@ class HeartbeatMixin:
                 self.bg_note_run(False)
                 self.set_pref("heartbeat_status", "quiet")
                 return {"ok": True, "ran": True, "status": "quiet", "changed_items": len(changed), "llm_calls": calls}
-            self.phone_post(text, "heartbeat", title="Heads up")
+            if not self.chat_kind("heartbeat"):         # otherwise notify() writes it; posting too sent it twice
+                self.phone_post(text, "heartbeat", title="Heads up")
             delivery = self.notify(text, title="Heads up", kind="heartbeat", source="heartbeat",
                                    channel="auto", session=PHONE_SESSION_ID)
             self.bg_note_run(True)
@@ -435,7 +436,8 @@ class HeartbeatMixin:
             self.bg_note_run(False)
             return {"ok": True, "ran": True, "spoke": False, "llm_calls": calls, "reason": "held back"}
         self.set_pref("pulse_last_spoke", now_iso())
-        self.phone_post(text[:1500], "pulse", title="Pulse")
+        if not self.chat_kind("pulse"):                 # otherwise notify() writes it; posting too sent it twice
+            self.phone_post(text[:1500], "pulse", title="Pulse")
         self.notify(text[:1500], title="Pulse", kind="pulse", source="pulse", session=PHONE_SESSION_ID)
         self.bg_note_run(True)
         return {"ok": True, "ran": True, "spoke": True, "message": text, "llm_calls": calls}

@@ -43,6 +43,7 @@ class F(ProactiveMixin, HeartbeatMixin, CodingAgentsMixin, DesktopUseMixin):
         self.last_system = system; return self.model_reply
     def _heartbeat_snapshot(self, now): return self.snapshot
     def phone_post(self, text, source, title="", **k): self.msgs.append((title, text))
+    def chat_kind(self, kind): return False
 
 
 def rec(text, mine=True, ident="docs:d1", source="docs"):

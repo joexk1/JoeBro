@@ -562,7 +562,8 @@ class ProactiveMixin:
             return None
         self.set_pref("health_weekly_sent", week)
         msg = "Your week in health. " + self.health_text(s)
-        self.phone_post(msg, "health_weekly", title="Weekly health")
+        if not self.chat_kind("health"):
+            self.phone_post(msg, "health_weekly", title="Weekly health")
         self.notify(msg, title="Your week in health", kind="health", source="health_weekly", channel="mobile", session=PHONE_SESSION_ID)
         return msg
 

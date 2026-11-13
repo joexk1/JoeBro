@@ -176,13 +176,17 @@ class FleetMixin:
             return phone_folder_check(folder)
         return folder
 
+    def chat_kind(self, kind):
+        """True when notify() itself writes this kind into the phone chat (so callers must not post it too)."""
+        return kind in self.PHONE_CHAT_KINDS or any(kind in set(k) for k in jb_ext.call("notify_chat_kinds"))
+
     def phone_post(self, text, source, title="", **meta):
         """Say something in the phone agent's chat as a plain assistant message.
         The notice flag lets the app style it; the user answers it like any other
         message. Creates the session if the phone has never opened it."""
         self.ensure_phone_session()
-        self.add_message(PHONE_SESSION_ID, "assistant", text,
-                         dict({"notice": True, "source": source, "task_title": title}, **meta))
+        return self.add_message(PHONE_SESSION_ID, "assistant", text,
+                                dict({"notice": True, "source": source, "task_title": title}, **meta))
 
     # ---- the fleet -------------------------------------------------------
 

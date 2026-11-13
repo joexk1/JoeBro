@@ -342,7 +342,7 @@ class NightShiftMixin:
             "You are running unattended in a dedicated git worktree on branch %s. Work only in this folder and commit your work "
             "locally. Never push and never touch other branches.%s\n"
             "End your reply with:\nSUMMARY: 2-4 sentences on what you changed and what is left.\n"
-            "LEARNED: one durable fact about this repo per line (a convention, gotcha, or how to run/test), at most 3; skip if none.\n"
+            "LEARNED: one thing you found out that a future session would not know from the code or AGENTS.md/CLAUDE.md (a decision and why, a gotcha, something that failed), one per line, at most 3. Not how to build or test. Usually there is none: then write no LEARNED line.\n"
             "Optional: save a screenshot of a visible change to .joebro/night/screenshot.png."
             % (branch, (" Check your work with: %s" % r["test_command"]) if r["test_command"] else ""))
 
