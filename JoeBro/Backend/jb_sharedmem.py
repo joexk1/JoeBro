@@ -207,7 +207,7 @@ def _row(store, fid):
 def _clean(text):
     text = re.sub(r"\s+", " ", str(text or "")).strip()
     if len(text) < MIN_FACT:
-        raise ValueError("too short: store one durable fact (a decision, convention, gotcha, or how to run/test)")
+        raise ValueError("too short: store one durable fact (a decision, a gotcha, or something that was tried)")
     if len(text) > MAX_FACT:
         raise ValueError("too long (max %d characters): store one short durable fact, not a log or a summary" % MAX_FACT)
     if _SECRET.search(text):
@@ -376,7 +376,7 @@ def brief(store, key, budget=BRIEF_TOKENS):
     budget = max(60, min(int(budget or BRIEF_TOKENS), BRIEF_TOKENS))
     info, now = project_info(store, key), time.time()
     head = ("Shared memory (JoeBro) for %s: top facts. memory_recall finds more; memory_remember saves durable facts "
-            "(decisions, conventions, gotchas, how to run/test)." % info["name"])
+            "(decisions, gotchas, what was tried). Instructions stay in AGENTS.md/CLAUDE.md." % info["name"])
     if key == "user":
         head = "What you know about the user (JoeBro memory). Use recall for more."
     lines, used, facts = [head], tokens(head), []
