@@ -335,6 +335,16 @@ class EmailMixin:
         return conn
 
     @staticmethod
+    def imap_mailbox(name):
+        """A mailbox name as an IMAP quoted string. imaplib sends names verbatim,
+        so one with a space ("[Gmail]/Sent Mail", "Old receipts") reached the
+        server as two arguments and came back BAD "Could not parse command"."""
+        name = name or "INBOX"
+        if len(name) >= 2 and name.startswith('"') and name.endswith('"'):
+            return name
+        return '"' + name.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+    @staticmethod
     def decode_header_value(value):
         if not value:
             return ""
@@ -474,7 +484,7 @@ class EmailMixin:
         for account in sources:
             try:
                 def pull(conn):
-                    status, _ = conn.select(folder, readonly=True)
+                    status, _ = conn.select(self.imap_mailbox(folder), readonly=True)
                     if status != "OK" and folder != "INBOX":
                         status, _ = conn.select("INBOX", readonly=True)
                     if status != "OK":
@@ -633,7 +643,7 @@ class EmailMixin:
         if not account:
             raise ValueError("No mailbox connected")
         def grab(conn):
-            status, _ = conn.select(folder)
+            status, _ = conn.select(self.imap_mailbox(folder))
             if status != "OK":
                 raise RuntimeError("Mailbox unavailable")
             status, rows = conn.uid("fetch", msg_uid, "(RFC822)")
@@ -696,7 +706,7 @@ class EmailMixin:
         if not account:
             raise ValueError("No mailbox connected")
         def grab(conn):
-            status, _ = conn.select(folder or "INBOX", readonly=True)
+            status, _ = conn.select(self.imap_mailbox(folder), readonly=True)
             if status != "OK":
                 raise RuntimeError("Mailbox unavailable")
             status, rows = conn.uid("fetch", msg_uid, "(BODY.PEEK[])")
@@ -944,7 +954,7 @@ class EmailMixin:
         if not account:
             raise ValueError("No mailbox connected")
         def apply(conn):
-            conn.select(folder or "INBOX")
+            conn.select(self.imap_mailbox(folder))
             if archive:
                 conn.create("Archive")
                 conn.uid("COPY", msg_uid, "Archive")
