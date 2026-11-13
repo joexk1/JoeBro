@@ -25,7 +25,7 @@ JoeBro puts them in one place. Link them once with [joebro-plugins](https://gith
 New in 1.5:
 
 - **Night Shift.** Queue coding tasks. They run overnight, each in its own git branch, on whichever machine has the repo. In the morning you get review cards with the diff, the test result and a summary. Approve or reject from the Mac or from your iPhone lock screen. It never pushes.
-- **Shared Memory.** One project memory that every agent reads and writes over MCP, for what they learn: decisions, gotchas, what was tried. Your instructions stay in CLAUDE.md and AGENTS.md.
+- **Shared Memory.** One project memory that every agent reads and writes over MCP, for what they learn: decisions, gotchas, what was tried.
 - **Live agents and subagents.** They appear in the Agents panel as they start, and on the phone and in the Dynamic Island, even with the app in the background.
 - **Resume.** Your personal agent can pick up a coding session. "Pick up what I was working on yesterday and add tests."
 - **Morning briefing and proactive mode** are now in the shipped app.
