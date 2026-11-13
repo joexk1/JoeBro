@@ -53,6 +53,24 @@ class Subagents(unittest.TestCase):
         f.store.exec("update coding_agents set last_activity=? where kind='subagent'", (time.time() - 31 * 60,))
         self.assertEqual([n["kind"] for n in f.coding_nodes()], ["coding"])
 
+    def test_idle_parent_with_working_subagent_stays_on_island(self):
+        import jb_coding
+        f, b = self.f, self.b
+        f.agents_payload = lambda limit=60: {"agents": []}
+        f.phone_agent_name = lambda: "JoeBro"
+        f.coding_event(dict(b, event="prompt", text="go"))
+        f.coding_event(dict(b, event="subagent_start", session_id="s1", parent_session_id="p1", subagent_type="general-purpose"))
+        f.coding_event(dict(b, event="stop"))                      # the parent's turn ends; the subagent keeps working
+        runs = jb_coding.island_state(f)
+        self.assertEqual(len(runs), 1)
+        self.assertEqual((runs[0]["id"], runs[0]["subagents"], runs[0]["detail"], runs[0]["waiting"]),
+                         ("code:mac:claude:p1", 1, "1 subagent working", False))
+        self.assertGreater(jb_coding.live_coding_count(f.store), 0)  # the island isn't ended under it
+        f.store.exec("update coding_agents set last_activity=? where kind<>'subagent'", (time.time() - 7 * 3600,))
+        self.assertEqual(len(jb_coding.island_state(f)), 1)          # long-idle parent still listed while its subagent works
+        f.coding_event(dict(b, event="subagent_stop", session_id="s1", parent_session_id="p1", text="done"))
+        self.assertEqual(jb_coding.island_state(f), [])
+
     def test_bad_and_no_session_record(self):
         with self.assertRaises(ValueError):
             self.f.coding_event(dict(self.b, event="subagent_start"))

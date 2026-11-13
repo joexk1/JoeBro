@@ -61,7 +61,7 @@ class CodingAgentsMixin:
             cwd TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, tool_calls INTEGER NOT NULL DEFAULT 0,
             detail_json TEXT NOT NULL DEFAULT '[]', started REAL NOT NULL, last_activity REAL NOT NULL,
             pid INTEGER, terminal_json TEXT NOT NULL DEFAULT '{}')""")
-        for col in ("kind TEXT NOT NULL DEFAULT 'coding'", "agent_type TEXT NOT NULL DEFAULT ''"):
+        for col in ("kind TEXT NOT NULL DEFAULT 'coding'", "agent_type TEXT NOT NULL DEFAULT ''", "ends_with_parent INTEGER NOT NULL DEFAULT 0"):
             try:
                 self.store.exec("ALTER TABLE coding_agents ADD COLUMN " + col)
             except Exception:
@@ -151,7 +151,15 @@ class CodingAgentsMixin:
                 agent_type=excluded.agent_type""",
                         (aid, host, source, sid, parent_id if is_sub else (str(ev.get("parent") or "")[:120] or (row or {}).get("parent") or ""), name, cwd, model, status, tool_calls,
                          json.dumps(detail, ensure_ascii=False), now, now, pid, json.dumps(term), sub_kind, agent_type))
-        if not is_sub and kind in ("stop", "end"):   # harnesses that send no subagent stop: they end with the parent's turn
+        if is_sub and ev.get("ends_with_parent"):
+            self.store.exec("UPDATE coding_agents SET ends_with_parent=1 WHERE id=?", (aid,))
+        # Subagents from harnesses that send no stop signal (flagged ends_with_parent) close with the parent's
+        # turn. Others (Claude Code sends SubagentStop) keep running after the parent's turn ends: background
+        # subagents outlive it. A session that ends closes all of them.
+        if not is_sub and kind == "stop":
+            self.store.exec("UPDATE coding_agents SET status='done',last_activity=? WHERE parent=? AND kind='subagent' "
+                            "AND ends_with_parent=1 AND status IN ('running','waiting')", (now, aid))
+        elif not is_sub and kind == "end":
             self.store.exec("UPDATE coding_agents SET status='done',last_activity=? WHERE parent=? AND kind='subagent' "
                             "AND status IN ('running','waiting')", (now, aid))
         try:
@@ -181,7 +189,12 @@ class CodingAgentsMixin:
         self._coding_table()
         now = time.time()
         flat, hidden = [], set()
-        for r in self.store.rows("SELECT * FROM coding_agents ORDER BY last_activity DESC LIMIT 120"):
+        rows = self.store.rows("SELECT * FROM coding_agents ORDER BY last_activity DESC LIMIT 120")
+        # A parent with a subagent still working stays listed, however long the parent itself has been idle.
+        working_parents = {r["parent"] for r in rows if r.get("kind") == "subagent" and r["parent"] and (
+            (r["status"] == "running" and now - r["last_activity"] <= STALE_RUNNING) or
+            (r["status"] == "waiting" and now - r["last_activity"] <= STALE_WAITING))}
+        for r in rows:
             age = now - r["last_activity"]
             status = r["status"]
             is_sub = r.get("kind") == "subagent"
@@ -189,11 +202,11 @@ class CodingAgentsMixin:
                 status = "stale"
             if status == "waiting" and age > STALE_WAITING:
                 status = "idle"
-            if status == "ended" or (is_sub and status == "done" and age > SUB_DONE_SHOW) or \
+            if (status == "ended" and r["id"] not in working_parents) or (is_sub and status == "done" and age > SUB_DONE_SHOW) or \
                     (is_sub and status in ("stale", "idle") and age > SUB_DONE_SHOW):
                 hidden.add(r["id"])
                 continue
-            if not is_sub and status in ("idle", "stale") and (age > SHOW_IDLE or not include_idle):
+            if not is_sub and status in ("idle", "stale") and r["id"] not in working_parents and (age > SHOW_IDLE or not include_idle):
                 hidden.add(r["id"])
                 continue
             detail = json.loads(r["detail_json"] or "[]")
@@ -604,7 +617,7 @@ class CodingAgentsMixin:
 # ---------------------------------------------------------------------- module level
 def live_coding_count(store):
     now = time.time()
-    r = store.one("SELECT COUNT(*) AS n FROM coding_agents WHERE kind<>'subagent' AND ((status='running' AND last_activity>?) OR (status='waiting' AND last_activity>?))",
+    r = store.one("SELECT COUNT(*) AS n FROM coding_agents WHERE ((status='running' AND last_activity>?) OR (status='waiting' AND last_activity>?))",
                   (now - STALE_RUNNING, now - STALE_WAITING)) or {}
     return int(r.get("n") or 0)
 
@@ -633,9 +646,13 @@ def island_state(handler):
         runs.append({"id": r["id"], "title": (handler.phone_agent_name() + " · " if r.get("scope") == "personal" else "") + (r["title"] or "Agent"), "kind": "personal" if r.get("scope") == "personal" else r["kind"],
                      "detail": (r.get("progress") or "")[:120], "queued": r["status"] == "queued"})
     for r in handler.coding_agent_records():
-        if r["live"] and r["kind"] != "subagent":    # subagents are counted on their run, never listed as runs
-            runs.append({"id": r["id"], "title": r["title"], "kind": "coding", "detail": (r.get("progress") or "")[:120], "queued": False,
-                         "subagents": r.get("subagent_live", 0), "waiting": "Needs you" in (r.get("progress") or "")[:10]})
+        # Subagents are counted on their run, never listed as runs. A run whose own turn has ended stays on
+        # the Island while any of its subagents is still working.
+        subs = int(r.get("subagent_live") or 0)
+        if r["kind"] != "subagent" and (r["live"] or subs):
+            detail = (r.get("progress") or "")[:120] if r["live"] else ("%d subagent%s working" % (subs, "" if subs == 1 else "s"))
+            runs.append({"id": r["id"], "title": r["title"], "kind": "coding", "detail": detail, "queued": False,
+                         "subagents": subs, "waiting": r["live"] and "Needs you" in (r.get("progress") or "")[:10]})
     return runs
 
 
