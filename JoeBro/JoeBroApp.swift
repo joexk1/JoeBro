@@ -113,7 +113,6 @@ struct JoeBroApp: App {
             RootView()
                 .environment(store)
                 .environment(GlassSettings.shared)
-                .frame(minWidth: 880, minHeight: 560)
                 .task { await store.bootstrap() }
         }
         .windowStyle(.hiddenTitleBar)
@@ -153,6 +152,10 @@ struct JoeBroApp: App {
 /// Locks the window to the screen's aspect ratio + a sane minimum size,
 /// so every layout scales proportionally instead of spilling.
 struct WindowConfigurator: NSViewRepresentable {
+    /// The narrowest the content may get. Raised here so that, at the locked
+    /// aspect ratio, the window is never shorter than the layout needs.
+    @Binding var minWidth: CGFloat
+
     func makeNSView(context: Context) -> NSView {
         let v = NSView()
         DispatchQueue.main.async {
@@ -160,6 +163,14 @@ struct WindowConfigurator: NSViewRepresentable {
             let s = screen.visibleFrame.size
             window.aspectRatio = s
             window.minSize = NSSize(width: s.width * 0.55, height: s.height * 0.55)
+            // SwiftUI enforces the content's minimum width, but with the aspect
+            // ratio locked the height just follows the width: at 880 wide on a
+            // 16:9 screen the window is ~480 tall, shorter than the 560 the
+            // layout needs, and the content clips. Widen the minimum until the
+            // matching height fits.
+            let chrome = window.frame.height - window.contentLayoutRect.height
+            let widthForHeight = ((RootView.minContent.height + chrome) * s.width / s.height).rounded(.up)
+            minWidth = max(RootView.minContent.width, widthForHeight)
         }
         return v
     }
@@ -167,13 +178,18 @@ struct WindowConfigurator: NSViewRepresentable {
 }
 
 struct RootView: View {
+    /// Smallest size the main layout fits in without clipping.
+    static let minContent = CGSize(width: 880, height: 560)
+    @State private var minWidth = RootView.minContent.width
+
     var body: some View {
         ZStack {
-            WindowConfigurator().frame(width: 0, height: 0)
+            WindowConfigurator(minWidth: $minWidth).frame(width: 0, height: 0)
             WallpaperBackground()
             MainSplitView()
         }
         .ignoresSafeArea()
+        .frame(minWidth: minWidth, minHeight: RootView.minContent.height)
         .preferredColorScheme(nil)
     }
 }
