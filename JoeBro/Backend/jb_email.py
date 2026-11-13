@@ -284,6 +284,45 @@ class EmailMixin:
             return
         self._imap_checkin(key, conn)
 
+    EMAIL_CHECK_TIMEOUT = 15
+
+    @staticmethod
+    def email_infer_ssl(body):
+        """Fill in the TLS mode a manual setup didn't state, from the port: 143
+        (IMAP) and 587/25 (SMTP) start plain and upgrade with STARTTLS, everything
+        else is implicit TLS. Defaulting both to implicit TLS made iCloud and
+        Outlook, which submit on 587, fail at send time."""
+        body.setdefault("imap_ssl", int(body.get("imap_port") or 993) != 143)
+        body.setdefault("smtp_ssl", int(body.get("smtp_port") or 465) not in (587, 25))
+        return body
+
+    def email_login_error(self, account):
+        """Try the IMAP login a new account will use. None when it works, else a
+        sentence the setup form can show. Without this a mistyped password saved
+        as connected and only surfaced later, as an error in the inbox."""
+        host, port = account.get("imap_host") or "", int(account.get("imap_port") or 993)
+        if not host:
+            return "Enter your email address, or set the mail servers under Advanced."
+        try:
+            cls = imaplib.IMAP4_SSL if int(account.get("imap_ssl") or 0) else imaplib.IMAP4
+            conn = cls(host, port, timeout=self.EMAIL_CHECK_TIMEOUT)
+        except (OSError, imaplib.IMAP4.error) as exc:
+            return ("Couldn't reach the mail server %s on port %d (%s). If your address is on your own "
+                    "domain, set the servers under Advanced." % (host, port, exc))
+        try:
+            conn.login(account.get("imap_user") or account.get("email") or "", account.get("imap_password") or "")
+        except imaplib.IMAP4.error:
+            return ("The mail server rejected that address or password. Gmail, iCloud, Yahoo and Fastmail "
+                    "need an app-specific password, not your normal one.")
+        except OSError as exc:
+            return "The connection to %s dropped while signing in (%s)." % (host, exc)
+        finally:
+            try:
+                conn.logout()
+            except Exception:
+                pass
+        return None
+
     def imap_connect(self, account):
         # Bridge accounts (a local IMAP/SMTP bridge) need the local bridge running;
         # ensure it for every IMAP op (list, mark-read, archive, …), not just connect.

@@ -648,6 +648,7 @@ struct EmailConnectionSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var email = ""
     @State private var password = ""
+    @State private var showAdvanced = false
     @State private var imapHost = ""
     @State private var imapPort = "993"
     @State private var smtpHost = ""
@@ -655,10 +656,32 @@ struct EmailConnectionSheet: View {
     @State private var saving = false
     @State private var error: String?
 
+    private var address: String { email.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// Servers typed under Advanced win; otherwise the backend picks them from
+    /// the address.
+    private var usesCustomServers: Bool { showAdvanced && !(imapHost.isEmpty && smtpHost.isEmpty) }
+
     private var canSave: Bool {
-        let address = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !address.isEmpty && !password.isEmpty && !imapHost.isEmpty && Int(imapPort) != nil
-            && !smtpHost.isEmpty && Int(smtpPort) != nil
+        guard address.contains("@"), !password.isEmpty else { return false }
+        guard usesCustomServers else { return true }
+        return !imapHost.isEmpty && Int(imapPort) != nil && !smtpHost.isEmpty && Int(smtpPort) != nil
+    }
+
+    /// Where to create an app password, for the providers that require one.
+    private var appPasswordHelp: (provider: String, url: URL)? {
+        let domain = address.split(separator: "@").last.map { $0.lowercased() } ?? ""
+        let known: [String: (String, String)] = [
+            "gmail.com": ("Gmail", "https://myaccount.google.com/apppasswords"),
+            "googlemail.com": ("Gmail", "https://myaccount.google.com/apppasswords"),
+            "icloud.com": ("iCloud", "https://support.apple.com/102654"),
+            "me.com": ("iCloud", "https://support.apple.com/102654"),
+            "mac.com": ("iCloud", "https://support.apple.com/102654"),
+            "yahoo.com": ("Yahoo", "https://help.yahoo.com/kb/SLN15241.html"),
+            "fastmail.com": ("Fastmail", "https://www.fastmail.help/hc/en-us/articles/360058752854"),
+        ]
+        guard let (provider, link) = known[domain], let url = URL(string: link) else { return nil }
+        return (provider, url)
     }
 
     var body: some View {
@@ -667,22 +690,31 @@ struct EmailConnectionSheet: View {
                               onCancel: { dismiss() }, onSave: save) {
             TextField("Email address", text: $email)
                 .textContentType(.emailAddress)
-            SecureField("Password (or app-specific password)", text: $password)
-            Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 8) {
-                GridRow {
-                    TextField("IMAP host", text: $imapHost)
-                        .font(.system(size: 12, design: .monospaced))
-                    TextField("Port", text: $imapPort)
-                        .frame(width: 70)
-                }
-                GridRow {
-                    TextField("SMTP host", text: $smtpHost)
-                        .font(.system(size: 12, design: .monospaced))
-                    TextField("Port", text: $smtpPort)
-                        .frame(width: 70)
-                }
+            SecureField("App password", text: $password)
+            if let help = appPasswordHelp {
+                Link("How to create a \(help.provider) app password", destination: help.url)
+                    .font(.caption)
             }
-            Text("Uses SSL by default (IMAP 993 / SMTP 465). For Gmail/iCloud, create an app-specific password. Mail stays local on this Mac.")
+            DisclosureGroup("Advanced: mail servers", isExpanded: $showAdvanced) {
+                Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 8) {
+                    GridRow {
+                        TextField("IMAP host", text: $imapHost)
+                            .font(.system(size: 12, design: .monospaced))
+                        TextField("Port", text: $imapPort)
+                            .frame(width: 70)
+                    }
+                    GridRow {
+                        TextField("SMTP host", text: $smtpHost)
+                            .font(.system(size: 12, design: .monospaced))
+                        TextField("Port", text: $smtpPort)
+                            .frame(width: 70)
+                    }
+                }
+                Text("Only needed if your address is on your own domain. Leave empty for Gmail, iCloud, Outlook, Yahoo and Fastmail. SMTP port 465 uses SSL; 587 uses STARTTLS.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text("Most providers need an app-specific password, not your normal one. JoeBro signs in once to check it before saving. Mail stays local on this Mac.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if let error {
@@ -697,14 +729,18 @@ struct EmailConnectionSheet: View {
         Task {
             defer { saving = false }
             do {
-                try await APIClient.shared.connectIMAP(
-                    email: email,
-                    imapHost: imapHost,
-                    imapPort: Int(imapPort) ?? 993,
-                    imapPassword: password,
-                    smtpHost: smtpHost,
-                    smtpPort: Int(smtpPort) ?? 465,
-                    smtpPassword: password)
+                if usesCustomServers {
+                    try await APIClient.shared.connectIMAP(
+                        email: address,
+                        imapHost: imapHost,
+                        imapPort: Int(imapPort) ?? 993,
+                        imapPassword: password,
+                        smtpHost: smtpHost,
+                        smtpPort: Int(smtpPort) ?? 465,
+                        smtpPassword: password)
+                } else {
+                    try await APIClient.shared.connectEmail(email: address, password: password)
+                }
                 await onSaved()
                 dismiss()
             } catch {

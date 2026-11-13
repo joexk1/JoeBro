@@ -182,6 +182,12 @@ final class APIClient {
         try await getJSON("api/calendar/status")
     }
 
+    /// Address and password only: the backend works out the servers for known
+    /// providers and signs in once before saving.
+    func connectEmail(email: String, password: String) async throws {
+        try await sendJSON("api/email/connect", body: ["email": email, "password": password])
+    }
+
     func connectIMAP(email: String, imapHost: String, imapPort: Int, imapPassword: String,
                      smtpHost: String, smtpPort: Int, smtpPassword: String) async throws {
         try await sendJSON("api/email/connect-imap", body: [
