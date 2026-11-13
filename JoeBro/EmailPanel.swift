@@ -119,6 +119,10 @@ struct EmailPanel: View {
                 await store.refreshEmailUnread()
             }
         } catch {
+            // A cancelled load is not a failure: the tab was switched away or the
+            // folder changed mid-request, and the next load replaces this one.
+            // Reporting it showed "Couldn't load — cancelled" over a working mailbox.
+            if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled { return }
             if case .loaded = emails {} else { emails = .failed(error.localizedDescription) }
         }
     }
