@@ -1,7 +1,7 @@
 """Mailbox names reach the IMAP server as quoted strings, so folders with a
 space in the name can be opened. The server is a local fake; nothing touches
 the network."""
-import imaplib, socketserver, threading, unittest
+import imaplib, socketserver, sys, threading, unittest
 
 from jb_email import EmailMixin
 
@@ -54,8 +54,9 @@ class MailboxNameTests(unittest.TestCase):
         conn = imaplib.IMAP4("127.0.0.1", self.port)
         try:
             conn.login("me@example.com", "pw")
-            with self.assertRaisesRegex(imaplib.IMAP4.error, "Could not parse"):   # the bare name, as before
-                conn.select("[Gmail]/Sent Mail", readonly=True)
+            if sys.version_info < (3, 14):   # 3.14's imaplib quotes names itself
+                with self.assertRaisesRegex(imaplib.IMAP4.error, "Could not parse"):   # the bare name, as before
+                    conn.select("[Gmail]/Sent Mail", readonly=True)
             status, _ = conn.select(EmailMixin.imap_mailbox("[Gmail]/Sent Mail"), readonly=True)
             self.assertEqual(status, "OK")
         finally:
