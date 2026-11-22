@@ -8,7 +8,7 @@
             <sparkle:version>9</sparkle:version>
             <sparkle:shortVersionString>1.6.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.6.0/JoeBro-1.6.0.dmg" length="9703837" type="application/octet-stream" sparkle:edSignature="LcplgtVAXJsQETKOcmKs2gw9HZcZ2NW22YKqK3lSE2XCJ3OsmPXLgmAMO9d8LwZM4RxzN3vkZOcy6CDDW32FAQ=="/>
+            <enclosure url="https://github.com/joexk1/joebro/releases/download/v1.6.0/JoeBro-1.6.0.dmg" length="9726796" type="application/octet-stream" sparkle:edSignature="7K1NIRYTjtfKAi91Oe40YRZvOAo52l/egrzugn6S9EaLK9iFm2daeYHCGhJs87huciom7XzXDY9f1FJXm35IAg=="/>
         </item>
         <item>
             <title>1.5.0</title>
