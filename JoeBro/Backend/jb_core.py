@@ -1854,13 +1854,12 @@ class Store:
             db.execute("update skills set when_to_use=? where name=? and (when_to_use is null or when_to_use='')",
                        (when_to_use, name))
         memory_audit_prompt = (
-            "Reflect over my long-term memory with manage_memory. 1) action: list — read every entry "
-            "(id, kind, topic, text, use_count, last_used, pinned). 2) Merge near-duplicates that share a "
-            "topic: keep the best one (action: edit with the combined text), delete the rest. 3) Rewrite any "
-            "entry that is vague or bloated so it reads as ONE self-contained fact (action: edit). 4) Delete "
-            "experience entries that newer entries supersede, and any entry with use_count 0 that is over a "
-            "month old. NEVER delete pinned entries. 5) If a topic page has more than ~8 entries, consolidate "
-            "it down to the essentials. Then briefly report what you merged, rewrote and removed.")
+            "Reflect over my long-term memory with manage_memory. 1) action: list, read every entry. "
+            "2) Merge near-duplicates on a topic: edit the best with the combined text, delete the rest. "
+            "3) Rewrite vague or bloated entries as ONE self-contained fact (edit). "
+            "4) Delete experience entries that newer ones supersede, and entries with use_count 0 older than a month. "
+            "NEVER delete pinned entries. 5) Consolidate any topic with more than ~8 entries to the essentials. "
+            "Then report in one line what you merged, rewrote and removed.")
         # One-time upgrade for existing installs (these run regardless of the
         # seed flag): move a still-daily "Skill audit" to weekly, and insert the
         # "Memory audit" task if it isn't already present.

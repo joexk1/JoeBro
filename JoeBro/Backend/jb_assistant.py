@@ -267,23 +267,17 @@ class AssistantMixin:
             topics = ", ".join(self.memory_topics()) or "(none yet)"
             out = self._complete(
                 endpoint_id, model,
-                "You extract durable learnings from one chat turn. Respond with ONLY JSON: "
-                '{"memories": [up to 3 items, each {"kind": "world"|"experience"|"opinion", '
-                '"topic": <short-kebab-page-name>, "text": <ONE self-contained fact under 200 chars>, '
-                '"entities": [named people/places/projects/tools]}], '
-                '"skill": {"name": <short imperative title>, '
-                '"description": <one-line summary of what the skill does>, '
-                '"when_to_use": <the trigger: what kind of request should invoke this>, '
-                '"content": <a reusable procedure as 3-6 concise numbered markdown steps>} or null}. '
-                "world = a lasting fact about the user or their world; experience = what happened or the "
-                "current state of an ongoing project; opinion = a judgement or preference the user expressed. "
-                f"File each fact on an existing topic page when one fits — pages so far: {topics}. "
-                "Never store one-off task chatter, secrets, or things the assistant (not the user) said; "
-                "an empty memories list is the normal case. "
-                "Skill = a repeatable workflow the user will likely want again, captured well enough to "
-                "follow later WITHOUT this conversation: a real description, a clear trigger, and concrete "
-                "steps — never a single vague sentence. If you can't write all three fields properly, return null. "
-                "Use null when nothing qualifies. Keep each field tight but complete.",
+                "Extract durable learnings from one chat turn. Reply with ONLY JSON: "
+                '{"memories": [up to 3 of {"kind": "world"|"experience"|"opinion", "topic": <kebab-case page name>, '
+                '"text": <ONE self-contained fact, under 200 chars>, "entities": [names]}], '
+                '"skill": {"name": <imperative title>, "description": <one line>, "when_to_use": <the trigger>, '
+                '"content": <3-6 numbered steps>} or null}. '
+                "world = a lasting fact about the user's world; experience = what happened or the state of an ongoing project; "
+                "opinion = a preference or judgement the user expressed. "
+                f"Reuse an existing topic page when one fits: {topics}. "
+                "Never store one-off chatter, secrets, or what the assistant said; an empty memories list is normal. "
+                "skill = a repeatable workflow written so it can be followed WITHOUT this conversation (real description, trigger, "
+                "concrete steps); null if nothing qualifies or any field would be vague.",
                 f"User: {user_msg}\n\nAssistant: {(reply or '')[:1500]}", max_tokens=900)
             if not out:
                 return
