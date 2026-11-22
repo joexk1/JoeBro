@@ -39,11 +39,11 @@ struct BrainPanel: View {
         PanelChrome(title: "Brain", icon: "brain.head.profile") {
             brainSourcePicker
             Button {
-                withAnimation(.spring(duration: 0.25)) { mapMode.toggle() }
+                withAnimation(JB.snap) { mapMode.toggle() }
             } label: {
                 Image(systemName: mapMode ? "list.bullet" : "map")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.jbIcon)
             .help(mapMode ? "List view" : "Map view")
             PanelSearchField(text: $search, open: $searchOpen, placeholder: "Search memories")
             Button {
@@ -51,21 +51,21 @@ struct BrainPanel: View {
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.jbIcon)
         } content: {
             VStack(spacing: 10) {
-                QuickAddBar(placeholder: "Remember something new…", actionIcon: "plus.circle.fill") { add($0) }
+                QuickAddBar(placeholder: "Remember something", actionIcon: "plus.circle") { add($0) }
 
                 ZStack {
                     switch memories {
                     case .loading:
-                        ProgressView()
+                        PanelLoading()
                     case .failed(let e):
-                        ContentUnavailableView("Couldn't load memories", systemImage: "brain", description: Text(e))
+                        PanelFailure(title: "Couldn't load memories", detail: e)
                     case .loaded(let list):
                         let shown = filtered(list)
                         if shown.isEmpty {
-                            ContentUnavailableView("No memories", systemImage: "brain")
+                            PanelEmpty(art: .sleep, text: "No memories")
                         } else if mapMode {
                             MemoryMapView(memories: shown,
                                           onEdit: { editing = $0 },
@@ -87,14 +87,15 @@ struct BrainPanel: View {
                                         }
                                     }
                                     .padding(12)
+                                    .animation(JB.smooth, value: shown.map(\.id))
                                 }
                             }
-                            .animation(.spring(duration: 0.25), value: selection.isEmpty)
+                            .animation(JB.snap, value: selection.isEmpty)
                         }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .joeGlassRect(16)
+                .jbSurface(.panel, radius: JB.rPanel)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
@@ -131,26 +132,37 @@ struct BrainPanel: View {
         SkillRowShell(id: m.id, checked: selection.contains(m.id),
                       selecting: !selection.isEmpty,
                       onToggleCheck: { toggleSelection(m.id, in: &selection) }) {
-            Image(systemName: m.pinned == true ? "pin.fill" : "sparkle")
-                .font(.jb(11))
-                .foregroundStyle(m.pinned == true ? JB.accent : .secondary)
-                .padding(.top, 2)
+            Group {
+                if m.pinned == true { Image(systemName: "pin.fill").font(.jb(11)) }
+                else { JBIcon(.memory, size: 13) }
+            }
+            .foregroundStyle(m.pinned == true ? JB.accent : JB.ink3)
+            .frame(width: 14)
+            .padding(.top, 2)
             VStack(alignment: .leading, spacing: 4) {
                 Text(m.displayText)
                     .font(.jb(13))
                     .textSelection(.enabled)
                 HStack(spacing: 8) {
-                    Text(m.effectiveCategory)
-                        .font(.jb(10, .medium))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(.quaternary.opacity(0.6), in: Capsule())
+                    JBChip(text: m.effectiveCategory)
                     Text(relativeDate(m.createdAt))
-                        .font(.jb(10))
-                        .foregroundStyle(.tertiary)
+                        .font(.jbMono(10.5))
+                        .foregroundStyle(JB.ink3)
                 }
             }
             Spacer()
+        }
+        .jbHoverActions {
+            Button { editing = m } label: { Image(systemName: "pencil") }
+                .buttonStyle(.jbIcon).help("Edit")
+            Button { Task { await APIClient.shared.pinMemory(id: m.id); await load() } } label: {
+                Image(systemName: m.pinned == true ? "pin.slash" : "pin")
+            }
+            .buttonStyle(.jbIcon).help(m.pinned == true ? "Unpin" : "Pin")
+            Button { Task { try? await APIClient.shared.deleteMemory(id: m.id); await load() } } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.jbIcon).help("Delete")
         }
         .contentShape(Rectangle())
         .contextMenu {
@@ -332,7 +344,7 @@ private struct MemoryMapView: View {
                 ForEach(graph.nodes) { node in
                     Text(node.label)
                         .font(.jb(9))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                         .opacity(zoom > 0.55 || hoveredID == node.id ? 1 : 0)
                         .position(labelPoint(node, center: center))
                         .allowsHitTesting(false)
@@ -370,13 +382,13 @@ private struct MemoryMapView: View {
             let strength = (200 - rest) / 140   // 0 weak … 1 strong
             ctx.stroke(path,
                        with: .color(hot ? JB.accent
-                                        : Color.secondary.opacity(0.2 + 0.25 * strength)),
+                                        : JB.ink2.opacity(0.2 + 0.25 * strength)),
                        lineWidth: hot ? 1.6 : 0.7 + strength)
         }
     }
 
     private func drawNodes(_ ctx: GraphicsContext, center: CGPoint) {
-        let base = colorScheme == .dark ? Color.white.opacity(0.14) : Color.black.opacity(0.08)
+        let base = JB.ink.opacity(0.08)
         for node in graph.nodes {
             let m = node.memory
             let hovered = hoveredID == m.id
@@ -387,7 +399,7 @@ private struct MemoryMapView: View {
             ctx.fill(circle, with: .color(base))
             ctx.fill(circle, with: .color(JB.accent.opacity(pinned ? 0.4 : hovered ? 0.25 : 0.1)))
             ctx.stroke(circle,
-                       with: .color(hovered ? JB.accent : Color.white.opacity(0.35)),
+                       with: .color(hovered ? JB.accent : JB.ink3),
                        lineWidth: hovered ? 1.6 : 0.8)
         }
     }
@@ -484,10 +496,10 @@ private struct MemoryMapView: View {
             }
             .help("Zoom in")
         }
-        .buttonStyle(.borderless)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .joeGlassCapsule()
+        .buttonStyle(.jbIcon)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .jbSurface(.chrome, radius: nil)
         .padding(10)
     }
 
@@ -499,19 +511,16 @@ private struct MemoryMapView: View {
                     .font(.jb(12))
                     .lineLimit(6)
                 HStack(spacing: 8) {
-                    Text(m.effectiveCategory)
-                        .font(.jb(10, .medium))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(.quaternary.opacity(0.6), in: Capsule())
+                    JBChip(text: m.effectiveCategory)
                     Text(relativeDate(m.createdAt))
-                        .font(.jb(10))
-                        .foregroundStyle(.tertiary)
+                        .font(.jbMono(10.5))
+                        .foregroundStyle(JB.ink3)
                 }
             }
             .padding(10)
             .frame(maxWidth: 260, alignment: .leading)
-            .joeGlassRect(10)
+            .jbSurface(.raised, radius: JB.rCard)
+            .jbFloating()
             .padding(10)
             .allowsHitTesting(false)
             .transition(.opacity)
@@ -532,23 +541,23 @@ struct NotesPanel: View {
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.jbIcon)
             Button {
                 showNew = true
             } label: {
                 Image(systemName: "plus")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.jbIcon)
             .help("New note")
         } content: {
             Group {
                 switch notes {
                 case .loading:
-                    ProgressView().frame(maxHeight: .infinity)
+                    PanelLoading()
                 case .failed(let e):
-                    ContentUnavailableView("Couldn't load notes", systemImage: "note.text", description: Text(e))
+                    PanelFailure(title: "Couldn't load notes", detail: e)
                 case .loaded(let list) where list.isEmpty:
-                    ContentUnavailableView("No notes yet", systemImage: "note.text")
+                    PanelEmpty(art: .files, text: "No notes yet")
                 case .loaded(let list):
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 10)], spacing: 10) {
@@ -557,10 +566,11 @@ struct NotesPanel: View {
                             }
                         }
                         .padding(12)
+                        .animation(JB.smooth, value: list.map(\.id))
                     }
                 }
             }
-            .joeGlassRect(16)
+            .jbSurface(.panel, radius: JB.rPanel)
         }
         .task { await load() }
         .sheet(isPresented: $showNew) {
@@ -578,7 +588,7 @@ struct NotesPanel: View {
             HStack {
                 if note.pinned == true {
                     Image(systemName: "pin.fill")
-                        .font(.jb(9))
+                        .font(.jb(10))
                         .foregroundStyle(JB.accent)
                 }
                 Text(note.title?.isEmpty == false ? note.title! : "Untitled")
@@ -597,31 +607,40 @@ struct NotesPanel: View {
                         HStack(spacing: 6) {
                             Image(systemName: item.done == true ? "checkmark.circle.fill" : "circle")
                                 .font(.jb(12))
-                                .foregroundStyle(item.done == true ? JB.accent : .secondary)
+                                .foregroundStyle(item.done == true ? JB.accent : JB.ink3)
                             Text(item.text ?? "")
                                 .font(.jb(12))
                                 .strikethrough(item.done == true)
-                                .foregroundStyle(item.done == true ? .secondary : .primary)
+                                .foregroundStyle(item.done == true ? JB.ink3 : JB.ink)
                                 .lineLimit(1)
                             Spacer()
                         }
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(JBPressStyle())
                 }
             } else if let content = note.content, !content.isEmpty {
                 Text(content)
                     .font(.jb(12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JB.ink2)
                     .lineLimit(6)
             }
             if let due = note.dueDate {
                 Label(relativeDate(due), systemImage: "alarm")
-                    .font(.jb(10))
-                    .foregroundStyle(.tertiary)
+                    .font(.jbMono(10.5))
+                    .foregroundStyle(JB.ink3)
             }
         }
         .panelCard()
-        .hoverBounce()
+        .jbHoverActions {
+            Button { Task { await APIClient.shared.pinNote(id: note.id); await load() } } label: {
+                Image(systemName: note.pinned == true ? "pin.slash" : "pin")
+            }
+            .buttonStyle(.jbIcon).help(note.pinned == true ? "Unpin" : "Pin")
+            Button { Task { await APIClient.shared.archiveNote(id: note.id); await load() } } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.jbIcon).help("Delete")
+        }
         .contextMenu {
             Button(note.pinned == true ? "Unpin" : "Pin") {
                 Task { await APIClient.shared.pinNote(id: note.id); await load() }
@@ -644,9 +663,9 @@ struct NewNoteSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("New Note").font(.jb(14, .semibold))
+                Text("New note").font(.jb(14, .semibold))
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).buttonStyle(.jbGhost)
                 Button("Add") {
                     Task {
                         try? await APIClient.shared.createNote(
@@ -658,14 +677,13 @@ struct NewNoteSheet: View {
                     }
                 }
                 .buttonStyle(.jbPrimary)
-                .tint(JB.accent)
                 .disabled(title.isEmpty && content.isEmpty && items.allSatisfy(\.isEmpty))
             }
             .padding(14)
-            Divider()
+            Rectangle().fill(JB.line).frame(height: 1)
             Form {
                 TextField("Title", text: $title)
-                Toggle("Checklist", isOn: $checklist)
+                Toggle("Checklist", isOn: $checklist).jbToggle()
                 if checklist {
                     ForEach(items.indices, id: \.self) { i in
                         TextField("Item \(i + 1)", text: $items[i])
@@ -702,16 +720,15 @@ struct EditMemorySheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Edit Memory").font(.jb(14, .semibold))
+                Text("Edit memory").font(.jb(14, .semibold))
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).buttonStyle(.jbGhost)
                 Button("Save") { save() }
                     .buttonStyle(.jbPrimary)
-                    .tint(JB.accent)
                     .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             .padding(14)
-            Divider()
+            Rectangle().fill(JB.line).frame(height: 1)
             Form {
                 TextField("Memory", text: $text, axis: .vertical)
                     .lineLimit(3...8)
@@ -719,7 +736,7 @@ struct EditMemorySheet: View {
                     ForEach(categories, id: \.self) { Text($0.capitalized).tag($0) }
                 }
                 if let error {
-                    Text(error).font(.jbCaption).foregroundStyle(.red)
+                    Text(error).font(.jbCaption).foregroundStyle(JB.danger)
                 }
             }
             .formStyle(.grouped)

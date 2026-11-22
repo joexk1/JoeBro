@@ -18,7 +18,7 @@ struct ResearchPanel: View {
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.jbIcon)
         } content: {
             VStack(spacing: 10) {
                 launcherBar
@@ -26,23 +26,24 @@ struct ResearchPanel: View {
                 if let run = store.researchRun {
                     ResearchProgressView(run: run) { store.cancelResearch() }
                         .id(run.id)
-                        .joeGlassRect(16)
-                        .frame(height: 190)
+                        .frame(height: 96)
+                        .jbSurface(.panel, radius: JB.rPanel)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
                 if hasReports {
                     HStack(spacing: 12) {
                         listColumn
                             .frame(width: 300)
-                            .joeGlassRect(16)
+                            .jbSurface(.panel, radius: JB.rPanel)
                         readerColumn
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .joeGlassRect(16)
+                            .jbSurface(.panel, radius: JB.rPanel)
                     }
                 } else {
                     listColumn
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .joeGlassRect(16)
+                        .jbSurface(.panel, radius: JB.rPanel)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -64,10 +65,9 @@ struct ResearchPanel: View {
 
     private var launcherBar: some View {
         HStack(spacing: 8) {
-            Image(systemName: "sparkle.magnifyingglass")
-                .font(.jb(13))
+            JBIcon(.research, size: 15)
                 .foregroundStyle(JB.accent)
-            TextField("Research anything...", text: $query)
+            TextField("Research anything", text: $query)
                 .textFieldStyle(.plain)
                 .font(.jb(13))
                 .onSubmit(start)
@@ -82,18 +82,13 @@ struct ResearchPanel: View {
             }
             .labelsHidden()
             .frame(width: 190)
-            Button(action: start) {
-                Label("Research", systemImage: "bolt.horizontal")
-                    .font(.jb(12, .semibold))
-            }
-            .buttonStyle(.jbPrimary)
-            .tint(JB.accent)
-            .controlSize(.small)
+            Button("Research", action: start)
+            .buttonStyle(JBButtonStyle(kind: .primary, compact: true))
             .disabled(query.trimmingCharacters(in: .whitespaces).isEmpty || store.researchRun != nil)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .joeGlassCapsuleInteractive()
+        .jbSurface(.raised, radius: JB.rCard)
     }
 
     private func start() {
@@ -128,12 +123,11 @@ struct ResearchPanel: View {
         Group {
             switch items {
             case .loading:
-                ProgressView().frame(maxHeight: .infinity)
+                PanelLoading()
             case .failed(let e):
-                ContentUnavailableView("Couldn't load reports", systemImage: "antenna.radiowaves.left.and.right.slash", description: Text(e))
+                PanelFailure(title: "Couldn't load reports", detail: e)
             case .loaded(let list) where list.isEmpty:
-                ContentUnavailableView("No research yet", systemImage: "doc.text.magnifyingglass",
-                                       description: Text("Ask the agent to research something."))
+                PanelEmpty(art: .search, text: "No research yet")
             case .loaded(let list):
                 VStack(spacing: 0) {
                     if !selection.isEmpty {
@@ -154,9 +148,10 @@ struct ResearchPanel: View {
                             }
                         }
                         .padding(8)
+                        .animation(JB.smooth, value: list.map(\.id))
                     }
                 }
-                .animation(.spring(duration: 0.25), value: selection.isEmpty)
+                .animation(JB.snap, value: selection.isEmpty)
             }
         }
     }
@@ -170,24 +165,27 @@ struct ResearchPanel: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.query)
                     .font(.jb(12.5, selected?.id == item.id ? .semibold : .regular))
+                    .foregroundStyle(JB.ink)
                     .lineLimit(2)
                 HStack(spacing: 8) {
                     if let cat = item.category, !cat.isEmpty {
-                        Text(cat)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background(.quaternary.opacity(0.6), in: Capsule())
+                        JBChip(text: cat)
                     }
                     if let n = item.sourceCount { Text("\(n) sources") }
                     if let done = item.completedAt, done > 0 {
                         Text(Date(timeIntervalSince1970: done).formatted(date: .abbreviated, time: .omitted))
                     }
                 }
-                .font(.jb(10))
-                .foregroundStyle(.tertiary)
+                .font(.jbMono(10.5))
+                .foregroundStyle(JB.ink3)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 0)
+        }
+        .overlay(alignment: .leading) {
+            if selected?.id == item.id {
+                Capsule().fill(JB.accent).frame(width: 2).padding(.vertical, 8).offset(x: -1)
+            }
         }
         .contentShape(Rectangle())
         .onTapGesture { selection.isEmpty ? open(item) : toggleSelection(item.id, in: &selection) }
@@ -228,10 +226,7 @@ struct ResearchPanel: View {
     /// Copy the entire report to the clipboard.
     private func copyReport(_ item: ResearchItem) async {
         let text = await reportMarkdown(item)
-        await MainActor.run {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
-        }
+        await MainActor.run { JBPasteboard.copy(text) }
     }
 
     /// Save the full report as a .md named after the research query.
@@ -260,38 +255,46 @@ struct ResearchPanel: View {
 
     // (progress view lives below)
 
+    private func reportText(_ d: JSONValue, _ item: ResearchItem) -> String {
+        let r = d["report"]?.stringValue ?? d["summary"]?.stringValue ?? d["result"]?.stringValue ?? ""
+        return "# \(item.query)\n\n" + r
+    }
+
     @ViewBuilder
     private var readerColumn: some View {
         if let item = selected {
             if let detail {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(item.query)
-                            .font(.jb(.title3, .bold))
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(item.query)
+                                .font(.jb(20, .semibold))
+                                .tracking(-0.3)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            CopyCheckButton(text: reportText(detail, item))
+                        }
                         let report = detail["report"]?.stringValue
                             ?? detail["summary"]?.stringValue
                             ?? detail["result"]?.stringValue
                             ?? ""
                         if report.isEmpty {
-                            Text("This report has no readable summary.")
-                                .foregroundStyle(.secondary)
+                            Text("Empty report").font(.jbMono(12)).foregroundStyle(JB.ink3)
                         } else {
                             MarkdownText(text: report)
                         }
                         if let sources = detail["sources"]?.arrayValue, !sources.isEmpty {
-                            Divider().opacity(0.4)
-                            Text("Sources (\(sources.count))")
-                                .font(.jb(12, .semibold))
-                                .foregroundStyle(.secondary)
+                            Divider().overlay(JB.line)
+                            JBSectionHeader("Sources", count: sources.count)
                             ForEach(Array(sources.prefix(30).enumerated()), id: \.offset) { i, s in
                                 if let url = s["url"]?.stringValue {
                                     Link(destination: URL(string: url) ?? URL(string: "about:blank")!) {
                                         HStack(spacing: 6) {
                                             Text("\(i + 1).")
-                                                .font(.jb(10.5, .bold))
-                                                .foregroundStyle(.tertiary)
+                                                .font(.jbMono(10.5))
+                                                .foregroundStyle(JB.ink3)
                                             Text(s["title"]?.stringValue ?? url)
-                                                .font(.jb(11.5))
+                                                .font(.jb(12))
+                                                .foregroundStyle(JB.ink2)
                                                 .lineLimit(1)
                                         }
                                     }
@@ -304,98 +307,57 @@ struct ResearchPanel: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                PanelLoading()
             }
         } else {
-            ContentUnavailableView("Select a report", systemImage: "doc.text.magnifyingglass")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            PanelEmpty(art: .files, text: "Select a report")
         }
     }
 }
 
-// MARK: - Liquid-glass researching animation
+// MARK: - Running research
 
 struct ResearchProgressView: View {
     let run: ResearchRun
     let onFinished: () -> Void   // Cancel
 
-    private var phaseIcon: String {
-        switch run.phase {
-        case "planning": return "list.bullet.clipboard"
-        case "searching": return "magnifyingglass"
-        case "reading": return "book"
-        case "analyzing": return "brain.head.profile"
-        case "writing": return "square.and.pencil"
-        default: return "sparkles"
-        }
-    }
-
     var body: some View {
-        HStack(spacing: 24) {
-            // Pulsing concentric glass rings around the phase icon
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
-                let t = context.date.timeIntervalSinceReferenceDate
-                ZStack {
-                    ForEach(0..<3, id: \.self) { ring in
-                        let phase = (t * 0.7 + Double(ring) / 3).truncatingRemainder(dividingBy: 1)
-                        Circle()
-                            .stroke(JB.accent.opacity(0.55 * (1 - phase)), lineWidth: 2)
-                            .frame(width: 40 + 90 * phase, height: 40 + 90 * phase)
-                    }
-                    Circle()
-                        .fill(JB.panelFill)
-                        .frame(width: 56, height: 56)
-                        .overlay(Circle().strokeBorder(.white.opacity(0.25), lineWidth: 1))
-                    Image(systemName: phaseIcon)
-                        .font(.jb(19, .medium))
-                        .foregroundStyle(JB.accent)
-                        .contentTransition(.symbolEffect(.replace))
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                JBStatusDot(live: true, size: 6)
+                Text(run.phase).jbEyebrow()
+                if !run.message.isEmpty {
+                    Text(run.message)
+                        .font(.jbMono(11))
+                        .foregroundStyle(JB.ink3)
+                        .lineLimit(1)
                 }
+                Spacer()
+                JBSpinner()
             }
-            .frame(width: 140, height: 140)
-
-            VStack(alignment: .leading, spacing: 7) {
-                Text(run.query)
-                    .font(.jb(13.5, .semibold))
-                    .lineLimit(2)
-                HStack(spacing: 6) {
-                    Text(run.phase.capitalized)
-                        .font(.jb(12, .medium))
-                        .foregroundStyle(JB.accent)
-                    if !run.message.isEmpty {
-                        Text("· " + run.message)
-                            .font(.jb(11.5))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-                // Elapsed vs the historical average duration
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(.quaternary)
-                        Capsule()
-                            .fill(LinearGradient(colors: [JB.accent.opacity(0.7), JB.accent],
-                                                 startPoint: .leading, endPoint: .trailing))
+            Text(run.query)
+                .font(.jb(14, .semibold))
+                .lineLimit(2)
+            Capsule().fill(JB.line).frame(height: 3)
+                .overlay(alignment: .leading) {
+                    GeometryReader { geo in
+                        Capsule().fill(JB.live)
                             .frame(width: geo.size.width * progressFraction)
+                            .animation(JB.smooth, value: progressFraction)
                     }
                 }
-                .frame(height: 5)
-                HStack {
-                    Text(timeString(run.elapsed))
-                    if let avg = run.avgDuration {
-                        Text("· usually ~\(timeString(avg))")
-                    }
-                    Spacer()
-                    Button("Cancel") { onFinished() }
-                        .buttonStyle(.borderless)
-                        .font(.jb(11))
-                }
-                .font(.jb(10.5))
-                .foregroundStyle(.tertiary)
+            HStack {
+                Text(timeString(run.elapsed))
+                if let avg = run.avgDuration { Text("/ ~\(timeString(avg))") }
+                Spacer()
+                Button("Cancel") { onFinished() }
+                    .buttonStyle(JBButtonStyle(kind: .ghost, compact: true))
             }
-            .padding(.trailing, 16)
+            .font(.jbMono(10.5))
+            .foregroundStyle(JB.ink3)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 

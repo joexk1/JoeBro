@@ -17,13 +17,12 @@ struct EmailPanel: View {
 
     var body: some View {
         PanelChrome(title: "Email", icon: "envelope") {
-            Picker("", selection: $filter) {
-                Text("All").tag("all")
-                Text("Unread").tag("unread")
+            HStack(spacing: 2) {
+                ForEach([("all", "All"), ("unread", "Unread")], id: \.0) { key, label in
+                    Button(label) { withAnimation(JB.snap) { filter = key } }
+                        .buttonStyle(JBButtonStyle(kind: filter == key ? .secondary : .ghost, compact: true))
+                }
             }
-            .pickerStyle(.segmented)
-            .controlSize(.small)
-            .frame(width: 140)
 
             Menu {
                 ForEach(folders, id: \.self) { f in
@@ -31,7 +30,7 @@ struct EmailPanel: View {
                 }
             } label: {
                 Label(folder, systemImage: "folder")
-                    .font(.jb(12))
+                    .font(.jbMono(11.5))
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -41,7 +40,7 @@ struct EmailPanel: View {
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.jbIcon)
             .help("Refresh")
 
             Button {
@@ -49,22 +48,20 @@ struct EmailPanel: View {
             } label: {
                 Image(systemName: "square.and.pencil")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.jbIcon)
             .help("Compose")
         } content: {
             if needsEmailConnection {
-                ContentUnavailableView("Connect email in Settings", systemImage: "envelope.badge",
-                                       description: Text("Open Settings > General to connect an email account."))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .joeGlassRect(16)
+                PanelEmpty(art: .plug, text: "Connect email in Settings")
+                    .jbSurface(.panel, radius: JB.rPanel)
             } else {
                 HStack(spacing: 12) {
                     listColumn
-                        .frame(width: 320)
-                        .joeGlassRect(16)
+                        .frame(width: 340)
+                        .jbSurface(.panel, radius: JB.rPanel)
                     detailColumn
                         .frame(maxWidth: .infinity)
-                        .joeGlassRect(16)
+                        .jbSurface(.panel, radius: JB.rPanel)
                 }
             }
         }
@@ -145,42 +142,34 @@ struct EmailPanel: View {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .font(.jb(11))
-                    .foregroundStyle(.secondary)
-                TextField("Search emails", text: $search)
+                    .foregroundStyle(JB.ink3)
+                TextField("Search", text: $search)
                     .textFieldStyle(.plain)
-                    .font(.jb(12))
+                    .font(.jb(12.5))
                 if !search.isEmpty {
                     Button { search = "" } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.jb(11))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(JB.ink3)
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                .quaternary.opacity(0.35),
-                in: UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: 0,
-                                           bottomTrailingRadius: 0, topTrailingRadius: 16)
-            )
-            .overlay(alignment: .bottom) {
-                Divider().opacity(0.18)
-            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .overlay(alignment: .bottom) { Rectangle().fill(JB.line).frame(height: 1) }
             if !selection.isEmpty {
                 HStack(spacing: 10) {
                     Text("\(selection.count) selected")
-                        .font(.jb(11, .semibold))
+                        .font(.jbMono(11, .medium))
                     Button(allSelected ? "None" : "All") {
                         if case .loaded(let list) = emails {
-                            withAnimation(.spring(duration: 0.25)) {
+                            withAnimation(JB.snap) {
                                 selection = allSelected ? [] : Set(list.map(\.uid))
                             }
                         }
                     }
-                    .buttonStyle(.borderless)
-                    .font(.jb(11))
+                    .buttonStyle(JBButtonStyle(kind: .ghost, compact: true))
                     Spacer()
                     bulkButton("envelope.open", "Mark read") { uid, f in
                         await APIClient.shared.emailMarkRead(uid: uid, folder: f, read: true)
@@ -195,23 +184,39 @@ struct EmailPanel: View {
                         try? await APIClient.shared.emailDelete(uid: uid, folder: f)
                     }
                     Button {
-                        withAnimation(.spring(duration: 0.25)) { selection = [] }
+                        withAnimation(JB.snap) { selection = [] }
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.jb(12))
-                            .foregroundStyle(.secondary)
+                        Image(systemName: "xmark")
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.jbIcon)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(JB.accent.opacity(0.10))
+                .background(JB.accentSoft)
                 .transition(.move(edge: .top).combined(with: .opacity))
-                Divider().opacity(0.4)
+                Rectangle().fill(JB.line).frame(height: 1)
             }
             listBody
         }
-        .animation(.spring(duration: 0.25), value: selection.isEmpty)
+        .animation(JB.snap, value: selection.isEmpty)
+        .focusable()
+        .focusEffectDisabled()
+        .onKeyPress(.downArrow) { step(1); return .handled }
+        .onKeyPress(.upArrow) { step(-1); return .handled }
+        .onKeyPress(.return) {
+            if let m = selected { open(m) }
+            return .handled
+        }
+    }
+
+    /// Move the open message up or down the visible list.
+    private func step(_ delta: Int) {
+        guard case .loaded(let all) = emails else { return }
+        let list = searchFiltered(all)
+        guard !list.isEmpty else { return }
+        let cur = list.firstIndex { $0.uid == selected?.uid } ?? (delta > 0 ? -1 : list.count)
+        let next = min(max(cur + delta, 0), list.count - 1)
+        open(list[next])
     }
 
     private func bulkButton(_ icon: String, _ help: String, removes: Bool = false,
@@ -230,9 +235,8 @@ struct EmailPanel: View {
             }
         } label: {
             Image(systemName: icon)
-                .font(.jb(12))
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.jbIcon)
         .help(help)
     }
 
@@ -240,19 +244,18 @@ struct EmailPanel: View {
         Group {
             switch emails {
             case .loading:
-                ProgressView().frame(maxHeight: .infinity)
+                PanelLoading()
             case .failed(let e):
-                ContentUnavailableView("Couldn't load", systemImage: "wifi.exclamationmark", description: Text(e))
+                PanelFailure(title: "Couldn't load", detail: e)
             case .loaded(let list) where searchFiltered(list).isEmpty:
                 if emailStatus?.configured == true {
-                    ContentUnavailableView("No emails", systemImage: "tray")
+                    PanelEmpty(art: filter == "unread" ? .done : .inbox, text: filter == "unread" ? "All read" : "No emails")
                 } else {
-                    ContentUnavailableView("Connect email in Settings", systemImage: "envelope.badge",
-                                           description: Text("Open Settings > General to connect an email account."))
+                    PanelEmpty(art: .plug, text: "Connect email in Settings")
                 }
             case .loaded(let list):
                 ScrollView {
-                    LazyVStack(spacing: 2) {
+                    LazyVStack(spacing: 1) {
                         ForEach(searchFiltered(list)) { mail in
                             EmailRow(mail: mail,
                                      isSelected: selected?.uid == mail.uid,
@@ -263,6 +266,7 @@ struct EmailPanel: View {
                                         if selection.isEmpty { open(mail) }
                                         else { toggleSelect(mail.uid) }
                                      })
+                                .transition(.opacity)
                                 .contextMenu {
                                     Button(selection.contains(mail.uid) ? "Deselect" : "Select") {
                                         toggleSelect(mail.uid)
@@ -281,7 +285,8 @@ struct EmailPanel: View {
                                 }
                         }
                     }
-                    .padding(8)
+                    .padding(6)
+                    .animation(JB.smooth, value: list.map(\.uid))
                 }
             }
         }
@@ -340,7 +345,7 @@ struct EmailPanel: View {
     }
 
     private func toggleSelect(_ uid: String) {
-        withAnimation(.spring(duration: 0.2)) {
+        withAnimation(JB.snap) {
             if selection.contains(uid) { selection.remove(uid) } else { selection.insert(uid) }
         }
     }
@@ -369,11 +374,11 @@ struct EmailPanel: View {
     private var detailColumn: some View {
         switch detail {
         case nil:
-            ContentUnavailableView("Select an email", systemImage: "envelope.open")
+            PanelEmpty(art: .inbox, text: "Select an email")
         case .loading:
-            ProgressView().frame(maxHeight: .infinity)
+            PanelLoading()
         case .failed(let e):
-            ContentUnavailableView("Couldn't open", systemImage: "exclamationmark.triangle", description: Text(e))
+            PanelFailure(title: "Couldn't open", detail: e)
         case .loaded(let d):
             EmailDetailView(detail: d, folder: folder) { mode in
                 composeMode = mode
@@ -393,79 +398,62 @@ private struct EmailRow: View {
     var onTap: () -> Void = {}
     @State private var hovering = false
 
+    private var unread: Bool { mail.isRead == false }
+
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            // Checkbox owns its own tap; the rest of the row owns the open/
-            // toggle tap — previously both fired and cancelled each other.
-            // Slot is always reserved — inserting it on hover reflowed the
-            // row under the pointer and made the circle flicker.
+        HStack(alignment: .top, spacing: 8) {
+            // Accent dot = unread; the dot swaps for a check circle on hover or while selecting.
             let showCheck = selecting || hovering || isChecked
-            Image(systemName: isChecked ? "checkmark.circle.fill" : "circle")
-                .font(.jb(15))
-                .foregroundStyle(isChecked ? JB.accent : .secondary)
-                .frame(width: 24, height: 24, alignment: .center)
-                .padding(.top, -3)
-                .contentShape(Rectangle())
-                .onTapGesture(perform: onToggleCheck)
-                .opacity(showCheck ? 1 : 0)
-                .scaleEffect(showCheck ? 1 : 0.5)
-                .allowsHitTesting(showCheck)
+            ZStack {
+                Circle().fill(unread ? JB.accent : .clear).frame(width: 6, height: 6)
+                    .opacity(showCheck ? 0 : 1)
+                Image(systemName: isChecked ? "checkmark.circle.fill" : "circle")
+                    .font(.jb(14))
+                    .foregroundStyle(isChecked ? JB.accent : JB.ink3)
+                    .opacity(showCheck ? 1 : 0)
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: onToggleCheck)
+                    .allowsHitTesting(showCheck)
+            }
+            .frame(width: 16, height: 18)
             rowContent
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onTap)
         }
-        .panelCard()
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(isSelected || isChecked
-                      ? JB.accent.opacity(0.14)
-                      : hovering ? Color.white.opacity(0.045) : Color.clear)
-        )
-        .scaleEffect(hovering ? 1.012 : 1)
-        .shadow(color: .black.opacity(0.10), radius: 6, y: 3)
-        .onHover { h in
-            withAnimation(.spring(duration: 0.22)) { hovering = h }
-        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .background(isChecked ? JB.accentSoft : .clear, in: RoundedRectangle(cornerRadius: JB.rControl, style: .continuous))
+        .jbHoverRow(selected: isSelected)
+        .onHover { h in withAnimation(JB.fade) { hovering = h } }
     }
 
-    private var unread: Bool { mail.isRead == false }
-
     private var rowContent: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Circle()
-                .fill(unread ? JB.accent : Color.clear)
-                .frame(width: 7, height: 7)
-                .padding(.top, 5)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text(mail.fromName ?? mail.fromAddress ?? "Unknown")
-                        .font(.jb(12.5, unread ? .semibold : .regular))
-                        .lineLimit(1)
-                    Spacer()
-                    Text(relativeDate(mail.date))
-                        .font(.jb(10.5))
-                        .foregroundStyle(.tertiary)
-                }
-                Text(mail.subject ?? "(no subject)")
-                    .font(.jb(12))
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 6) {
+                Text(mail.fromName ?? mail.fromAddress ?? "Unknown")
+                    .font(.jb(13, unread ? .semibold : .regular))
+                    .foregroundStyle(unread ? JB.ink : JB.ink2)
                     .lineLimit(1)
-                if let s = mail.cachedSummary {
-                    Text(s)
-                        .font(.jb(11))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(2)
+                Spacer(minLength: 4)
+                if mail.isFlagged == true {
+                    Image(systemName: "star.fill").font(.jb(9)).foregroundStyle(JB.warn)
                 }
+                if mail.hasAttachments == true {
+                    Image(systemName: "paperclip").font(.jb(9)).foregroundStyle(JB.ink3)
+                }
+                Text(relativeDate(mail.date))
+                    .font(.jbMono(10.5))
+                    .foregroundStyle(JB.ink3)
             }
-            if mail.isFlagged == true {
-                Image(systemName: "star.fill")
-                    .font(.jb(9))
-                    .foregroundStyle(.yellow)
-            }
-            if mail.hasAttachments == true {
-                Image(systemName: "paperclip")
-                    .font(.jb(9))
-                    .foregroundStyle(.tertiary)
+            Text(mail.subject ?? "(no subject)")
+                .font(.jb(12.5, unread ? .medium : .regular))
+                .foregroundStyle(unread ? JB.ink : JB.ink2)
+                .lineLimit(1)
+            if let s = mail.cachedSummary {
+                Text(s)
+                    .font(.jb(11.5))
+                    .foregroundStyle(JB.ink3)
+                    .lineLimit(1)
             }
         }
     }
@@ -484,27 +472,22 @@ private struct EmailDetailView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 4) {
                     Text(detail.subject ?? "(no subject)")
-                        .font(.jb(15, .semibold))
-                    Spacer()
-                    // AI actions
-                    Button {
-                        summarize()
-                    } label: {
-                        if summarizing { ProgressView().controlSize(.mini) }
-                        else { Image(systemName: "sparkles") }
+                        .font(.jb(20, .semibold))
+                        .tracking(-0.3)
+                        .textSelection(.enabled)
+                    Spacer(minLength: 8)
+                    Button { summarize() } label: {
+                        if summarizing { JBSpinner() } else { JBIcon(.spark, size: 15) }
                     }
-                    .help("AI summary")
-                    Button {
-                        draftReply()
-                    } label: {
-                        if drafting { ProgressView().controlSize(.mini) }
-                        else { Image(systemName: "sparkles.rectangle.stack") }
+                    .help("Summarize")
+                    Button { draftReply() } label: {
+                        if drafting { JBSpinner() } else { Image(systemName: "arrowshape.turn.up.left.2") }
                     }
-                    .help("AI reply draft")
-                    Divider().frame(height: 14)
+                    .help("Draft a reply")
+                    Rectangle().fill(JB.line).frame(width: 1, height: 14)
                     Button { onCompose(.reply(detail)) } label: { Image(systemName: "arrowshape.turn.up.left") }
                         .help("Reply")
                     Button { onCompose(.forward(detail)) } label: { Image(systemName: "arrowshape.turn.up.right") }
@@ -523,21 +506,25 @@ private struct EmailDetailView: View {
                             }
                         }
                     } label: {
-                        Image(systemName: "ellipsis.circle")
+                        Image(systemName: "ellipsis")
+                            .frame(width: 26, height: 26)
                     }
                     .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
                     .fixedSize()
                 }
-                .buttonStyle(.borderless)
-                Text("\(detail.fromName ?? "") <\(detail.fromAddress ?? "")>")
-                    .font(.jb(12))
-                    .foregroundStyle(.secondary)
-                HStack {
-                    if let to = detail.to, !to.isEmpty {
-                        Text("To: \(to)").font(.jb(11)).foregroundStyle(.tertiary).lineLimit(1)
+                .buttonStyle(.jbIcon)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(detail.fromName ?? detail.fromAddress ?? "")
+                        .font(.jb(13, .medium))
+                    if detail.fromName != nil, let a = detail.fromAddress {
+                        Text(a).font(.jbMono(11)).foregroundStyle(JB.ink3).lineLimit(1)
                     }
                     Spacer()
-                    Text(relativeDate(detail.date)).font(.jb(11)).foregroundStyle(.tertiary)
+                    Text(relativeDate(detail.date)).font(.jbMono(11)).foregroundStyle(JB.ink3)
+                }
+                if let to = detail.to, !to.isEmpty {
+                    Text("to \(to)").font(.jbMono(11)).foregroundStyle(JB.ink3).lineLimit(1)
                 }
                 if let atts = detail.attachments, !atts.isEmpty {
                     HStack(spacing: 6) {
@@ -550,52 +537,47 @@ private struct EmailDetailView: View {
                                 }
                             } label: {
                                 Label(a.filename ?? "file", systemImage: "paperclip")
-                                    .font(.jb(11))
+                                    .font(.jbMono(11))
                                     .lineLimit(1)
                             }
-                            .buttonStyle(.borderless)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .joeGlassCapsule()
+                            .buttonStyle(JBButtonStyle(kind: .secondary, compact: true))
                         }
                     }
-                    .padding(.top, 4)
                 }
                 if let aiError {
-                    Text(aiError).font(.jbCaption).foregroundStyle(.red).lineLimit(2)
+                    Text(aiError).font(.jbCaption).foregroundStyle(JB.danger).lineLimit(2)
                 }
                 if summarizing || summary != nil {
                     VStack(alignment: .leading, spacing: 4) {
-                        Label("AI Summary", systemImage: "sparkles")
-                            .font(.jb(10.5, .semibold))
-                            .foregroundStyle(JB.accent)
+                        Text("Summary").jbEyebrow()
                         if let summary {
                             Text(inlineMarkdown(summary))
-                                .font(.jb(12))
+                                .font(.jb(12.5))
                                 .textSelection(.enabled)
                         } else {
-                            ProgressView().controlSize(.small)
+                            JBSpinner()
                         }
                     }
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(JB.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-                    .padding(.top, 6)
+                    .background(JB.accentSoft, in: RoundedRectangle(cornerRadius: JB.rCard, style: .continuous))
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
-            .padding(14)
-            .animation(.spring(duration: 0.3), value: summary)
-            Divider().opacity(0.4)
+            .padding(16)
+            .animation(JB.smooth, value: summary)
+            Rectangle().fill(JB.line).frame(height: 1)
             if let html = detail.bodyHtml, !html.isEmpty {
-                HTMLView(html: html)
+                HTMLView(html: Self.readerCSS + html)
             } else {
                 ScrollView {
                     Text(detail.body ?? "")
-                        .font(.jb(13))
+                        .font(.jb(14))
+                        .lineSpacing(4)
                         .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(14)
+                        .frame(maxWidth: 680, alignment: .leading)
+                        .frame(maxWidth: .infinity)
+                        .padding(20)
                 }
             }
         }
@@ -606,6 +588,21 @@ private struct EmailDetailView: View {
             QuickLookSheet(url: item.url)
         }
     }
+
+    /// Reading-pane typography, prepended to the message HTML.
+    private static let readerCSS = """
+    <style>
+      body { font-family: "Geist", -apple-system, sans-serif; font-size: 14.5px; line-height: 1.62;
+             margin: 20px auto; padding: 0 20px; max-width: 700px; -webkit-font-smoothing: antialiased; }
+      p, div { margin-top: 0; }
+      a { color: inherit; text-decoration: underline; text-decoration-color: rgba(128,128,128,.5); text-underline-offset: 2px; }
+      blockquote { margin: 12px 0; padding: 2px 0 2px 14px; border-left: 2px solid rgba(128,128,128,.35); opacity: .75; }
+      img { border-radius: 6px; }
+      hr { border: 0; border-top: 1px solid rgba(128,128,128,.25); margin: 18px 0; }
+      pre, code { font-family: "Geist Mono", ui-monospace, monospace; font-size: 12.5px; }
+      h1, h2, h3 { letter-spacing: -0.01em; line-height: 1.25; }
+    </style>
+    """
 
     private func summarize() {
         guard !summarizing else { return }
@@ -676,24 +673,24 @@ struct EmailComposeSheet: View {
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
+                    .buttonStyle(.jbGhost)
                 Button {
                     send()
                 } label: {
-                    if sending { ProgressView().controlSize(.small) }
-                    else { Label("Send", systemImage: "paperplane.fill") }
+                    if sending { JBSpinner(size: 12, tint: JB.onAccent) }
+                    else { Text("Send") }
                 }
                 .buttonStyle(.jbPrimary)
-                .tint(JB.accent)
+                .keyboardShortcut(.return, modifiers: .command)
                 .disabled(sending || to.isEmpty)
             }
             .padding(14)
-            Divider()
-            Form {
-                TextField("To", text: $to)
-                TextField("Cc", text: $cc)
-                TextField("Subject", text: $subject)
+            Rectangle().fill(JB.line).frame(height: 1)
+            VStack(spacing: 6) {
+                TextField("To", text: $to).jbField()
+                TextField("Cc", text: $cc).jbField()
+                TextField("Subject", text: $subject).jbField()
             }
-            .textFieldStyle(.roundedBorder)
             .padding(.horizontal, 14)
             .padding(.top, 10)
 
@@ -702,17 +699,17 @@ struct EmailComposeSheet: View {
                     ForEach(attachments, id: \.token) { a in
                         HStack(spacing: 4) {
                             Image(systemName: "paperclip").font(.jb(10))
-                            Text(a.filename).font(.jb(11)).lineLimit(1)
+                            Text(a.filename).font(.jbMono(11)).lineLimit(1)
                             Button {
                                 attachments.removeAll { $0.token == a.token }
                             } label: {
-                                Image(systemName: "xmark.circle.fill").font(.jb(10))
+                                Image(systemName: "xmark").font(.jb(9))
                             }
-                            .buttonStyle(.borderless)
+                            .buttonStyle(.plain)
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(.quaternary.opacity(0.5), in: Capsule())
+                        .jbSurface(.raised, radius: nil)
                     }
                     Spacer()
                 }
@@ -724,13 +721,13 @@ struct EmailComposeSheet: View {
                 .font(.jb(13))
                 .scrollContentBackground(.hidden)
                 .padding(10)
-                .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
+                .jbSurface(.raised, radius: JB.rCard)
                 .padding(14)
 
             if let error {
                 Text(error)
                     .font(.jbCaption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(JB.danger)
                     .padding(.bottom, 8)
             }
 
@@ -740,7 +737,7 @@ struct EmailComposeSheet: View {
                 } label: {
                     Label("Attach", systemImage: "paperclip")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(JBButtonStyle(kind: .ghost, compact: true))
                 Spacer()
             }
             .padding(.horizontal, 14)
@@ -766,7 +763,7 @@ struct EmailComposeSheet: View {
 
     private var titleText: String {
         switch mode {
-        case .new: return "New Email"
+        case .new: return "New email"
         case .reply: return "Reply"
         case .forward: return "Forward"
         }

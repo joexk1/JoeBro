@@ -26,10 +26,10 @@ struct ToolsPanel: View {
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.jbIcon)
         } content: {
             // Top half: API tools (left) + MCP (right). Bottom half: Plugins,
-            // a single wide glass box spanning the full width.
+            // a single wide box spanning the full width.
             VStack(spacing: 14) {
                 HStack(alignment: .top, spacing: 14) {
                     apiToolsSection
@@ -72,24 +72,17 @@ struct ToolsPanel: View {
     private var pluginsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("Plugins", systemImage: "puzzlepiece.extension")
-                    .font(.jb(13, .semibold))
-                Spacer()
+                JBSectionHeader("Plugins", count: store.plugins.count)
                 Button { addPlugin() } label: {
-                    Label("Add Plugin…", systemImage: "plus")
-                        .font(.jb(12))
+                    Label("Add", systemImage: "plus")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(JBButtonStyle(kind: .secondary, compact: true))
             }
 
-            Text("Install richer capabilities the model can use in Agent mode.")
-                .font(.jbCaption)
-                .foregroundStyle(.secondary)
 
             if store.plugins.isEmpty {
                 Spacer()
-                ContentUnavailableView("No plugins yet", systemImage: "puzzlepiece.extension",
-                                       description: Text("Add a plugin's repo folder to install it."))
+                PanelEmpty(art: .plug, text: "No plugins yet")
                 Spacer()
             } else {
                 ScrollView {
@@ -104,7 +97,7 @@ struct ToolsPanel: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .joeGlassRect(16)
+        .jbSurface(.panel, radius: JB.rPanel)
     }
 
     private func pluginRow(_ plugin: Plugin) -> some View {
@@ -114,42 +107,31 @@ struct ToolsPanel: View {
                 set: { newValue in store.togglePlugin(plugin, enabled: newValue) }
             ))
             .labelsHidden()
-            .toggleStyle(.switch)
+            .jbToggle()
             .controlSize(.small)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(plugin.name)
                         .font(.jb(13, .medium))
-                    Text(plugin.kind == "background" ? "BACKGROUND" : "FOREGROUND")
-                        .font(.jb(9, .semibold))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(.quaternary, in: Capsule())
-                    if plugin.source == "bundled" {
-                        Text("BUNDLED")
-                            .font(.jb(9, .semibold))
-                            .foregroundStyle(JB.accent)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(JB.accent.opacity(0.15), in: Capsule())
-                    }
+                    JBChip(text: plugin.kind == "background" ? "background" : "foreground")
+                    if plugin.source == "bundled" { JBChip(text: "bundled", tint: JB.accent) }
                 }
                 if let d = plugin.description, !d.isEmpty {
                     Text(d)
                         .font(.jb(11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                         .lineLimit(2)
                 }
                 if !plugin.summary.isEmpty {
                     Text(plugin.summary)
-                        .font(.jb(10, .medium))
-                        .foregroundStyle(.tertiary)
+                        .font(.jbMono(10.5))
+                        .foregroundStyle(JB.ink3)
                 }
                 if let e = plugin.error, !e.isEmpty {
                     Text(e)
                         .font(.jb(10))
-                        .foregroundStyle(.red)
+                        .foregroundStyle(JB.danger)
                         .lineLimit(3)
                 }
             }
@@ -159,34 +141,34 @@ struct ToolsPanel: View {
             Button { editingPlugin = plugin } label: {
                 Image(systemName: "pencil")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.jbIcon)
             .help("Edit")
 
             if plugin.id == "plugin_macos_use" {
                 Button { configuringComputerUse = true } label: {
                     Image(systemName: "gearshape")
                 }
-                .buttonStyle(.borderless)
-                .help("Agent Desktop settings — permissions and blocked apps")
+                .buttonStyle(.jbIcon)
+                .help("Settings")
             } else if plugin.id == "plugin_advisor" {
                 Button { configuringAdvisor = true } label: {
                     Image(systemName: "gearshape")
                 }
-                .buttonStyle(.borderless)
-                .help("Advisor settings — pick the model and tune when it's called")
+                .buttonStyle(.jbIcon)
+                .help("Settings")
             } else if plugin.source != "bundled" {
                 Button(role: .destructive) {
                     store.deletePlugin(id: plugin.id)
                 } label: {
                     Image(systemName: "trash")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.jbIcon)
                 .help("Delete")
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 10))
+        .jbSurface(.raised, radius: JB.rCard)
     }
 
     /// Folder picker for adding a plugin: choose the plugin's repo folder and,
@@ -222,36 +204,27 @@ struct ToolsPanel: View {
     private var mcpSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("MCP Servers", systemImage: "server.rack")
-                    .font(.jb(13, .semibold))
-                Spacer()
-                if store.mcpBusy {
-                    ProgressView().controlSize(.small)
-                }
+                JBSectionHeader("MCP servers", count: store.mcpServers.count)
+                if store.mcpBusy { JBSpinner() }
                 Button {
                     showAddMCP = true
                 } label: {
-                    Label("Add MCP Server…", systemImage: "plus")
-                        .font(.jb(12))
+                    Label("Add", systemImage: "plus")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(JBButtonStyle(kind: .secondary, compact: true))
             }
 
-            Text("Connect any MCP server (stdio). JoeBro launches it, discovers its tools, and offers them to the model in Agent mode.")
-                .font(.jbCaption)
-                .foregroundStyle(.secondary)
 
             if let err = store.mcpError, !err.isEmpty {
                 Text(err)
                     .font(.jb(11))
-                    .foregroundStyle(.red)
+                    .foregroundStyle(JB.danger)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if store.mcpServers.isEmpty {
                 Spacer()
-                ContentUnavailableView("No MCP servers yet", systemImage: "server.rack",
-                                       description: Text("Add one — e.g. command `npx`, args `-y @modelcontextprotocol/server-everything`."))
+                PanelEmpty(art: .plug, text: "No MCP servers yet")
                 Spacer()
             } else {
                 ScrollView {
@@ -266,7 +239,7 @@ struct ToolsPanel: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .joeGlassRect(16)
+        .jbSurface(.panel, radius: JB.rPanel)
     }
 
     private func mcpRow(_ server: MCPServer) -> some View {
@@ -276,7 +249,7 @@ struct ToolsPanel: View {
                 set: { newValue in Task { await store.toggleMCPServer(server, enabled: newValue) } }
             ))
             .labelsHidden()
-            .toggleStyle(.switch)
+            .jbToggle()
             .controlSize(.small)
 
             VStack(alignment: .leading, spacing: 4) {
@@ -284,22 +257,22 @@ struct ToolsPanel: View {
                     .font(.jb(13, .medium))
                 Text("\(server.command) \(server.args)")
                     .font(.jbMono(11))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JB.ink2)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if let err = server.error, !err.isEmpty {
                     Text(err)
                         .font(.jb(11))
-                        .foregroundStyle(.red)
+                        .foregroundStyle(JB.danger)
                         .lineLimit(2)
                 } else if server.tools.isEmpty {
-                    Text("No tools discovered.")
-                        .font(.jb(11))
-                        .foregroundStyle(.secondary)
+                    Text("No tools")
+                        .font(.jbMono(11))
+                        .foregroundStyle(JB.ink3)
                 } else {
                     Text(server.tools.joined(separator: ", "))
-                        .font(.jb(11))
-                        .foregroundStyle(.secondary)
+                        .font(.jbMono(11))
+                        .foregroundStyle(JB.ink2)
                 }
             }
 
@@ -308,7 +281,7 @@ struct ToolsPanel: View {
             Button { editingMCP = server } label: {
                 Image(systemName: "pencil")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.jbIcon)
             .help("Edit")
 
             Button(role: .destructive) {
@@ -316,37 +289,30 @@ struct ToolsPanel: View {
             } label: {
                 Image(systemName: "trash")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.jbIcon)
             .help("Delete")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 10))
+        .jbSurface(.raised, radius: JB.rCard)
     }
 
     private var apiToolsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("API Tools", systemImage: "network")
-                    .font(.jb(13, .semibold))
-                Spacer()
+                JBSectionHeader("API tools", count: store.apiTools.count)
                 Button {
                     showAdd = true
                 } label: {
-                    Label("Add API Tool…", systemImage: "plus")
-                        .font(.jb(12))
+                    Label("Add", systemImage: "plus")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(JBButtonStyle(kind: .secondary, compact: true))
             }
 
-            Text("Register any JSON API as a tool the model can call in Agent mode. The description tells the model when and how to use it.")
-                .font(.jbCaption)
-                .foregroundStyle(.secondary)
 
             if store.apiTools.isEmpty {
                 Spacer()
-                ContentUnavailableView("No API tools yet", systemImage: "wrench.and.screwdriver",
-                                       description: Text("Add one to make it callable in Agent mode."))
+                PanelEmpty(art: .plug, text: "No API tools yet")
                 Spacer()
             } else {
                 ScrollView {
@@ -361,7 +327,7 @@ struct ToolsPanel: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .joeGlassRect(16)
+        .jbSurface(.panel, radius: JB.rPanel)
     }
 
     private func toolRow(_ tool: APITool) -> some View {
@@ -371,28 +337,24 @@ struct ToolsPanel: View {
                 set: { newValue in Task { await store.toggleAPITool(tool, enabled: newValue) } }
             ))
             .labelsHidden()
-            .toggleStyle(.switch)
+            .jbToggle()
             .controlSize(.small)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(tool.name)
                         .font(.jb(13, .medium))
-                    Text((tool.method ?? "GET").uppercased())
-                        .font(.jb(10, .semibold))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(.quaternary, in: Capsule())
+                    JBChip(text: (tool.method ?? "GET").uppercased())
                     if tool.hasKey == true {
-                        Image(systemName: "key.fill")
-                            .font(.jb(9))
-                            .foregroundStyle(.secondary)
+                        Image(systemName: "key")
+                            .font(.jb(10))
+                            .foregroundStyle(JB.ink3)
                     }
                 }
                 if let url = tool.baseURL, !url.isEmpty {
                     Text(url)
                         .font(.jbMono(11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
@@ -405,18 +367,18 @@ struct ToolsPanel: View {
             } label: {
                 Image(systemName: "pencil")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.jbIcon)
 
             Button(role: .destructive) {
                 Task { await store.deleteAPITool(id: tool.id) }
             } label: {
                 Image(systemName: "trash")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.jbIcon)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 10))
+        .jbSurface(.raised, radius: JB.rCard)
     }
 }
 
@@ -448,11 +410,11 @@ struct APIToolSheet: View {
                 Text(tool == nil ? "Add API Tool" : "Edit API Tool")
                     .font(.jb(14, .semibold))
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).buttonStyle(.jbGhost)
                 Button {
                     save()
                 } label: {
-                    if saving { ProgressView().controlSize(.small) }
+                    if saving { JBSpinner(size: 12, tint: JB.onAccent) }
                     else { Text(tool == nil ? "Add" : "Save") }
                 }
                 .buttonStyle(.jbPrimary)
@@ -460,14 +422,14 @@ struct APIToolSheet: View {
                 .disabled(saving || name.trimmingCharacters(in: .whitespaces).isEmpty || baseURL.isEmpty)
             }
             .padding(14)
-            Divider()
+            Rectangle().fill(JB.line).frame(height: 1)
             Form {
                 TextField("Name (e.g. LinkedIn Search)", text: $name)
                 TextField("Base URL (https://api.example.com/v2/search)", text: $baseURL)
                     .font(.jbMono(12))
-                Text("Put {query} anywhere in the URL to place the model's input exactly (e.g. …/search?name={query}). Otherwise it's appended as ?query=…")
+                Text("{query} in the URL marks where the input goes")
                     .font(.jbCaption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JB.ink2)
                 SecureField(tool?.hasKey == true ? "API key (leave blank to keep)" : "API key (optional)", text: $apiKey)
                 Picker("Method", selection: $method) {
                     Text("GET").tag("GET")
@@ -477,13 +439,13 @@ struct APIToolSheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Description")
                         .font(.jbCaption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                     TextEditor(text: $description)
                         .font(.jb(12))
                         .frame(minHeight: 90)
                     Text("The model reads this to know when and how to call the tool.")
                         .font(.jbCaption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                 }
             }
             .formStyle(.grouped)
@@ -535,11 +497,11 @@ struct MCPServerSheet: View {
                 Text(server == nil ? "Add MCP Server" : "Edit MCP Server")
                     .font(.jb(14, .semibold))
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).buttonStyle(.jbGhost)
                 Button {
                     save()
                 } label: {
-                    if saving { ProgressView().controlSize(.small) }
+                    if saving { JBSpinner(size: 12, tint: JB.onAccent) }
                     else { Text(server == nil ? "Add" : "Save") }
                 }
                 .buttonStyle(.jbPrimary)
@@ -549,7 +511,7 @@ struct MCPServerSheet: View {
                           || command.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             .padding(14)
-            Divider()
+            Rectangle().fill(JB.line).frame(height: 1)
             Form {
                 TextField("Name (e.g. Filesystem)", text: $name)
                 TextField("Command (e.g. npx)", text: $command)
@@ -557,25 +519,19 @@ struct MCPServerSheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Arguments")
                         .font(.jbCaption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                     TextEditor(text: $args)
                         .font(.jbMono(12))
                         .frame(minHeight: 60)
                     Text("e.g. -y @modelcontextprotocol/server-filesystem /Users/me/Documents")
                         .font(.jbCaption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                 }
                 Picker("Agent access", selection: $permission) {
                     Text("Bound folder").tag("sandbox")
                     Text("Read-only").tag("readonly")
                     Text("Full access").tag("full")
                 }
-                Text("The permission level the agent must be in to use this server's tools (e.g. phone or computer control should require Full access).")
-                    .font(.jbCaption2)
-                    .foregroundStyle(.secondary)
-                Text("JoeBro launches the server, discovers its tools, and offers them to the model in Agent mode. The first connection may take a moment.")
-                    .font(.jbCaption2)
-                    .foregroundStyle(.secondary)
             }
             .formStyle(.grouped)
         }
@@ -620,7 +576,7 @@ struct PluginEditSheet: View {
             HStack {
                 Text("Edit Plugin").font(.jb(14, .semibold))
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).buttonStyle(.jbGhost)
                 Button("Save") { save() }
                     .buttonStyle(.jbPrimary)
                     .tint(JB.accent)
@@ -628,7 +584,7 @@ struct PluginEditSheet: View {
                     .disabled(name.isEmpty)
             }
             .padding(14)
-            Divider()
+            Rectangle().fill(JB.line).frame(height: 1)
             Form {
                 TextField("Name", text: $name)
                     .disabled(isBundled)
@@ -641,12 +597,10 @@ struct PluginEditSheet: View {
                     Text("Read-only").tag("readonly")
                     Text("Full access").tag("full")
                 }
-                Text("The permission level the agent must be in to use this plugin (computer-use plugins need Full access).")
-                    .font(.jbCaption).foregroundStyle(.secondary)
                 if let repo = plugin.repoPath, !repo.isEmpty {
                     Text(repo)
                         .font(.jbMono(11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                         .lineLimit(1).truncationMode(.middle)
                 }
             }
@@ -689,34 +643,29 @@ struct ComputerUseSettingsSheet: View {
                     .keyboardShortcut(.defaultAction)
             }
             .padding(14)
-            Divider()
+            Rectangle().fill(JB.line).frame(height: 1)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("What it can do")
                             .font(.jb(12, .semibold))
-                        Text("In Agent mode (Full access), JoeBro can drive this Mac: read an app's windows, menus and buttons as an accessibility tree, open apps, click, type and press shortcuts. With Vercel's agent-desktop installed it works headless: it doesn't move your mouse or steal focus. It reads the screen as text first and only takes a picture when it must, so it stays fast and cheap.")
+                        Text("npm i -g agent-desktop")
                             .font(.jb(12))
-                            .foregroundStyle(.secondary)
-                        Text("Install agent-desktop with `npm i -g agent-desktop`. Until it's installed, JoeBro uses its built-in osascript version.")
+                            .foregroundStyle(JB.ink2)
+                        Text("Needs Accessibility access")
                             .font(.jb(12))
-                            .foregroundStyle(.secondary)
-                        Text("It needs Accessibility access (System Settings > Privacy & Security > Accessibility). Turn the plugin off above to revoke all of this at once.")
-                            .font(.jb(12))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(JB.ink2)
                     }
-                    Divider()
+                    Rectangle().fill(JB.line).frame(height: 1)
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Blocked apps")
                             .font(.jb(12, .semibold))
-                        Text("One app name per line. JoeBro will refuse to open, click, type into or read any app whose name matches — even if you ask it to. Good for banking and other sensitive apps.")
-                            .font(.jb(12))
-                            .foregroundStyle(.secondary)
                         TextEditor(text: $blocked)
                             .font(.jbMono(13))
                             .frame(minHeight: 120)
                             .padding(6)
-                            .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+                            .scrollContentBackground(.hidden)
+                            .jbSurface(.raised, radius: JB.rControl)
                     }
                 }
                 .padding(14)
@@ -766,15 +715,12 @@ struct AdvisorSettingsSheet: View {
                     .keyboardShortcut(.defaultAction)
             }
             .padding(14)
-            Divider()
+            Rectangle().fill(JB.line).frame(height: 1)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Advisor model")
                             .font(.jb(12, .semibold))
-                        Text("A more powerful model your everyday AI can call for a second opinion — at any agent access level. It sees only the question it's sent, never the whole chat.")
-                            .font(.jb(12))
-                            .foregroundStyle(.secondary)
                         Picker("", selection: $modelID) {
                             Text("Choose a model…").tag("")
                             ModelPickerItems(models: store.models)
@@ -782,24 +728,21 @@ struct AdvisorSettingsSheet: View {
                         .labelsHidden()
                         .fixedSize()
                     }
-                    Divider()
+                    Rectangle().fill(JB.line).frame(height: 1)
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text("When should it be called?")
                                 .font(.jb(12, .semibold))
                             Spacer()
                             Button("Reset to default") { desc = Self.defaultDesc }
-                                .font(.jb(11))
-                                .buttonStyle(.borderless)
+                                .buttonStyle(JBButtonStyle(kind: .ghost, compact: true))
                         }
-                        Text("This is the advisor tool's description — it's what tells your everyday model when to ask for advice. Edit it to make calls more or less frequent, or to point them at specific topics.")
-                            .font(.jb(12))
-                            .foregroundStyle(.secondary)
                         TextEditor(text: $desc)
                             .font(.jb(12))
                             .frame(minHeight: 140)
                             .padding(6)
-                            .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+                            .scrollContentBackground(.hidden)
+                            .jbSurface(.raised, radius: JB.rControl)
                     }
                 }
                 .padding(14)

@@ -39,38 +39,35 @@ struct PluginPanelsView: View {
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.jbIcon)
             .help("Reload plugins")
         } content: {
             let list = entries
             if list.isEmpty {
-                ContentUnavailableView(
-                    "No plugin panels",
-                    systemImage: "puzzlepiece.extension",
-                    description: Text("Panels from plugins you switch on (Tools → Plugins) appear here. Ask JoeBro or a coding agent to build one: `joebro-plugin init my-plugin`."))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .joeGlassRect(16)
+                PanelEmpty(art: .plug, text: "No plugin panels")
+                    .jbSurface(.panel, radius: JB.rPanel)
             } else {
                 let current = list.first { $0.id == selected } ?? list[0]
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
                         ForEach(list) { e in
+                            let sel = e.id == current.id
                             Button {
-                                selected = e.id
+                                withAnimation(JB.snap) { selected = e.id }
                             } label: {
                                 HStack(spacing: 8) {
-                                    Image(systemName: e.panel.icon ?? "puzzlepiece.extension")
+                                    Image(systemName: e.panel.icon ?? "square.grid.2x2")
                                         .frame(width: 18)
+                                        .foregroundStyle(sel ? JB.accent : JB.ink2)
                                     VStack(alignment: .leading, spacing: 1) {
-                                        Text(e.panel.title).font(.jb(13, .medium))
-                                        Text(e.plugin.name).font(.jb(10)).foregroundStyle(.secondary)
+                                        Text(e.panel.title).font(.jb(13, sel ? .semibold : .medium))
+                                        Text(e.plugin.name).font(.jbMono(10.5)).foregroundStyle(JB.ink3)
                                     }
                                     Spacer(minLength: 0)
                                 }
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
-                                .background(e.id == current.id ? JB.accent.opacity(0.18) : .clear,
-                                            in: RoundedRectangle(cornerRadius: 8))
+                                .jbHoverRow(selected: sel)
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
@@ -80,13 +77,13 @@ struct PluginPanelsView: View {
                     .padding(8)
                     .frame(width: 210)
                     .frame(maxHeight: .infinity)
-                    .joeGlassRect(16)
+                    .jbSurface(.panel, radius: JB.rPanel)
 
                     PluginWebView(slug: current.plugin.slug ?? "", entryURL: current.panel.url)
                         .id(current.id)
-                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                        .clipShape(RoundedRectangle(cornerRadius: JB.rPanel, style: .continuous))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .joeGlassRect(16)
+                        .jbSurface(.panel, radius: JB.rPanel)
                 }
             }
         }
