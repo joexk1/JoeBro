@@ -21,7 +21,7 @@ struct ComposerView: View {
                 ZStack(alignment: .topLeading) {
                     if text.isEmpty {
                         Text("Message…")
-                            .font(.system(size: 14))
+                            .font(.jb(14))
                             .foregroundStyle(.tertiary)
                             .padding(.top, 2)
                             .padding(.leading, 5)
@@ -47,7 +47,7 @@ struct ComposerView: View {
                     showPermissions.toggle()
                 } label: {
                     Image(systemName: "lock.fill")
-                        .font(.system(size: 12))
+                        .font(.jb(12))
                         .foregroundStyle(
                             store.permissionMode == "sandbox" ? Color.secondary :
                             store.permissionMode == "readonly" ? Color.orange : Color.red)
@@ -64,7 +64,7 @@ struct ComposerView: View {
                             Divider().padding(.vertical, 3)
                             Toggle(isOn: $store.askBeforeCommands) {
                                 Label("Ask before running commands", systemImage: "hand.raised.fill")
-                                    .font(.system(size: 11.5))
+                                    .font(.jb(11.5))
                             }
                             .toggleStyle(.switch)
                             .controlSize(.mini)
@@ -109,7 +109,7 @@ struct ComposerView: View {
                     showFileImporter = true
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.jb(13, .medium))
                 }
                 .buttonStyle(.borderless)
                 .help("Attach files")
@@ -153,15 +153,15 @@ struct ComposerView: View {
             HStack(spacing: 8) {
                 Circle().fill(color).frame(width: 7, height: 7)
                 Image(systemName: icon)
-                    .font(.system(size: 11))
+                    .font(.jb(11))
                     .frame(width: 16)
                 Text(title)
-                    .font(.system(size: 12))
+                    .font(.jb(12))
                 Spacer()
                 if store.permissionMode == mode {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Color.accentColor)
+                        .font(.jb(10, .bold))
+                        .foregroundStyle(JB.accent)
                 }
             }
             .padding(.horizontal, 8)
@@ -177,15 +177,15 @@ struct ComposerView: View {
             ForEach(store.pendingAttachments, id: \.id) { f in
                 HStack(spacing: 5) {
                     Image(systemName: "paperclip")
-                        .font(.system(size: 10))
+                        .font(.jb(10))
                     Text(f.name)
-                        .font(.system(size: 11.5))
+                        .font(.jb(11.5))
                         .lineLimit(1)
                     Button {
                         store.pendingAttachments.removeAll { $0.id == f.id }
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 10))
+                            .font(.jb(10))
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.borderless)
@@ -205,20 +205,20 @@ struct ComposerView: View {
                 store.stopStreaming()
             } label: {
                 Image(systemName: "stop.fill")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.jb(12, .bold))
                     .frame(width: 28, height: 28)
             }
-            .buttonStyle(.glassProminent)
+            .buttonStyle(.jbPrimary)
             .tint(.red)
             .help("Stop generating")
         } else {
             Button(action: send) {
                 Image(systemName: "arrow.up")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.jb(13, .bold))
                     .frame(width: 28, height: 28)
             }
-            .buttonStyle(.glassProminent)
-            .tint(Color.accentColor)
+            .buttonStyle(.jbPrimary)
+            .tint(JB.accent)
             .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && store.pendingAttachments.isEmpty)
             .keyboardShortcut(.return, modifiers: .command)
             .help("Send (⏎, or ⌘⏎ from the text field)")
@@ -255,14 +255,14 @@ struct SlideSwitch: View {
             Text(label)
                 .lineLimit(1)
                 .fixedSize()
-                .font(.system(size: 11.5, weight: active ? .semibold : .regular))
+                .font(.jb(11.5, active ? .semibold : .regular))
                 .foregroundStyle(active ? .primary : .secondary)
                 .padding(.horizontal, 11)
                 .padding(.vertical, 4)
                 .background {
                     if active {
                         Capsule()
-                            .fill(.ultraThinMaterial)
+                            .fill(JB.panelFill)
                             .overlay(Capsule().strokeBorder(.white.opacity(0.18), lineWidth: 1))
                             .matchedGeometryEffect(id: "thumb", in: ns)
                     }
@@ -285,11 +285,11 @@ struct LitToggle: View {
             withAnimation(.spring(duration: 0.2)) { isOn.toggle() }
         } label: {
             Image(systemName: icon)
-                .font(.system(size: 12, weight: isOn ? .semibold : .regular))
-                .foregroundStyle(isOn ? Color.accentColor : Color.secondary)
+                .font(.jb(12, isOn ? .semibold : .regular))
+                .foregroundStyle(isOn ? JB.accent : Color.secondary)
                 .frame(width: 26, height: 22)
                 .background(
-                    Capsule().fill(isOn ? AnyShapeStyle(Color.accentColor.opacity(0.22)) : AnyShapeStyle(.clear))
+                    Capsule().fill(isOn ? AnyShapeStyle(JB.accent.opacity(0.22)) : AnyShapeStyle(.clear))
                 )
         }
         .buttonStyle(.borderless)

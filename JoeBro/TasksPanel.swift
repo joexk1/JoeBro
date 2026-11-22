@@ -54,7 +54,7 @@ struct TasksPanel: View {
                 }
                 if let genError {
                     Text(genError)
-                        .font(.system(size: 11))
+                        .font(.jb(11))
                         .foregroundStyle(.red)
                 }
 
@@ -94,7 +94,7 @@ struct TasksPanel: View {
             .joeGlassRect(16)
                 if phoneScope {
                     Text("Runs silently, tells your phone only when there is something to say.")
-                        .font(.system(size: 10.5))
+                        .font(.jb(10.5))
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -143,12 +143,12 @@ struct TasksPanel: View {
                              selecting: !selection.isEmpty,
                              onToggleCheck: { toggleSelection(t.id, in: &selection) }) {
             Image(systemName: paused ? "pause.circle" : "clock.arrow.circlepath")
-                .font(.system(size: 14))
-                .foregroundStyle(paused ? Color.secondary : Color.accentColor)
+                .font(.jb(14))
+                .foregroundStyle(paused ? Color.secondary : JB.accent)
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
                 Text(t.name ?? "Task")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.jb(13, .medium))
                     .lineLimit(1)
                 HStack(spacing: 8) {
                     if let s = t.schedule {
@@ -158,11 +158,11 @@ struct TasksPanel: View {
                         Text("next \(d.formatted(.relative(presentation: .named)))")
                     }
                 }
-                .font(.system(size: 10.5))
+                .font(.jb(10.5))
                 .foregroundStyle(.tertiary)
                 if let p = t.prompt, !p.isEmpty {
                     Text(p)
-                        .font(.system(size: 11))
+                        .font(.jb(11))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -170,7 +170,7 @@ struct TasksPanel: View {
             Spacer()
             if paused {
                 Text("paused")
-                    .font(.system(size: 10))
+                    .font(.jb(10))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
                     .background(.quaternary.opacity(0.6), in: Capsule())
@@ -270,14 +270,14 @@ struct NewTaskSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("New Task").font(.system(size: 14, weight: .semibold))
+                Text("New Task").font(.jb(14, .semibold))
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button { create() } label: {
                     if saving { ProgressView().controlSize(.small) } else { Text("Create") }
                 }
-                .buttonStyle(.glassProminent)
-                .tint(Color.accentColor)
+                .buttonStyle(.jbPrimary)
+                .tint(JB.accent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(saving || prompt.isEmpty)
             }
@@ -310,9 +310,9 @@ struct NewTaskSheet: View {
                     Text("Full access").tag("full")
                 }
                 Text("Tasks run as an agent. This sets how much of your files it can touch when it runs.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.jbCaption).foregroundStyle(.secondary)
                 if let error {
-                    Text(error).font(.caption).foregroundStyle(.red)
+                    Text(error).font(.jbCaption).foregroundStyle(.red)
                 }
             }
             .formStyle(.grouped)
@@ -354,14 +354,14 @@ struct EditTaskSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Edit Task").font(.system(size: 14, weight: .semibold))
+                Text("Edit Task").font(.jb(14, .semibold))
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button { save() } label: {
                     if saving { ProgressView().controlSize(.small) } else { Text("Save") }
                 }
-                .buttonStyle(.glassProminent)
-                .tint(Color.accentColor)
+                .buttonStyle(.jbPrimary)
+                .tint(JB.accent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(saving || prompt.isEmpty)
             }
@@ -394,9 +394,9 @@ struct EditTaskSheet: View {
                     Text("Full access").tag("full")
                 }
                 Text("Tasks run as an agent. This sets how much of your files it can touch when it runs.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.jbCaption).foregroundStyle(.secondary)
                 if let error {
-                    Text(error).font(.caption).foregroundStyle(.red)
+                    Text(error).font(.jbCaption).foregroundStyle(.red)
                 }
             }
             .formStyle(.grouped)

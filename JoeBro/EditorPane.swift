@@ -78,21 +78,21 @@ struct EditorPane: View {
             } label: {
                 HStack(spacing: 6) {
                     Label("JoeBro wants to edit this document", systemImage: "sparkles")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
+                        .font(.jb(12, .semibold))
+                        .foregroundStyle(JB.accent)
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.jb(8, .bold))
                         .foregroundStyle(.secondary)
                         .rotationEffect(.degrees(showDiff ? 90 : 0))
                     Text(showDiff ? "hide changes" : "view changes")
-                        .font(.system(size: 10.5))
+                        .font(.jb(10.5))
                         .foregroundStyle(.tertiary)
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             Text(changeSummary(old: doc.content, new: pending))
-                .font(.system(size: 11))
+                .font(.jb(11))
                 .foregroundStyle(.secondary)
             if showDiff {
                 DiffView(old: doc.content, new: pending)
@@ -104,24 +104,24 @@ struct EditorPane: View {
                     store.resolvePendingAIEdit(docID: doc.id, accept: true)
                 } label: {
                     Label("Apply", systemImage: "checkmark")
-                        .font(.system(size: 11.5, weight: .medium))
+                        .font(.jb(11.5, .medium))
                 }
-                .buttonStyle(.glassProminent)
+                .buttonStyle(.jbPrimary)
                 .tint(.green)
                 .controlSize(.small)
                 Button {
                     store.resolvePendingAIEdit(docID: doc.id, accept: false)
                 } label: {
                     Label("Reject", systemImage: "xmark")
-                        .font(.system(size: 11.5, weight: .medium))
+                        .font(.jb(11.5, .medium))
                 }
-                .buttonStyle(.glass)
+                .buttonStyle(.jbSecondary)
                 .controlSize(.small)
             }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.accentColor.opacity(0.10))
+        .background(JB.accent.opacity(0.10))
         .overlay(Rectangle().frame(height: 1).foregroundStyle(.separator.opacity(0.4)), alignment: .bottom)
     }
 
@@ -157,7 +157,7 @@ struct EditorPane: View {
                     openWindow(id: "editor")
                 } label: {
                     Image(systemName: "macwindow.on.rectangle")
-                        .font(.system(size: 11))
+                        .font(.jb(11))
                 }
                 .buttonStyle(.borderless)
                 .help("Open editor in its own window")
@@ -168,7 +168,7 @@ struct EditorPane: View {
                     NSPasteboard.general.setString(store.openDocs[i].content, forType: .string)
                 } label: {
                     Image(systemName: "doc.on.doc")
-                        .font(.system(size: 11))
+                        .font(.jb(11))
                 }
                 .buttonStyle(.borderless)
                 .help("Copy entire document")
@@ -181,7 +181,7 @@ struct EditorPane: View {
                 }
             } label: {
                 Image(systemName: store.editorDetached ? "xmark.circle" : "sidebar.trailing")
-                    .font(.system(size: 12))
+                    .font(.jb(12))
             }
             .buttonStyle(.borderless)
             .help(store.editorDetached ? "Close editor window" : "Hide editor")
@@ -193,7 +193,7 @@ struct EditorPane: View {
     private func modeButton(icon: String, active: Bool, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .medium))
+                .font(.jb(11, .medium))
                 .frame(width: 26, height: 22)
                 .background(active ? AnyShapeStyle(.quaternary.opacity(0.8)) : AnyShapeStyle(.clear),
                             in: RoundedRectangle(cornerRadius: 6))
@@ -209,17 +209,17 @@ struct EditorPane: View {
                 ProgressView().controlSize(.mini)
             }
             Text(doc.title)
-                .font(.system(size: 11.5, weight: isActive ? .semibold : .regular))
+                .font(.jb(11.5, isActive ? .semibold : .regular))
                 .lineLimit(1)
                 .frame(maxWidth: 140)
             if doc.dirty {
-                Circle().fill(Color.accentColor).frame(width: 5, height: 5)
+                Circle().fill(JB.accent).frame(width: 5, height: 5)
             }
             Button {
                 store.closeDoc(doc.id)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.jb(8, .bold))
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
@@ -227,7 +227,7 @@ struct EditorPane: View {
         .padding(.horizontal, 9)
         .padding(.vertical, 5)
         .background(
-            Capsule().fill(isActive ? AnyShapeStyle(Color.accentColor.opacity(0.20)) : AnyShapeStyle(.quaternary.opacity(0.4)))
+            Capsule().fill(isActive ? AnyShapeStyle(JB.accent.opacity(0.20)) : AnyShapeStyle(.quaternary.opacity(0.4)))
         )
         .contentShape(Capsule())
         .hoverBounce(1.04)
@@ -264,8 +264,8 @@ struct EditorPane: View {
                         }
                     } label: {
                         HStack(spacing: 3) {
-                            Text(richFontName).font(.system(size: 11)).lineLimit(1)
-                            Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold)).foregroundStyle(.tertiary)
+                            Text(richFontName).font(.jb(11)).lineLimit(1)
+                            Image(systemName: "chevron.down").font(.jb(7, .bold)).foregroundStyle(.tertiary)
                         }
                         .frame(width: 110, alignment: .leading)
                     }
@@ -282,7 +282,7 @@ struct EditorPane: View {
                     TextField("", value: $richFontSize, format: .number)
                         .textFieldStyle(.plain)
                         .multilineTextAlignment(.center)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.jb(11, .medium))
                         .frame(width: 30)
                         .padding(.vertical, 2)
                         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 5))
@@ -349,11 +349,11 @@ struct EditorPane: View {
         )
         return VStack(alignment: .leading, spacing: 3) {
             Label(label, systemImage: icon)
-                .font(.system(size: 9.5, weight: .semibold))
+                .font(.jb(9.5, .semibold))
                 .foregroundStyle(preview ? Color.black.opacity(0.45) : Color.secondary)
             if isEditing {
                 TextEditor(text: binding)
-                    .font(.system(size: 11))
+                    .font(.jb(11))
                     .foregroundStyle(Color.white.opacity(0.9))
                     .scrollContentBackground(.hidden)
                     .frame(height: 38)
@@ -362,12 +362,12 @@ struct EditorPane: View {
                 ScrollView {
                     if text.isEmpty {
                         Text("")
-                            .font(.system(size: 11))
+                            .font(.jb(11))
                             .foregroundStyle(.tertiary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         Text(text)
-                            .font(.system(size: 11))
+                            .font(.jb(11))
                             .foregroundStyle(preview ? Color.black.opacity(0.78) : Color.white.opacity(0.85))
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)
@@ -479,10 +479,10 @@ struct EditorPane: View {
                 }
                 .overlay(alignment: .topTrailing) {
                     Label("AI writing…", systemImage: "sparkles")
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.jb(10.5, .medium))
                         .padding(.horizontal, 9)
                         .padding(.vertical, 4)
-                        .glassEffect(.regular.tint(Color.accentColor.opacity(0.25)), in: .capsule)
+                        .background(Capsule().fill(JB.accent.opacity(0.25)))
                         .padding(10)
                 }
             } else if previewMode {
@@ -524,7 +524,7 @@ struct EditorPane: View {
     private func fmtButton(_ icon: String, _ help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .medium))
+                .font(.jb(11, .medium))
                 .frame(width: 24, height: 20)
         }
         .buttonStyle(.borderless)
@@ -588,17 +588,17 @@ struct EditorPane: View {
                 ForEach(doc.suggestions) { s in
                     VStack(alignment: .leading, spacing: 6) {
                         Label(s.reason, systemImage: "lightbulb")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(Color.accentColor)
+                            .font(.jb(11, .medium))
+                            .foregroundStyle(JB.accent)
                         HStack(alignment: .top, spacing: 8) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(s.find)
-                                    .font(.system(size: 10.5, design: .monospaced))
+                                    .font(.jbMono(10.5))
                                     .strikethrough()
                                     .foregroundStyle(.secondary)
                                     .lineLimit(3)
                                 Text(s.replace)
-                                    .font(.system(size: 10.5, design: .monospaced))
+                                    .font(.jbMono(10.5))
                                     .lineLimit(3)
                             }
                             Spacer()
@@ -607,18 +607,18 @@ struct EditorPane: View {
                                     store.resolveSuggestion(docID: doc.id, suggestion: s, accept: true)
                                 } label: {
                                     Image(systemName: "checkmark")
-                                        .font(.system(size: 10, weight: .bold))
+                                        .font(.jb(10, .bold))
                                 }
-                                .buttonStyle(.glassProminent)
+                                .buttonStyle(.jbPrimary)
                                 .tint(.green)
                                 .controlSize(.small)
                                 Button {
                                     store.resolveSuggestion(docID: doc.id, suggestion: s, accept: false)
                                 } label: {
                                     Image(systemName: "xmark")
-                                        .font(.system(size: 10, weight: .bold))
+                                        .font(.jb(10, .bold))
                                 }
-                                .buttonStyle(.glass)
+                                .buttonStyle(.jbSecondary)
                                 .controlSize(.small)
                             }
                         }
@@ -637,15 +637,15 @@ struct EditorPane: View {
     private func footer(_ doc: EditorDoc) -> some View {
         HStack(spacing: 10) {
             Text(docLanguage(doc))
-                .font(.system(size: 10.5, weight: .medium))
+                .font(.jb(10.5, .medium))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(.quaternary.opacity(0.5), in: Capsule())
             if !doc.suggestions.isEmpty {
                 Text("\(doc.suggestions.count) suggestion\(doc.suggestions.count == 1 ? "" : "s")")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Color.accentColor)
+                    .font(.jb(10.5))
+                    .foregroundStyle(JB.accent)
             }
             Spacer()
             // Autosave status — no button to remember
@@ -659,7 +659,7 @@ struct EditorPane: View {
                     Text("Saved")
                 }
             }
-            .font(.system(size: 10.5))
+            .font(.jb(10.5))
             .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 12)
@@ -686,7 +686,7 @@ struct EmailDocEditor: View {
             }
             .textFieldStyle(.plain)
             .formStyle(.columns)
-            .font(.system(size: 12.5))
+            .font(.jb(12.5))
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             Divider().opacity(0.4)
@@ -694,13 +694,13 @@ struct EmailDocEditor: View {
             Divider().opacity(0.4)
             HStack {
                 Text("email")
-                    .font(.system(size: 10.5, weight: .medium))
+                    .font(.jb(10.5, .medium))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(.quaternary.opacity(0.5), in: Capsule())
                 if let error {
-                    Text(error).font(.caption).foregroundStyle(.red).lineLimit(1)
+                    Text(error).font(.jbCaption).foregroundStyle(.red).lineLimit(1)
                 }
                 Spacer()
                 Button {
@@ -714,8 +714,8 @@ struct EmailDocEditor: View {
                         Label("Send", systemImage: "paperplane.fill")
                     }
                 }
-                .buttonStyle(.glassProminent)
-                .tint(sent ? .green : Color.accentColor)
+                .buttonStyle(.jbPrimary)
+                .tint(sent ? .green : JB.accent)
                 .controlSize(.small)
                 .disabled(sending || sent || fields.to.isEmpty)
             }
@@ -861,15 +861,15 @@ struct DiffView: View {
             VStack(alignment: .leading, spacing: 1) {
                 if rows.isEmpty {
                     Text("No line-level changes (whitespace or reorder only)")
-                        .font(.system(size: 11))
+                        .font(.jb(11))
                         .foregroundStyle(.tertiary)
                 }
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, entry in
                     HStack(alignment: .top, spacing: 6) {
                         Text(entry.1 == 1 ? "+" : "−")
-                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                            .font(.jbMono(10.5, .bold))
                         Text(entry.0.isEmpty ? " " : entry.0)
-                            .font(.system(size: 10.5, design: .monospaced))
+                            .font(.jbMono(10.5))
                             .lineLimit(2)
                     }
                     .foregroundStyle(entry.1 == 1 ? Color.green : Color.red)

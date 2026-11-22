@@ -42,7 +42,7 @@ struct SettingsView: View {
                         Task { await APIClient.shared.setPref("cloak_mode", value: v) }
                     }
                 Text("Scrubs secrets and personal data — API keys, passwords, emails, card, passport and account numbers — from everything sent to a model or search engine, swapping them for placeholders like [API KEY] before the request leaves the backend. Applies to every endpoint, local ones included.")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
             }
             Section("Email") {
@@ -75,7 +75,7 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.menu)
                 Text("Mail stays local on this Mac. Connect any mailbox with its IMAP/SMTP settings (use an app-specific password for Gmail/iCloud).")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
             }
             Section("Calendar") {
@@ -96,35 +96,35 @@ struct SettingsView: View {
                     }
                 }
                 Text("macOS Calendar asks for full calendar permission so JoeBro can read, create, edit, and delete events locally.")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
             }
             if let integrationError {
                 Section {
                     Text(integrationError)
-                        .font(.caption)
+                        .font(.jbCaption)
                         .foregroundStyle(.red)
                 }
             }
             Section("Server") {
                 TextField("Server URL", text: $serverURL)
-                    .font(.system(size: 13, design: .monospaced))
+                    .font(.jbMono(13))
                 SecureField("Backend bearer token (only for a remote backend)", text: $backendToken)
-                    .font(.system(size: 13, design: .monospaced))
+                    .font(.jbMono(13))
                     .onChange(of: backendToken) { _, v in BackendToken.save(v) }
                 Text("JoeBro runs a private local backend on this Mac. Model endpoints can still point at local or Tailscale devices.")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
             }
             Section("Phone access") {
                 Text("Pair an iPhone, set up push and tune the phone agent in the Mobile tab.")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
             }
             Section("Documents") {
                 Toggle("Require approval for AI edits", isOn: $store.requireDocApproval)
                 Text("When on, the AI's changes to an open document wait for your Apply/Reject — review them in the editor. When off, the AI edits the open document directly, whether you're editing it or just viewing it.")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
 
                 Toggle("Unlimited tool use", isOn: Binding(
@@ -146,12 +146,12 @@ struct SettingsView: View {
                     }
                 }
                 Text("Caps how many tools the agent may call in a single turn before it must answer.")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
 
                 Toggle("Ask before running commands", isOn: $store.askBeforeCommands)
                 Text("In Full Access mode, the AI must get your approval (Allow / Always allow this session / Deny) before each terminal command.")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
             }
             Section("Updates") {
@@ -164,11 +164,11 @@ struct SettingsView: View {
                         .disabled(!updater.canCheckForUpdates)
                     Spacer()
                     Text("Version \(appVersionString)")
-                        .font(.caption)
+                        .font(.jbCaption)
                         .foregroundStyle(.secondary)
                 }
                 Text("JoeBro checks GitHub for new releases and installs them in place. The first launch of an update may need the same right-click → Open as the original install.")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -249,11 +249,11 @@ struct SettingsView: View {
             let _ = glass.backgroundPreset   // observe preset changes
             Section("Glass") {
                 Text("Glass opacity is tuned from the main window — the ◐ button next to the gear in the sidebar. (macOS renders glass differently while this Settings window has focus, so a slider here would lie to you.)")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
                 Toggle("Reduce glass effects", isOn: $glass.reduceGlass)
                 Text("Swaps live Liquid Glass for a lighter frosted look. Smoother when switching Spaces or on older Macs, since the system won't re-render the glass every time the window gains or loses focus. (Also on automatically if macOS \u{201C}Reduce transparency\u{201D} is enabled.)")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
             }
             Section("Background") {
@@ -268,10 +268,10 @@ struct SettingsView: View {
                                                          startPoint: .topLeading, endPoint: .bottomTrailing))
                                     .frame(width: 34, height: 34)
                                     .overlay(Circle().strokeBorder(
-                                        glass.backgroundPreset == preset.rawValue ? Color.accentColor : .clear,
+                                        glass.backgroundPreset == preset.rawValue ? JB.accent : .clear,
                                         lineWidth: 2.5))
                                 Text(preset.label)
-                                    .font(.system(size: 10))
+                                    .font(.jb(10))
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -279,7 +279,7 @@ struct SettingsView: View {
                     }
                 }
                 Text("Used when no wallpaper is set — the glass panels refract whichever backdrop you pick.")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
             }
             Section("Wallpaper") {
@@ -301,7 +301,7 @@ struct SettingsView: View {
                     }
                 }
                 Text("Panels render with liquid glass over the wallpaper.")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -352,7 +352,7 @@ struct ModelsSettingsTab: View {
                     }
                 }
                 Text("Used for compaction, calendar quick-add and other background AI jobs.")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
             } header: {
                 Text("Defaults")
@@ -365,7 +365,7 @@ struct ModelsSettingsTab: View {
                 case .loading:
                     ProgressView()
                 case .failed(let e):
-                    Text(e).foregroundStyle(.red).font(.caption)
+                    Text(e).foregroundStyle(.red).font(.jbCaption)
                 case .loaded(let list):
                     appleRow
                     ForEach(list) { ep in
@@ -378,13 +378,13 @@ struct ModelsSettingsTab: View {
                     Label("Add Endpoint…", systemImage: "plus")
                 }
                 if let error {
-                    Text(error).font(.caption).foregroundStyle(.red)
+                    Text(error).font(.jbCaption).foregroundStyle(.red)
                 }
             } header: {
                 Text("Endpoints & API Keys")
             } footer: {
                 Text("Untick a model to hide it from the picker.")
-                    .font(.caption)
+                    .font(.jbCaption)
             }
         }
         .formStyle(.grouped)
@@ -417,7 +417,7 @@ struct ModelsSettingsTab: View {
                 set: { setSubagentAuto($0) }
             ))
             Text("Subagents are helpers the main agent spawns for side tasks. When the switch is on, the agent picks a model for each one and the fixed model above is not used.")
-                .font(.caption)
+                .font(.jbCaption)
                 .foregroundStyle(.secondary)
         } header: {
             Text("Subagents")
@@ -441,12 +441,12 @@ struct ModelsSettingsTab: View {
     private var appleRow: some View {
         HStack {
             Image(systemName: "apple.logo")
-                .font(.system(size: 12))
+                .font(.jb(12))
                 .frame(width: 16)
             Text("Apple Intelligence")
-                .font(.system(size: 13, weight: .medium))
+                .font(.jb(13, .medium))
             Text("on-device")
-                .font(.system(size: 10))
+                .font(.jb(10))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 1)
                 .background(.quaternary.opacity(0.6), in: Capsule())
@@ -500,7 +500,7 @@ struct ModelsSettingsTab: View {
         )) {
             if let models = epModels[ep.id] {
                 if models.isEmpty {
-                    Text("No models discovered").font(.caption).foregroundStyle(.secondary)
+                    Text("No models discovered").font(.jbCaption).foregroundStyle(.secondary)
                 } else {
                     HStack {
                         Button("Select all") { setAll(epID: ep.id, visible: true) }
@@ -508,8 +508,8 @@ struct ModelsSettingsTab: View {
                         Spacer()
                     }
                     .buttonStyle(.borderless)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Color.accentColor)
+                    .font(.jb(11))
+                    .foregroundStyle(JB.accent)
                 }
                 ForEach(models) { m in
                     Toggle(isOn: Binding(
@@ -519,7 +519,7 @@ struct ModelsSettingsTab: View {
                         }
                     )) {
                         Text(m.display ?? m.id)
-                            .font(.system(size: 12))
+                            .font(.jb(12))
                     }
                     .toggleStyle(.checkbox)
                 }
@@ -529,10 +529,10 @@ struct ModelsSettingsTab: View {
         } label: {
             HStack {
                 Text(ep.name ?? ep.id)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.jb(13, .medium))
                 if let cat = ep.category {
                     Text(cat)
-                        .font(.system(size: 10))
+                        .font(.jb(10))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 1)
                         .background(.quaternary.opacity(0.6), in: Capsule())
@@ -550,7 +550,7 @@ struct ModelsSettingsTab: View {
                     }
                 } label: {
                     Image(systemName: "trash")
-                        .font(.system(size: 11))
+                        .font(.jb(11))
                 }
                 .buttonStyle(.borderless)
             }
@@ -598,7 +598,7 @@ struct AddEndpointSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Add Endpoint").font(.system(size: 14, weight: .semibold))
+                Text("Add Endpoint").font(.jb(14, .semibold))
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button {
@@ -607,8 +607,8 @@ struct AddEndpointSheet: View {
                     if saving { ProgressView().controlSize(.small) }
                     else { Text("Add") }
                 }
-                .buttonStyle(.glassProminent)
-                .tint(Color.accentColor)
+                .buttonStyle(.jbPrimary)
+                .tint(JB.accent)
                 .disabled(saving || baseURL.isEmpty)
             }
             .padding(14)
@@ -616,10 +616,10 @@ struct AddEndpointSheet: View {
             Form {
                 TextField("Name (e.g. Groq, OpenRouter)", text: $name)
                 TextField("Base URL (https://api.../v1)", text: $baseURL)
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(.jbMono(12))
                 SecureField("API key (optional for local)", text: $apiKey)
                 if let error {
-                    Text(error).font(.caption).foregroundStyle(.red)
+                    Text(error).font(.jbCaption).foregroundStyle(.red)
                 }
             }
             .formStyle(.grouped)
@@ -671,22 +671,22 @@ struct EmailConnectionSheet: View {
             Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 8) {
                 GridRow {
                     TextField("IMAP host", text: $imapHost)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(.jbMono(12))
                     TextField("Port", text: $imapPort)
                         .frame(width: 70)
                 }
                 GridRow {
                     TextField("SMTP host", text: $smtpHost)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(.jbMono(12))
                     TextField("Port", text: $smtpPort)
                         .frame(width: 70)
                 }
             }
             Text("Uses SSL by default (IMAP 993 / SMTP 465). For Gmail/iCloud, create an app-specific password. Mail stays local on this Mac.")
-                .font(.caption)
+                .font(.jbCaption)
                 .foregroundStyle(.secondary)
             if let error {
-                Text(error).font(.caption).foregroundStyle(.red)
+                Text(error).font(.jbCaption).foregroundStyle(.red)
             }
         }
     }
@@ -728,13 +728,13 @@ struct CalDAVConnectionSheet: View {
                               canSave: !url.isEmpty && !principal.isEmpty,
                               onCancel: { dismiss() }, onSave: save) {
             TextField("CalDAV URL", text: $url)
-                .font(.system(size: 12, design: .monospaced))
+                .font(.jbMono(12))
             TextField("Principal", text: $principal)
             SecureField("Password", text: $password)
             Text("Calendar data remains local to this Mac; this stores the CalDAV source for the local backend.")
-                .font(.caption)
+                .font(.jbCaption)
                 .foregroundStyle(.secondary)
-            if let error { Text(error).font(.caption).foregroundStyle(.red) }
+            if let error { Text(error).font(.jbCaption).foregroundStyle(.red) }
         }
     }
 
@@ -765,7 +765,7 @@ private struct ConnectionSheetChrome<Content: View>: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(title).font(.system(size: 14, weight: .semibold))
+                Text(title).font(.jb(14, .semibold))
                 Spacer()
                 Button("Cancel", action: onCancel)
                     .keyboardShortcut(.cancelAction)
@@ -775,8 +775,8 @@ private struct ConnectionSheetChrome<Content: View>: View {
                     if saving { ProgressView().controlSize(.small) }
                     else { Text("Connect") }
                 }
-                .buttonStyle(.glassProminent)
-                .tint(Color.accentColor)
+                .buttonStyle(.jbPrimary)
+                .tint(JB.accent)
                 .disabled(saving || !canSave)
             }
             .padding(14)

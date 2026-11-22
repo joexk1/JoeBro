@@ -39,10 +39,10 @@ struct AttachmentChipsView: View {
                             ProgressView().controlSize(.mini)
                         } else {
                             Image(systemName: icon(for: att.mime))
-                                .font(.system(size: 11))
+                                .font(.jb(11))
                         }
                         Text(att.name)
-                            .font(.system(size: 11.5, weight: .medium))
+                            .font(.jb(11.5, .medium))
                             .lineLimit(1)
                     }
                     .padding(.horizontal, 10)
@@ -89,7 +89,7 @@ struct QuickLookSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Text(url.lastPathComponent)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.jb(13, .semibold))
                     .lineLimit(1)
                 Spacer()
                 Button {
@@ -143,7 +143,7 @@ private struct AuthedUploadImage: View {
             if let image {
                 Image(nsImage: image).resizable().scaledToFit()
             } else if failed {
-                Label(att.name, systemImage: "photo").font(.system(size: 11))
+                Label(att.name, systemImage: "photo").font(.jb(11))
             } else {
                 ProgressView().controlSize(.small)
             }

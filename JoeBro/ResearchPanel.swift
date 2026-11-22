@@ -65,11 +65,11 @@ struct ResearchPanel: View {
     private var launcherBar: some View {
         HStack(spacing: 8) {
             Image(systemName: "sparkle.magnifyingglass")
-                .font(.system(size: 13))
-                .foregroundStyle(Color.accentColor)
+                .font(.jb(13))
+                .foregroundStyle(JB.accent)
             TextField("Research anything...", text: $query)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13))
+                .font(.jb(13))
                 .onSubmit(start)
             Picker("", selection: Binding(
                 get: { (researchModel ?? store.selectedModel)?.id ?? "" },
@@ -84,10 +84,10 @@ struct ResearchPanel: View {
             .frame(width: 190)
             Button(action: start) {
                 Label("Research", systemImage: "bolt.horizontal")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.jb(12, .semibold))
             }
-            .buttonStyle(.glassProminent)
-            .tint(Color.accentColor)
+            .buttonStyle(.jbPrimary)
+            .tint(JB.accent)
             .controlSize(.small)
             .disabled(query.trimmingCharacters(in: .whitespaces).isEmpty || store.researchRun != nil)
         }
@@ -169,7 +169,7 @@ struct ResearchPanel: View {
                       onToggleCheck: { toggleSelection(item.id, in: &selection) }) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.query)
-                    .font(.system(size: 12.5, weight: selected?.id == item.id ? .semibold : .regular))
+                    .font(.jb(12.5, selected?.id == item.id ? .semibold : .regular))
                     .lineLimit(2)
                 HStack(spacing: 8) {
                     if let cat = item.category, !cat.isEmpty {
@@ -183,7 +183,7 @@ struct ResearchPanel: View {
                         Text(Date(timeIntervalSince1970: done).formatted(date: .abbreviated, time: .omitted))
                     }
                 }
-                .font(.system(size: 10))
+                .font(.jb(10))
                 .foregroundStyle(.tertiary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -267,7 +267,7 @@ struct ResearchPanel: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(item.query)
-                            .font(.system(.title3, design: .rounded, weight: .bold))
+                            .font(.jb(.title3, .bold))
                         let report = detail["report"]?.stringValue
                             ?? detail["summary"]?.stringValue
                             ?? detail["result"]?.stringValue
@@ -281,17 +281,17 @@ struct ResearchPanel: View {
                         if let sources = detail["sources"]?.arrayValue, !sources.isEmpty {
                             Divider().opacity(0.4)
                             Text("Sources (\(sources.count))")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.jb(12, .semibold))
                                 .foregroundStyle(.secondary)
                             ForEach(Array(sources.prefix(30).enumerated()), id: \.offset) { i, s in
                                 if let url = s["url"]?.stringValue {
                                     Link(destination: URL(string: url) ?? URL(string: "about:blank")!) {
                                         HStack(spacing: 6) {
                                             Text("\(i + 1).")
-                                                .font(.system(size: 10.5, weight: .bold))
+                                                .font(.jb(10.5, .bold))
                                                 .foregroundStyle(.tertiary)
                                             Text(s["title"]?.stringValue ?? url)
-                                                .font(.system(size: 11.5))
+                                                .font(.jb(11.5))
                                                 .lineLimit(1)
                                         }
                                     }
@@ -339,16 +339,16 @@ struct ResearchProgressView: View {
                     ForEach(0..<3, id: \.self) { ring in
                         let phase = (t * 0.7 + Double(ring) / 3).truncatingRemainder(dividingBy: 1)
                         Circle()
-                            .stroke(Color.accentColor.opacity(0.55 * (1 - phase)), lineWidth: 2)
+                            .stroke(JB.accent.opacity(0.55 * (1 - phase)), lineWidth: 2)
                             .frame(width: 40 + 90 * phase, height: 40 + 90 * phase)
                     }
                     Circle()
-                        .fill(.ultraThinMaterial)
+                        .fill(JB.panelFill)
                         .frame(width: 56, height: 56)
                         .overlay(Circle().strokeBorder(.white.opacity(0.25), lineWidth: 1))
                     Image(systemName: phaseIcon)
-                        .font(.system(size: 19, weight: .medium))
-                        .foregroundStyle(Color.accentColor)
+                        .font(.jb(19, .medium))
+                        .foregroundStyle(JB.accent)
                         .contentTransition(.symbolEffect(.replace))
                 }
             }
@@ -356,15 +356,15 @@ struct ResearchProgressView: View {
 
             VStack(alignment: .leading, spacing: 7) {
                 Text(run.query)
-                    .font(.system(size: 13.5, weight: .semibold))
+                    .font(.jb(13.5, .semibold))
                     .lineLimit(2)
                 HStack(spacing: 6) {
                     Text(run.phase.capitalized)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color.accentColor)
+                        .font(.jb(12, .medium))
+                        .foregroundStyle(JB.accent)
                     if !run.message.isEmpty {
                         Text("· " + run.message)
-                            .font(.system(size: 11.5))
+                            .font(.jb(11.5))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
@@ -374,7 +374,7 @@ struct ResearchProgressView: View {
                     ZStack(alignment: .leading) {
                         Capsule().fill(.quaternary)
                         Capsule()
-                            .fill(LinearGradient(colors: [Color.accentColor.opacity(0.7), Color.accentColor],
+                            .fill(LinearGradient(colors: [JB.accent.opacity(0.7), JB.accent],
                                                  startPoint: .leading, endPoint: .trailing))
                             .frame(width: geo.size.width * progressFraction)
                     }
@@ -388,9 +388,9 @@ struct ResearchProgressView: View {
                     Spacer()
                     Button("Cancel") { onFinished() }
                         .buttonStyle(.borderless)
-                        .font(.system(size: 11))
+                        .font(.jb(11))
                 }
-                .font(.system(size: 10.5))
+                .font(.jb(10.5))
                 .foregroundStyle(.tertiary)
             }
             .padding(.trailing, 16)

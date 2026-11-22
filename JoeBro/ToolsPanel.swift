@@ -73,17 +73,17 @@ struct ToolsPanel: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label("Plugins", systemImage: "puzzlepiece.extension")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(.jb(13, .semibold))
                 Spacer()
                 Button { addPlugin() } label: {
                     Label("Add Plugin…", systemImage: "plus")
-                        .font(.system(size: 12))
+                        .font(.jb(12))
                 }
                 .buttonStyle(.borderless)
             }
 
             Text("Install richer capabilities the model can use in Agent mode.")
-                .font(.caption)
+                .font(.jbCaption)
                 .foregroundStyle(.secondary)
 
             if store.plugins.isEmpty {
@@ -120,35 +120,35 @@ struct ToolsPanel: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(plugin.name)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.jb(13, .medium))
                     Text(plugin.kind == "background" ? "BACKGROUND" : "FOREGROUND")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.jb(9, .semibold))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
                         .background(.quaternary, in: Capsule())
                     if plugin.source == "bundled" {
                         Text("BUNDLED")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Color.accentColor)
+                            .font(.jb(9, .semibold))
+                            .foregroundStyle(JB.accent)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
-                            .background(Color.accentColor.opacity(0.15), in: Capsule())
+                            .background(JB.accent.opacity(0.15), in: Capsule())
                     }
                 }
                 if let d = plugin.description, !d.isEmpty {
                     Text(d)
-                        .font(.system(size: 11))
+                        .font(.jb(11))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
                 if !plugin.summary.isEmpty {
                     Text(plugin.summary)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.jb(10, .medium))
                         .foregroundStyle(.tertiary)
                 }
                 if let e = plugin.error, !e.isEmpty {
                     Text(e)
-                        .font(.system(size: 10))
+                        .font(.jb(10))
                         .foregroundStyle(.red)
                         .lineLimit(3)
                 }
@@ -223,7 +223,7 @@ struct ToolsPanel: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label("MCP Servers", systemImage: "server.rack")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(.jb(13, .semibold))
                 Spacer()
                 if store.mcpBusy {
                     ProgressView().controlSize(.small)
@@ -232,18 +232,18 @@ struct ToolsPanel: View {
                     showAddMCP = true
                 } label: {
                     Label("Add MCP Server…", systemImage: "plus")
-                        .font(.system(size: 12))
+                        .font(.jb(12))
                 }
                 .buttonStyle(.borderless)
             }
 
             Text("Connect any MCP server (stdio). JoeBro launches it, discovers its tools, and offers them to the model in Agent mode.")
-                .font(.caption)
+                .font(.jbCaption)
                 .foregroundStyle(.secondary)
 
             if let err = store.mcpError, !err.isEmpty {
                 Text(err)
-                    .font(.system(size: 11))
+                    .font(.jb(11))
                     .foregroundStyle(.red)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -281,24 +281,24 @@ struct ToolsPanel: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(server.name)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.jb(13, .medium))
                 Text("\(server.command) \(server.args)")
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.jbMono(11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if let err = server.error, !err.isEmpty {
                     Text(err)
-                        .font(.system(size: 11))
+                        .font(.jb(11))
                         .foregroundStyle(.red)
                         .lineLimit(2)
                 } else if server.tools.isEmpty {
                     Text("No tools discovered.")
-                        .font(.system(size: 11))
+                        .font(.jb(11))
                         .foregroundStyle(.secondary)
                 } else {
                     Text(server.tools.joined(separator: ", "))
-                        .font(.system(size: 11))
+                        .font(.jb(11))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -328,19 +328,19 @@ struct ToolsPanel: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label("API Tools", systemImage: "network")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(.jb(13, .semibold))
                 Spacer()
                 Button {
                     showAdd = true
                 } label: {
                     Label("Add API Tool…", systemImage: "plus")
-                        .font(.system(size: 12))
+                        .font(.jb(12))
                 }
                 .buttonStyle(.borderless)
             }
 
             Text("Register any JSON API as a tool the model can call in Agent mode. The description tells the model when and how to use it.")
-                .font(.caption)
+                .font(.jbCaption)
                 .foregroundStyle(.secondary)
 
             if store.apiTools.isEmpty {
@@ -377,21 +377,21 @@ struct ToolsPanel: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(tool.name)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.jb(13, .medium))
                     Text((tool.method ?? "GET").uppercased())
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.jb(10, .semibold))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
                         .background(.quaternary, in: Capsule())
                     if tool.hasKey == true {
                         Image(systemName: "key.fill")
-                            .font(.system(size: 9))
+                            .font(.jb(9))
                             .foregroundStyle(.secondary)
                     }
                 }
                 if let url = tool.baseURL, !url.isEmpty {
                     Text(url)
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(.jbMono(11))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -446,7 +446,7 @@ struct APIToolSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Text(tool == nil ? "Add API Tool" : "Edit API Tool")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.jb(14, .semibold))
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button {
@@ -455,8 +455,8 @@ struct APIToolSheet: View {
                     if saving { ProgressView().controlSize(.small) }
                     else { Text(tool == nil ? "Add" : "Save") }
                 }
-                .buttonStyle(.glassProminent)
-                .tint(Color.accentColor)
+                .buttonStyle(.jbPrimary)
+                .tint(JB.accent)
                 .disabled(saving || name.trimmingCharacters(in: .whitespaces).isEmpty || baseURL.isEmpty)
             }
             .padding(14)
@@ -464,9 +464,9 @@ struct APIToolSheet: View {
             Form {
                 TextField("Name (e.g. LinkedIn Search)", text: $name)
                 TextField("Base URL (https://api.example.com/v2/search)", text: $baseURL)
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(.jbMono(12))
                 Text("Put {query} anywhere in the URL to place the model's input exactly (e.g. …/search?name={query}). Otherwise it's appended as ?query=…")
-                    .font(.caption2)
+                    .font(.jbCaption2)
                     .foregroundStyle(.secondary)
                 SecureField(tool?.hasKey == true ? "API key (leave blank to keep)" : "API key (optional)", text: $apiKey)
                 Picker("Method", selection: $method) {
@@ -476,13 +476,13 @@ struct APIToolSheet: View {
                 .pickerStyle(.segmented)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Description")
-                        .font(.caption)
+                        .font(.jbCaption)
                         .foregroundStyle(.secondary)
                     TextEditor(text: $description)
-                        .font(.system(size: 12))
+                        .font(.jb(12))
                         .frame(minHeight: 90)
                     Text("The model reads this to know when and how to call the tool.")
-                        .font(.caption2)
+                        .font(.jbCaption2)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -533,7 +533,7 @@ struct MCPServerSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Text(server == nil ? "Add MCP Server" : "Edit MCP Server")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.jb(14, .semibold))
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button {
@@ -542,8 +542,8 @@ struct MCPServerSheet: View {
                     if saving { ProgressView().controlSize(.small) }
                     else { Text(server == nil ? "Add" : "Save") }
                 }
-                .buttonStyle(.glassProminent)
-                .tint(Color.accentColor)
+                .buttonStyle(.jbPrimary)
+                .tint(JB.accent)
                 .disabled(saving
                           || name.trimmingCharacters(in: .whitespaces).isEmpty
                           || command.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -553,16 +553,16 @@ struct MCPServerSheet: View {
             Form {
                 TextField("Name (e.g. Filesystem)", text: $name)
                 TextField("Command (e.g. npx)", text: $command)
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(.jbMono(12))
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Arguments")
-                        .font(.caption)
+                        .font(.jbCaption)
                         .foregroundStyle(.secondary)
                     TextEditor(text: $args)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(.jbMono(12))
                         .frame(minHeight: 60)
                     Text("e.g. -y @modelcontextprotocol/server-filesystem /Users/me/Documents")
-                        .font(.caption2)
+                        .font(.jbCaption2)
                         .foregroundStyle(.secondary)
                 }
                 Picker("Agent access", selection: $permission) {
@@ -571,10 +571,10 @@ struct MCPServerSheet: View {
                     Text("Full access").tag("full")
                 }
                 Text("The permission level the agent must be in to use this server's tools (e.g. phone or computer control should require Full access).")
-                    .font(.caption2)
+                    .font(.jbCaption2)
                     .foregroundStyle(.secondary)
                 Text("JoeBro launches the server, discovers its tools, and offers them to the model in Agent mode. The first connection may take a moment.")
-                    .font(.caption2)
+                    .font(.jbCaption2)
                     .foregroundStyle(.secondary)
             }
             .formStyle(.grouped)
@@ -618,12 +618,12 @@ struct PluginEditSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Edit Plugin").font(.system(size: 14, weight: .semibold))
+                Text("Edit Plugin").font(.jb(14, .semibold))
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Save") { save() }
-                    .buttonStyle(.glassProminent)
-                    .tint(Color.accentColor)
+                    .buttonStyle(.jbPrimary)
+                    .tint(JB.accent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(name.isEmpty)
             }
@@ -642,10 +642,10 @@ struct PluginEditSheet: View {
                     Text("Full access").tag("full")
                 }
                 Text("The permission level the agent must be in to use this plugin (computer-use plugins need Full access).")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.jbCaption).foregroundStyle(.secondary)
                 if let repo = plugin.repoPath, !repo.isEmpty {
                     Text(repo)
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(.jbMono(11))
                         .foregroundStyle(.secondary)
                         .lineLimit(1).truncationMode(.middle)
                 }
@@ -681,11 +681,11 @@ struct ComputerUseSettingsSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Label("Agent Desktop", systemImage: "cpu")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.jb(14, .semibold))
                 Spacer()
                 Button("Done") { save(); dismiss() }
-                    .buttonStyle(.glassProminent)
-                    .tint(Color.accentColor)
+                    .buttonStyle(.jbPrimary)
+                    .tint(JB.accent)
                     .keyboardShortcut(.defaultAction)
             }
             .padding(14)
@@ -694,26 +694,26 @@ struct ComputerUseSettingsSheet: View {
                 VStack(alignment: .leading, spacing: 14) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("What it can do")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.jb(12, .semibold))
                         Text("In Agent mode (Full access), JoeBro can drive this Mac: read an app's windows, menus and buttons as an accessibility tree, open apps, click, type and press shortcuts. With Vercel's agent-desktop installed it works headless: it doesn't move your mouse or steal focus. It reads the screen as text first and only takes a picture when it must, so it stays fast and cheap.")
-                            .font(.system(size: 12))
+                            .font(.jb(12))
                             .foregroundStyle(.secondary)
                         Text("Install agent-desktop with `npm i -g agent-desktop`. Until it's installed, JoeBro uses its built-in osascript version.")
-                            .font(.system(size: 12))
+                            .font(.jb(12))
                             .foregroundStyle(.secondary)
                         Text("It needs Accessibility access (System Settings > Privacy & Security > Accessibility). Turn the plugin off above to revoke all of this at once.")
-                            .font(.system(size: 12))
+                            .font(.jb(12))
                             .foregroundStyle(.secondary)
                     }
                     Divider()
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Blocked apps")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.jb(12, .semibold))
                         Text("One app name per line. JoeBro will refuse to open, click, type into or read any app whose name matches — even if you ask it to. Good for banking and other sensitive apps.")
-                            .font(.system(size: 12))
+                            .font(.jb(12))
                             .foregroundStyle(.secondary)
                         TextEditor(text: $blocked)
-                            .font(.system(size: 13, design: .monospaced))
+                            .font(.jbMono(13))
                             .frame(minHeight: 120)
                             .padding(6)
                             .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
@@ -758,11 +758,11 @@ struct AdvisorSettingsSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Label("Advisor", systemImage: "graduationcap")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.jb(14, .semibold))
                 Spacer()
                 Button("Done") { save(); dismiss() }
-                    .buttonStyle(.glassProminent)
-                    .tint(Color.accentColor)
+                    .buttonStyle(.jbPrimary)
+                    .tint(JB.accent)
                     .keyboardShortcut(.defaultAction)
             }
             .padding(14)
@@ -771,9 +771,9 @@ struct AdvisorSettingsSheet: View {
                 VStack(alignment: .leading, spacing: 14) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Advisor model")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.jb(12, .semibold))
                         Text("A more powerful model your everyday AI can call for a second opinion — at any agent access level. It sees only the question it's sent, never the whole chat.")
-                            .font(.system(size: 12))
+                            .font(.jb(12))
                             .foregroundStyle(.secondary)
                         Picker("", selection: $modelID) {
                             Text("Choose a model…").tag("")
@@ -786,17 +786,17 @@ struct AdvisorSettingsSheet: View {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text("When should it be called?")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.jb(12, .semibold))
                             Spacer()
                             Button("Reset to default") { desc = Self.defaultDesc }
-                                .font(.system(size: 11))
+                                .font(.jb(11))
                                 .buttonStyle(.borderless)
                         }
                         Text("This is the advisor tool's description — it's what tells your everyday model when to ask for advice. Edit it to make calls more or less frequent, or to point them at specific topics.")
-                            .font(.system(size: 12))
+                            .font(.jb(12))
                             .foregroundStyle(.secondary)
                         TextEditor(text: $desc)
-                            .font(.system(size: 12))
+                            .font(.jb(12))
                             .frame(minHeight: 140)
                             .padding(6)
                             .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))

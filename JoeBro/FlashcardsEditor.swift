@@ -203,22 +203,22 @@ struct FlashcardsEditor: View {
         let total = sessionLearned + queue.count
         return HStack(spacing: 10) {
             Text("\(queue.count) to go")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.jb(11, .semibold))
                 .foregroundStyle(.secondary)
             if sessionLearned > 0 {
                 Label("\(sessionLearned)", systemImage: "checkmark.circle.fill")
-                    .font(.system(size: 11)).foregroundStyle(.green)
+                    .font(.jb(11)).foregroundStyle(.green)
             }
             if sessionAgain > 0 {
                 Label("\(sessionAgain)", systemImage: "arrow.counterclockwise.circle.fill")
-                    .font(.system(size: 11)).foregroundStyle(.orange)
+                    .font(.jb(11)).foregroundStyle(.orange)
             }
             Spacer()
             Button {
                 queue.shuffle()
                 revealed = false
             } label: {
-                Image(systemName: "shuffle").font(.system(size: 11))
+                Image(systemName: "shuffle").font(.jb(11))
             }
             .buttonStyle(.borderless)
             .help("Shuffle the remaining cards")
@@ -245,12 +245,12 @@ struct FlashcardsEditor: View {
     private func face(label: String, text: String, hint: String?) -> some View {
         VStack(spacing: 10) {
             Text(label)
-                .font(.system(size: 9.5, weight: .bold))
+                .font(.jb(9.5, .bold))
                 .kerning(1.2)
                 .foregroundStyle(.tertiary)
             ScrollView {
                 Text(text.isEmpty ? "(blank)" : text)
-                    .font(.system(size: 19, weight: .medium))
+                    .font(.jb(19, .medium))
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
                     .textSelection(.enabled)
@@ -258,7 +258,7 @@ struct FlashcardsEditor: View {
             .frame(maxHeight: 260)
             if let hint {
                 Text(hint)
-                    .font(.system(size: 10))
+                    .font(.jb(10))
                     .foregroundStyle(.quaternary)
             }
         }
@@ -277,20 +277,20 @@ struct FlashcardsEditor: View {
                     gradeStillLearning()
                 } label: {
                     Label("Still learning", systemImage: "arrow.counterclockwise")
-                        .font(.system(size: 12.5, weight: .medium))
+                        .font(.jb(12.5, .medium))
                         .frame(minWidth: 110)
                 }
-                .buttonStyle(.glassProminent)
+                .buttonStyle(.jbPrimary)
                 .tint(.orange)
                 .help("Show this card again in a few cards (1)")
                 Button {
                     gradeLearned()
                 } label: {
                     Label("Learned", systemImage: "checkmark")
-                        .font(.system(size: 12.5, weight: .medium))
+                        .font(.jb(12.5, .medium))
                         .frame(minWidth: 110)
                 }
-                .buttonStyle(.glassProminent)
+                .buttonStyle(.jbPrimary)
                 .tint(.green)
                 .help("Mark learned and move on (2 or Space)")
             }
@@ -304,19 +304,19 @@ struct FlashcardsEditor: View {
     private var sessionSummary: some View {
         VStack(spacing: 14) {
             Image(systemName: stillToLearn == 0 ? "trophy.fill" : "checkmark.seal.fill")
-                .font(.system(size: 40))
+                .font(.jb(40))
                 .foregroundStyle(stillToLearn == 0 ? .yellow : .green)
             if sessionStarted {
                 Text(stillToLearn == 0 ? "All \(cards.count) cards learned!" : "Session done")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.jb(17, .semibold))
                 Text("\(sessionLearned) learned this round" +
                      (sessionAgain > 0 ? " · \(sessionAgain) retries" : "") +
                      (stillToLearn > 0 ? " · \(stillToLearn) still to learn" : ""))
-                    .font(.system(size: 12))
+                    .font(.jb(12))
                     .foregroundStyle(.secondary)
             } else {
                 Text("All \(cards.count) cards learned!")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.jb(17, .semibold))
             }
             HStack(spacing: 10) {
                 if stillToLearn > 0 {
@@ -324,24 +324,24 @@ struct FlashcardsEditor: View {
                         startSession()
                     } label: {
                         Label("Continue learning (\(stillToLearn))", systemImage: "play.fill")
-                            .font(.system(size: 12.5, weight: .medium))
+                            .font(.jb(12.5, .medium))
                     }
-                    .buttonStyle(.glassProminent)
+                    .buttonStyle(.jbPrimary)
                     Button {
                         startSession(all: true)
                     } label: {
                         Label("Study all \(cards.count)", systemImage: "arrow.clockwise")
-                            .font(.system(size: 12.5, weight: .medium))
+                            .font(.jb(12.5, .medium))
                     }
-                    .buttonStyle(.glass)
+                    .buttonStyle(.jbSecondary)
                 } else {
                     Button {
                         startSession(all: true)
                     } label: {
                         Label("Study again", systemImage: "arrow.clockwise")
-                            .font(.system(size: 12.5, weight: .medium))
+                            .font(.jb(12.5, .medium))
                     }
-                    .buttonStyle(.glassProminent)
+                    .buttonStyle(.jbPrimary)
                 }
             }
         }
@@ -361,14 +361,14 @@ struct FlashcardsEditor: View {
                 }
                 Spacer()
                 Text("\(cards.count) cards · \(cards.count - stillToLearn) learned")
-                    .font(.system(size: 10.5))
+                    .font(.jb(10.5))
                     .foregroundStyle(.secondary)
                 if doc?.dirty == true {
-                    Text("unsaved").font(.system(size: 10)).foregroundStyle(.secondary)
+                    Text("unsaved").font(.jb(10)).foregroundStyle(.secondary)
                 }
             }
             .buttonStyle(.borderless)
-            .font(.system(size: 11))
+            .font(.jb(11))
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             Divider().opacity(0.4)
@@ -392,7 +392,7 @@ struct FlashcardsEditor: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text("\(i + 1)")
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .font(.jbMono(10, .semibold))
                     .foregroundStyle(.tertiary)
                 Spacer()
                 Button {
@@ -401,7 +401,7 @@ struct FlashcardsEditor: View {
                 } label: {
                     Label(cards[i].learned ? "Learned" : "Learning",
                           systemImage: cards[i].learned ? "checkmark.seal.fill" : "seal")
-                        .font(.system(size: 10.5))
+                        .font(.jb(10.5))
                         .foregroundStyle(cards[i].learned ? .green : .secondary)
                 }
                 .buttonStyle(.borderless)
@@ -411,19 +411,19 @@ struct FlashcardsEditor: View {
                     commit()
                 } label: {
                     Image(systemName: "trash")
-                        .font(.system(size: 10.5))
+                        .font(.jb(10.5))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.borderless)
             }
             TextField("Question", text: cardBinding(i, \.front), axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13, weight: .medium))
+                .font(.jb(13, .medium))
                 .lineLimit(1...6)
             Divider().opacity(0.5)
             TextField("Answer", text: cardBinding(i, \.back), axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12.5))
+                .font(.jb(12.5))
                 .foregroundStyle(.secondary)
                 .lineLimit(1...8)
         }

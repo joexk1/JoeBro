@@ -42,7 +42,7 @@ struct SharedMemoryPanel: View {
                     }.frame(maxWidth: 220)
                     Toggle("Archived", isOn: $showArchived).toggleStyle(.switch).tint(.green).controlSize(.small)
                 }
-                if let note { Text(note).font(.system(size: 11.5)).foregroundStyle(.secondary) }
+                if let note { Text(note).font(.jb(11.5)).foregroundStyle(.secondary) }
                 HStack(spacing: 12) {
                     ScrollView {
                         LazyVStack(spacing: 8) {
@@ -65,18 +65,18 @@ struct SharedMemoryPanel: View {
         Button { selectedID = f.id } label: {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 5) {
-                    Image(systemName: f.kindSymbol).font(.system(size: 10)).foregroundStyle(Color.accentColor)
-                    Text(f.kindLabel + ((f.topic ?? "").isEmpty ? "" : " · " + (f.topic ?? ""))).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.secondary)
+                    Image(systemName: f.kindSymbol).font(.jb(10)).foregroundStyle(JB.accent)
+                    Text(f.kindLabel + ((f.topic ?? "").isEmpty ? "" : " · " + (f.topic ?? ""))).font(.jb(10.5, .semibold)).foregroundStyle(.secondary)
                     Spacer()
-                    if f.isPinned { Image(systemName: "pin.fill").font(.system(size: 9)).foregroundStyle(.orange) }
+                    if f.isPinned { Image(systemName: "pin.fill").font(.jb(9)).foregroundStyle(.orange) }
                 }
-                Text(f.text).font(.system(size: 12.5)).multilineTextAlignment(.leading).lineLimit(4)
+                Text(f.text).font(.jb(12.5)).multilineTextAlignment(.leading).lineLimit(4)
                 HStack(spacing: 6) {
                     ProgressView(value: f.strengthValue).frame(width: 46).controlSize(.mini)
                     Text(f.provenanceLine).lineLimit(1)
                     Spacer()
                     Text(relativeDateISO(f.updatedAt))
-                }.font(.system(size: 10)).foregroundStyle(.secondary)
+                }.font(.jb(10)).foregroundStyle(.secondary)
             }
             .padding(9).frame(maxWidth: .infinity, alignment: .leading)
             .background(selectedID == f.id ? AnyShapeStyle(.quaternary.opacity(0.6)) : AnyShapeStyle(.clear), in: RoundedRectangle(cornerRadius: 9))
@@ -113,7 +113,7 @@ private struct MemoryDetail: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
-                TextEditor(text: $text).font(.system(size: 13)).frame(minHeight: 110).scrollContentBackground(.hidden)
+                TextEditor(text: $text).font(.jb(13)).frame(minHeight: 110).scrollContentBackground(.hidden)
                     .padding(6).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
                 HStack {
                     TextField("Topic", text: $topic).textFieldStyle(.roundedBorder)
@@ -124,18 +124,18 @@ private struct MemoryDetail: View {
                     LabeledContent("Strength", value: "\(Int(fact.strengthValue * 100))%")
                     LabeledContent("Recalled", value: "\(fact.recalls ?? 0) times")
                     LabeledContent("Updated", value: relativeDateISO(fact.updatedAt))
-                }.font(.system(size: 12))
+                }.font(.jb(12))
                 HStack {
-                    Button("Save") { run { try await APIClient.shared.memoryEdit(fact.id, text: text, topic: topic, kind: kind) } }.buttonStyle(.borderedProminent)
+                    Button("Save") { run { try await APIClient.shared.memoryEdit(fact.id, text: text, topic: topic, kind: kind) } }.buttonStyle(.jbPrimary)
                     Button(fact.isPinned ? "Unpin" : "Pin") { run { try await APIClient.shared.memoryPin(fact.id, pinned: !fact.isPinned) } }
                     if fact.isArchived { Button("Restore") { run { try await APIClient.shared.memoryRestore(fact.id) } } }
                     else { Button("Archive", role: .destructive) { run { try await APIClient.shared.memoryArchive(fact.id) } } }
                 }.controlSize(.small)
-                if let error { Text(error).foregroundStyle(.red).font(.caption) }
+                if let error { Text(error).foregroundStyle(.red).font(.jbCaption) }
                 if history.count > 1 {
                     Divider()
-                    Text("Earlier versions").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                    ForEach(history.dropLast()) { Text($0.text).font(.system(size: 11.5)).foregroundStyle(.secondary) }
+                    Text("Earlier versions").font(.jb(11, .semibold)).foregroundStyle(.secondary)
+                    ForEach(history.dropLast()) { Text($0.text).font(.jb(11.5)).foregroundStyle(.secondary) }
                 }
             }.padding(16)
         }
@@ -157,7 +157,7 @@ private struct MemoryAddSheet: View {
     @State private var error: String?
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Add to memory").font(.headline)
+            Text("Add to memory").font(.jbHeadline)
             TextField("What should every agent know?", text: $text, axis: .vertical).lineLimit(2...8).textFieldStyle(.roundedBorder)
             HStack {
                 Picker("Applies to", selection: $target) {
@@ -166,7 +166,7 @@ private struct MemoryAddSheet: View {
                 }
                 Picker("Kind", selection: $kind) { ForEach(["fact", "decision", "gotcha", "preference"], id: \.self) { Text($0.capitalized).tag($0) } }
             }
-            if let error { Text(error).foregroundStyle(.red).font(.caption) }
+            if let error { Text(error).foregroundStyle(.red).font(.jbCaption) }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)

@@ -26,7 +26,7 @@ struct NightShiftPanel: View {
             VStack(spacing: 10) {
                 Picker("", selection: $page) { ForEach(Page.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
                     .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 420)
-                if let note { Text(note).font(.system(size: 11.5)).foregroundStyle(.secondary) }
+                if let note { Text(note).font(.jb(11.5)).foregroundStyle(.secondary) }
                 ScrollView {
                     LazyVStack(spacing: 10) {
                         switch page {
@@ -63,30 +63,30 @@ struct NightShiftPanel: View {
     private func card(_ t: NightTask) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(t.name).font(.system(size: 13.5, weight: .semibold))
+                Text(t.name).font(.jb(13.5, .semibold))
                 Spacer()
                 if let ok = t.result?.tests?.passed {
                     Label(ok ? "Tests passed" : "Tests failed", systemImage: ok ? "checkmark.circle.fill" : "xmark.octagon.fill")
-                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(ok ? .green : .red)
+                        .font(.jb(11, .semibold)).foregroundStyle(ok ? .green : .red)
                 }
             }
             Text([t.repoName, t.agentLabel, t.model].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
-                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .font(.jb(11)).foregroundStyle(.secondary)
             if let d = t.result?.diff {
                 HStack(spacing: 12) {
                     Text("\(d.files ?? 0) files")
                     Text("+\(d.insertions ?? 0)").foregroundStyle(.green)
                     Text("-\(d.deletions ?? 0)").foregroundStyle(.red)
                     if let s = t.result?.durationS { Text("\(Int(s / 60)) min").foregroundStyle(.secondary) }
-                }.font(.system(size: 12, design: .monospaced))
+                }.font(.jbMono(12))
                 ForEach(d.fileList?.prefix(3).map { $0 } ?? [], id: \.path) { f in
                     HStack { Text(f.path).lineLimit(1); Spacer(); Text("+\(f.added ?? 0) -\(f.removed ?? 0)").foregroundStyle(.secondary) }
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(.jbMono(11))
                 }
             }
-            if let s = t.result?.summary, !s.isEmpty { Text(s).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true) }
+            if let s = t.result?.summary, !s.isEmpty { Text(s).font(.jb(12)).fixedSize(horizontal: false, vertical: true) }
             HStack(spacing: 8) {
-                Button("Approve") { Task { await decide(t, "approve") } }.buttonStyle(.borderedProminent)
+                Button("Approve") { Task { await decide(t, "approve") } }.buttonStyle(.jbPrimary)
                 Button("Reject", role: .destructive) { rejecting = t }
                 Button("Follow-up") { followUp = t; followUpText = "" }
                 Spacer()
@@ -101,9 +101,9 @@ struct NightShiftPanel: View {
         HStack(spacing: 10) {
             if t.state == "running" { ProgressView().controlSize(.small) } else { Image(systemName: "moon.zzz").foregroundStyle(.secondary) }
             VStack(alignment: .leading, spacing: 2) {
-                Text(t.name).font(.system(size: 12.5, weight: .medium)).lineLimit(2)
+                Text(t.name).font(.jb(12.5, .medium)).lineLimit(2)
                 Text([t.repoName, t.agentLabel, t.model].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .font(.jb(11)).foregroundStyle(.secondary)
             }
             Spacer()
             if t.state == "queued" {
@@ -144,13 +144,13 @@ struct NightDiffSheet: View {
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack { Text(task.name).font(.headline); Spacer(); Button("Done") { dismiss() } }
+            HStack { Text(task.name).font(.jbHeadline); Spacer(); Button("Done") { dismiss() } }
             if let out = task.result?.tests?.outputTail, !out.isEmpty {
-                Text(out).font(.system(size: 11, design: .monospaced)).padding(8).frame(maxWidth: .infinity, alignment: .leading)
+                Text(out).font(.jbMono(11)).padding(8).frame(maxWidth: .infinity, alignment: .leading)
                     .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
             }
-            ForEach(task.result?.learned ?? [], id: \.self) { Label($0, systemImage: "brain").font(.system(size: 12)) }
-            ScrollView { Text(diff).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+            ForEach(task.result?.learned ?? [], id: \.self) { Label($0, systemImage: "brain").font(.jb(12)) }
+            ScrollView { Text(diff).font(.jbMono(11)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
         }
         .padding(18).frame(minWidth: 640, minHeight: 440)
         .task { diff = (try? await APIClient.shared.nightDiff(task.id)) ?? "" }
@@ -171,7 +171,7 @@ struct NightComposerSheet: View {
                                  "opencode": ["qwen3-coder:30b", "llama3.3:70b", "deepseek-v3.2"], "any": []]
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Queue a task").font(.headline)
+            Text("Queue a task").font(.jbHeadline)
             TextField("What should the agent do?", text: $prompt, axis: .vertical).lineLimit(3...8).textFieldStyle(.roundedBorder)
             TextField("Title (optional)", text: $title).textFieldStyle(.roundedBorder)
             TextField("Repository path", text: $repo).textFieldStyle(.roundedBorder)
@@ -185,7 +185,7 @@ struct NightComposerSheet: View {
                 }
             }.onChange(of: agent) { model = "" }
             TextField("Test command (optional)", text: $tests).textFieldStyle(.roundedBorder)
-            if let error { Text(error).foregroundStyle(.red).font(.caption) }
+            if let error { Text(error).foregroundStyle(.red).font(.jbCaption) }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)

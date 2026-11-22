@@ -26,14 +26,14 @@ struct PersonalFolderPicker: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Bind Project Folder").font(.system(size: 14, weight: .semibold))
+                Text("Bind Project Folder").font(.jb(14, .semibold))
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button { bind() } label: {
                     if binding { ProgressView().controlSize(.small) } else { Text("Bind Folder") }
                 }
-                .buttonStyle(.glassProminent)
-                .tint(Color.accentColor)
+                .buttonStyle(.jbPrimary)
+                .tint(JB.accent)
                 .disabled(binding || !canBind)
             }
             .padding(14)
@@ -54,7 +54,7 @@ struct PersonalFolderPicker: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if let error {
-                Text(error).font(.caption).foregroundStyle(.red).padding(.bottom, 8)
+                Text(error).font(.jbCaption).foregroundStyle(.red).padding(.bottom, 8)
             }
         }
         .frame(width: 520, height: 440)
@@ -68,16 +68,16 @@ struct PersonalFolderPicker: View {
     // MARK: This Mac
     private var macPane: some View {
         VStack(spacing: 16) {
-            Image(systemName: "laptopcomputer").font(.system(size: 40, weight: .light))
-                .foregroundStyle(Color.accentColor)
+            Image(systemName: "laptopcomputer").font(.jb(40, .light))
+                .foregroundStyle(JB.accent)
             Text(macURL?.path ?? "Choose a folder on this Mac")
-                .font(.system(size: 12, design: macURL == nil ? .default : .monospaced))
+                .font(macURL == nil ? .jb(12) : .jbMono(12))
                 .foregroundStyle(macURL == nil ? .secondary : .primary)
                 .multilineTextAlignment(.center).lineLimit(4)
             Button { chooseMacFolder() } label: { Label("Choose Folder…", systemImage: "folder") }
-                .buttonStyle(.glassProminent).tint(Color.accentColor)
+                .buttonStyle(.jbPrimary).tint(JB.accent)
             Text("The agent works on this Mac through its bridge. The Mac must be on Tailscale and running its bridge agent.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.jbCaption).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center).frame(maxWidth: 380)
         }
         .padding(24)
@@ -90,7 +90,7 @@ struct PersonalFolderPicker: View {
                 Button { Task { await loadPi(parentOf(piPath)) } } label: { Image(systemName: "chevron.up") }
                     .buttonStyle(.borderless).disabled(piPath.isEmpty || piPath == "/")
                 Text(piPath.isEmpty ? "~" : piPath)
-                    .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
+                    .font(.jbMono(11)).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
                 if loading { ProgressView().controlSize(.small) }
             }
@@ -101,9 +101,9 @@ struct PersonalFolderPicker: View {
                     ForEach(piEntries) { e in
                         Button { Task { await loadPi(join(piPath, e.name)) } } label: {
                             HStack(spacing: 8) {
-                                Image(systemName: "folder.fill").foregroundStyle(Color.accentColor.opacity(0.8))
-                                Text(e.name).font(.system(size: 12.5)); Spacer()
-                                Image(systemName: "chevron.right").font(.system(size: 9)).foregroundStyle(.tertiary)
+                                Image(systemName: "folder.fill").foregroundStyle(JB.accent.opacity(0.8))
+                                Text(e.name).font(.jb(12.5)); Spacer()
+                                Image(systemName: "chevron.right").font(.jb(9)).foregroundStyle(.tertiary)
                             }
                             .padding(.horizontal, 12).padding(.vertical, 7)
                             .contentShape(Rectangle())
@@ -111,13 +111,13 @@ struct PersonalFolderPicker: View {
                         .buttonStyle(.plain)
                     }
                     if piEntries.isEmpty && !loading {
-                        Text("No sub-folders").font(.caption).foregroundStyle(.tertiary).padding(.top, 20)
+                        Text("No sub-folders").font(.jbCaption).foregroundStyle(.tertiary).padding(.top, 20)
                     }
                 }
                 .padding(8)
             }
             Text("Binds this folder on the Pi (where Nextcloud is mounted). The agent works on the Pi.")
-                .font(.caption).foregroundStyle(.secondary).padding(8)
+                .font(.jbCaption).foregroundStyle(.secondary).padding(8)
         }
     }
 

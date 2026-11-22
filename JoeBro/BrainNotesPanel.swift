@@ -132,21 +132,21 @@ struct BrainPanel: View {
                       selecting: !selection.isEmpty,
                       onToggleCheck: { toggleSelection(m.id, in: &selection) }) {
             Image(systemName: m.pinned == true ? "pin.fill" : "sparkle")
-                .font(.system(size: 11))
-                .foregroundStyle(m.pinned == true ? Color.accentColor : .secondary)
+                .font(.jb(11))
+                .foregroundStyle(m.pinned == true ? JB.accent : .secondary)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 4) {
                 Text(m.displayText)
-                    .font(.system(size: 13))
+                    .font(.jb(13))
                     .textSelection(.enabled)
                 HStack(spacing: 8) {
                     Text(m.effectiveCategory)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.jb(10, .medium))
                         .padding(.horizontal, 7)
                         .padding(.vertical, 2)
                         .background(.quaternary.opacity(0.6), in: Capsule())
                     Text(relativeDate(m.createdAt))
-                        .font(.system(size: 10))
+                        .font(.jb(10))
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -331,7 +331,7 @@ private struct MemoryMapView: View {
                 // re-laid-out every string on every frame.
                 ForEach(graph.nodes) { node in
                     Text(node.label)
-                        .font(.system(size: 9))
+                        .font(.jb(9))
                         .foregroundStyle(.secondary)
                         .opacity(zoom > 0.55 || hoveredID == node.id ? 1 : 0)
                         .position(labelPoint(node, center: center))
@@ -369,7 +369,7 @@ private struct MemoryMapView: View {
             // reads even when the layout can't hit ideal lengths.
             let strength = (200 - rest) / 140   // 0 weak … 1 strong
             ctx.stroke(path,
-                       with: .color(hot ? Color.accentColor
+                       with: .color(hot ? JB.accent
                                         : Color.secondary.opacity(0.2 + 0.25 * strength)),
                        lineWidth: hot ? 1.6 : 0.7 + strength)
         }
@@ -385,9 +385,9 @@ private struct MemoryMapView: View {
             let r = radius(node, hovered: hovered)
             let circle = Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2))
             ctx.fill(circle, with: .color(base))
-            ctx.fill(circle, with: .color(Color.accentColor.opacity(pinned ? 0.4 : hovered ? 0.25 : 0.1)))
+            ctx.fill(circle, with: .color(JB.accent.opacity(pinned ? 0.4 : hovered ? 0.25 : 0.1)))
             ctx.stroke(circle,
-                       with: .color(hovered ? Color.accentColor : Color.white.opacity(0.35)),
+                       with: .color(hovered ? JB.accent : Color.white.opacity(0.35)),
                        lineWidth: hovered ? 1.6 : 0.8)
         }
     }
@@ -496,16 +496,16 @@ private struct MemoryMapView: View {
         if let m = graph.nodes.first(where: { $0.id == hoveredID })?.memory {
             VStack(alignment: .leading, spacing: 5) {
                 Text(m.displayText)
-                    .font(.system(size: 12))
+                    .font(.jb(12))
                     .lineLimit(6)
                 HStack(spacing: 8) {
                     Text(m.effectiveCategory)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.jb(10, .medium))
                         .padding(.horizontal, 7)
                         .padding(.vertical, 2)
                         .background(.quaternary.opacity(0.6), in: Capsule())
                     Text(relativeDate(m.createdAt))
-                        .font(.system(size: 10))
+                        .font(.jb(10))
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -578,11 +578,11 @@ struct NotesPanel: View {
             HStack {
                 if note.pinned == true {
                     Image(systemName: "pin.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(Color.accentColor)
+                        .font(.jb(9))
+                        .foregroundStyle(JB.accent)
                 }
                 Text(note.title?.isEmpty == false ? note.title! : "Untitled")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.jb(13, .semibold))
                     .lineLimit(1)
                 Spacer()
             }
@@ -596,10 +596,10 @@ struct NotesPanel: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: item.done == true ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 12))
-                                .foregroundStyle(item.done == true ? Color.accentColor : .secondary)
+                                .font(.jb(12))
+                                .foregroundStyle(item.done == true ? JB.accent : .secondary)
                             Text(item.text ?? "")
-                                .font(.system(size: 12))
+                                .font(.jb(12))
                                 .strikethrough(item.done == true)
                                 .foregroundStyle(item.done == true ? .secondary : .primary)
                                 .lineLimit(1)
@@ -610,13 +610,13 @@ struct NotesPanel: View {
                 }
             } else if let content = note.content, !content.isEmpty {
                 Text(content)
-                    .font(.system(size: 12))
+                    .font(.jb(12))
                     .foregroundStyle(.secondary)
                     .lineLimit(6)
             }
             if let due = note.dueDate {
                 Label(relativeDate(due), systemImage: "alarm")
-                    .font(.system(size: 10))
+                    .font(.jb(10))
                     .foregroundStyle(.tertiary)
             }
         }
@@ -644,7 +644,7 @@ struct NewNoteSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("New Note").font(.system(size: 14, weight: .semibold))
+                Text("New Note").font(.jb(14, .semibold))
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Add") {
@@ -657,8 +657,8 @@ struct NewNoteSheet: View {
                         dismiss()
                     }
                 }
-                .buttonStyle(.glassProminent)
-                .tint(Color.accentColor)
+                .buttonStyle(.jbPrimary)
+                .tint(JB.accent)
                 .disabled(title.isEmpty && content.isEmpty && items.allSatisfy(\.isEmpty))
             }
             .padding(14)
@@ -702,12 +702,12 @@ struct EditMemorySheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Edit Memory").font(.system(size: 14, weight: .semibold))
+                Text("Edit Memory").font(.jb(14, .semibold))
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Save") { save() }
-                    .buttonStyle(.glassProminent)
-                    .tint(Color.accentColor)
+                    .buttonStyle(.jbPrimary)
+                    .tint(JB.accent)
                     .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             .padding(14)
@@ -719,7 +719,7 @@ struct EditMemorySheet: View {
                     ForEach(categories, id: \.self) { Text($0.capitalized).tag($0) }
                 }
                 if let error {
-                    Text(error).font(.caption).foregroundStyle(.red)
+                    Text(error).font(.jbCaption).foregroundStyle(.red)
                 }
             }
             .formStyle(.grouped)

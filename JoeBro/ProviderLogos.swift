@@ -52,7 +52,7 @@ struct ProviderLogoView: View {
     var body: some View {
         if model.lowercased().contains("apple") {
             Image(systemName: "apple.logo")
-                .font(.system(size: size * 0.9, weight: .medium))
+                .font(.jb(size * 0.9, .medium))
                 .frame(width: size, height: size)
         } else if let img = providerLogoImage(for: model) {
             Image(nsImage: img)
@@ -63,7 +63,7 @@ struct ProviderLogoView: View {
         } else {
             let brand = ProviderBrand.from(model: model)
             Text(brand.initial)
-                .font(.system(size: size * 0.58, weight: .heavy, design: .rounded))
+                .font(.jb(size * 0.58, .heavy))
                 .foregroundStyle(.white)
                 .frame(width: size, height: size)
                 .background(brand.color.gradient, in: Circle())

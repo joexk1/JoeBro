@@ -32,15 +32,15 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Image(systemName: "sparkles")
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(JB.accent)
                 Text("JoeBro")
-                    .font(.system(.title3, design: .rounded, weight: .bold))
+                    .font(.jb(.title3, .bold))
                 Spacer()
                 Button {
                     store.newChat()
                 } label: {
                     Image(systemName: "square.and.pencil")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.jb(14, .semibold))
                 }
                 .buttonStyle(.borderless)
                 .help("New chat (⌘N)")
@@ -52,10 +52,10 @@ struct SidebarView: View {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
-                    .font(.system(size: 12))
+                    .font(.jb(12))
                 TextField("Search chats", text: $store.sessionSearch)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 13))
+                    .font(.jb(13))
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
@@ -93,7 +93,7 @@ struct SidebarView: View {
                             }
                             if grouped.ungrouped.isEmpty && !grouped.folders.isEmpty {
                                 Text("Drop here to remove from a folder")
-                                    .font(.system(size: 11))
+                                    .font(.jb(11))
                                     .foregroundStyle(.tertiary)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(.horizontal, 10)
@@ -152,14 +152,14 @@ struct SidebarView: View {
                     showLocalInfo.toggle()
                 } label: {
                     Image(systemName: "lock.laptopcomputer")
-                        .font(.system(size: 18))
+                        .font(.jb(18))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.borderless)
                 .help("Local only")
                 .popover(isPresented: $showLocalInfo, arrowEdge: .top) {
                     Text("Local only — everything runs and stays on this Mac.")
-                        .font(.system(size: 12))
+                        .font(.jb(12))
                         .padding(12)
                 }
                 Spacer()
@@ -167,7 +167,7 @@ struct SidebarView: View {
                     showGlassTuner.toggle()
                 } label: {
                     Image(systemName: "circle.lefthalf.filled")
-                        .font(.system(size: 13))
+                        .font(.jb(13))
                 }
                 .buttonStyle(.borderless)
                 .help("Glass opacity")
@@ -176,7 +176,7 @@ struct SidebarView: View {
                 }
                 SettingsLink {
                     Image(systemName: "gearshape")
-                        .font(.system(size: 13))
+                        .font(.jb(13))
                 }
                 .buttonStyle(.borderless)
                 .help("Settings (⌘,)")
@@ -187,7 +187,7 @@ struct SidebarView: View {
         .sheet(item: $renameTarget) { session in
             VStack(spacing: 14) {
                 Text("Rename Chat")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.jb(14, .semibold))
                 TextField("Chat name", text: $renameText)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 280)
@@ -202,8 +202,8 @@ struct SidebarView: View {
                         store.renameSession(session.id, to: renameText)
                         renameTarget = nil
                     }
-                    .buttonStyle(.glassProminent)
-                    .tint(Color.accentColor)
+                    .buttonStyle(.jbPrimary)
+                    .tint(JB.accent)
                     .disabled(renameText.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
@@ -213,7 +213,7 @@ struct SidebarView: View {
         .sheet(item: $newFolderTarget) { session in
             VStack(spacing: 14) {
                 Text("New Project Folder")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.jb(14, .semibold))
                 TextField("Folder name", text: $newFolderText)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 280)
@@ -228,8 +228,8 @@ struct SidebarView: View {
                         store.setFolder(session.id, folder: newFolderText)
                         newFolderTarget = nil
                     }
-                    .buttonStyle(.glassProminent)
-                    .tint(Color.accentColor)
+                    .buttonStyle(.jbPrimary)
+                    .tint(JB.accent)
                     .disabled(newFolderText.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
@@ -239,7 +239,7 @@ struct SidebarView: View {
         .sheet(item: $renameFolderTarget) { target in
             VStack(spacing: 14) {
                 Text("Rename Project Folder")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.jb(14, .semibold))
                 TextField("Folder name", text: $renameFolderText)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 280)
@@ -248,8 +248,8 @@ struct SidebarView: View {
                     Button("Cancel") { renameFolderTarget = nil }
                         .keyboardShortcut(.cancelAction)
                     Button("Rename") { commitFolderRename(target.name) }
-                        .buttonStyle(.glassProminent)
-                        .tint(Color.accentColor)
+                        .buttonStyle(.jbPrimary)
+                        .tint(JB.accent)
                         .disabled(renameFolderText.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
@@ -354,7 +354,7 @@ struct SidebarView: View {
     }
     private var dropLine: some View {
         RoundedRectangle(cornerRadius: 1.5)
-            .fill(Color.accentColor)
+            .fill(JB.accent)
             .frame(height: 2.5)
             .padding(.horizontal, 6)
     }
@@ -366,22 +366,22 @@ struct SidebarView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.jb(8, .bold))
                     .foregroundStyle(.tertiary)
                     .rotationEffect(.degrees(collapsed ? 0 : 90))
                 Image(systemName: "folder.fill")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Color.accentColor.opacity(0.8))
+                    .font(.jb(11))
+                    .foregroundStyle(JB.accent.opacity(0.8))
                 Text(name)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.jb(12, .semibold))
                     .lineLimit(1)
                 Text("\(count)")
-                    .font(.system(size: 10.5))
+                    .font(.jb(10.5))
                     .foregroundStyle(.tertiary)
                 if pinnedFolders.contains(name) {
                     Image(systemName: "pin.fill")
-                        .font(.system(size: 8))
-                        .foregroundStyle(Color.accentColor.opacity(0.7))
+                        .font(.jb(8))
+                        .foregroundStyle(JB.accent.opacity(0.7))
                 }
                 Spacer(minLength: 0)
             }
@@ -464,11 +464,11 @@ struct SidebarView: View {
         } label: {
             HStack(spacing: 4) {
                 Text(text)
-                    .font(.system(size: 10.5, weight: .semibold))
+                    .font(.jb(10.5, .semibold))
                     .foregroundStyle(.tertiary)
                     .textCase(.uppercase)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 7, weight: .bold))
+                    .font(.jb(7, .bold))
                     .foregroundStyle(.tertiary)
                     .rotationEffect(.degrees(expanded.wrappedValue ? 90 : 0))
                 Spacer()
@@ -504,11 +504,11 @@ private struct NavRowView: View {
     var body: some View {
         HStack(spacing: 9) {
             Image(systemName: tab.icon)
-                .font(.system(size: 13))
-                .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                .font(.jb(13))
+                .foregroundStyle(isSelected ? JB.accent : .secondary)
                 .frame(width: 20)
             Text(tab.title)
-                .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                .font(.jb(13, isSelected ? .semibold : .regular))
             Spacer()
             if working {
                 ProgressView()
@@ -518,7 +518,7 @@ private struct NavRowView: View {
             }
             if showDot && !working {
                 Circle()
-                    .fill(Color.accentColor)
+                    .fill(JB.accent)
                     .frame(width: 6, height: 6)
                     .offset(y: bounceY)
                     .transition(.scale.combined(with: .opacity))
@@ -538,7 +538,7 @@ private struct NavRowView: View {
         .padding(.vertical, 7)
         .background(
             RoundedRectangle(cornerRadius: 9)
-                .fill(isSelected ? AnyShapeStyle(Color.accentColor.opacity(0.18))
+                .fill(isSelected ? AnyShapeStyle(JB.accent.opacity(0.18))
                       : hovering ? AnyShapeStyle(.quaternary.opacity(0.55)) : AnyShapeStyle(.clear))
         )
         .scaleEffect(hovering ? 1.02 : 1)
@@ -569,11 +569,11 @@ struct FileTreeSection: View {
                 } label: {
                     HStack(spacing: 4) {
                         Text("Files")
-                            .font(.system(size: 10.5, weight: .semibold))
+                            .font(.jb(10.5, .semibold))
                             .foregroundStyle(.tertiary)
                             .textCase(.uppercase)
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 7, weight: .bold))
+                            .font(.jb(7, .bold))
                             .foregroundStyle(.tertiary)
                             .rotationEffect(.degrees(filesExpanded ? 90 : 0))
                     }
@@ -581,7 +581,7 @@ struct FileTreeSection: View {
                 .buttonStyle(.borderless)
                 if let wd = store.workdirPath {
                     Text("· \((wd as NSString).lastPathComponent)")
-                        .font(.system(size: 10.5))
+                        .font(.jb(10.5))
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
@@ -591,7 +591,7 @@ struct FileTreeSection: View {
                         store.refreshTree()
                     } label: {
                         Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 9))
+                            .font(.jb(9))
                             .foregroundStyle(.tertiary)
                     }
                     .buttonStyle(.borderless)
@@ -608,9 +608,9 @@ struct FileTreeSection: View {
                 } label: {
                     HStack(spacing: 7) {
                         Image(systemName: "folder.badge.plus")
-                            .font(.system(size: 12))
+                            .font(.jb(12))
                         Text("Bind to a folder")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.jb(12, .medium))
                         Spacer()
                     }
                     .padding(.horizontal, 10)
@@ -670,20 +670,20 @@ private struct FileTreeRow: View {
         HStack(spacing: 6) {
             if entry.isDir {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 7, weight: .bold))
+                    .font(.jb(7, .bold))
                     .foregroundStyle(.tertiary)
                     .rotationEffect(.degrees(store.expandedDirs.contains(path) ? 90 : 0))
                 Image(systemName: "folder.fill")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Color.accentColor.opacity(0.8))
+                    .font(.jb(11))
+                    .foregroundStyle(JB.accent.opacity(0.8))
             } else {
                 Image(systemName: fileIcon)
-                    .font(.system(size: 11))
+                    .font(.jb(11))
                     .foregroundStyle(.secondary)
                     .padding(.leading, 13)
             }
             Text(entry.name)
-                .font(.system(size: 12))
+                .font(.jb(12))
                 .lineLimit(1)
             Spacer(minLength: 0)
         }
@@ -754,14 +754,14 @@ private struct SessionRow: View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(session.name)
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                    .font(.jb(13, isSelected ? .semibold : .regular))
                     .lineLimit(1)
                 if let model = session.model, !model.isEmpty {
                     HStack(spacing: 4) {
                         ProviderLogoView(model: model, size: 9)
                             .foregroundStyle(.tertiary)
                         Text(model.components(separatedBy: "/").last ?? model)
-                            .font(.system(size: 10.5))
+                            .font(.jb(10.5))
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
                     }
@@ -770,7 +770,7 @@ private struct SessionRow: View {
             Spacer(minLength: 0)
             if hasDocAlert && !isWorking {
                 Circle()
-                    .fill(Color.accentColor)
+                    .fill(JB.accent)
                     .frame(width: 6, height: 6)
                     .offset(y: bounceY)
                     .transition(.scale.combined(with: .opacity))
@@ -785,12 +785,12 @@ private struct SessionRow: View {
             }
             if session.isImportant == true {
                 Image(systemName: "pin.fill")
-                    .font(.system(size: 8))
-                    .foregroundStyle(Color.accentColor.opacity(0.8))
+                    .font(.jb(8))
+                    .foregroundStyle(JB.accent.opacity(0.8))
             }
             if session.mode == "agent" {
                 Image(systemName: "hammer.fill")
-                    .font(.system(size: 9))
+                    .font(.jb(9))
                     .foregroundStyle(.tertiary)
             }
         }
@@ -800,7 +800,7 @@ private struct SessionRow: View {
         .background(
             RoundedRectangle(cornerRadius: 9)
                 .fill(isSelected
-                      ? AnyShapeStyle(Color.accentColor.opacity(0.22))
+                      ? AnyShapeStyle(JB.accent.opacity(0.22))
                       : hovering ? AnyShapeStyle(.quaternary.opacity(0.6)) : AnyShapeStyle(.clear))
         )
         .scaleEffect(hovering ? 1.02 : 1)

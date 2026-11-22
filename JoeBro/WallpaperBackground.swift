@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Window background: the user's wallpaper if set, otherwise the chosen
-/// colour preset — a vivid gradient so the glass has depth to refract.
+/// Window background: the user's photo if set, otherwise the palette's
+/// dithered backdrop (JBDitherBackdrop).
 struct WallpaperBackground: View {
     @Environment(AppStore.self) private var store
     @Environment(GlassSettings.self) private var glass
@@ -32,10 +32,7 @@ struct WallpaperBackground: View {
                         .clipped()
                         .overlay(Color.black.opacity(scheme == .dark ? 0.18 : 0.04))
                 } else {
-                    let preset = BackgroundPreset(rawValue: glass.backgroundPreset) ?? .purple
-                    LinearGradient(colors: preset.colors(dark: scheme == .dark),
-                                   startPoint: .topLeading,
-                                   endPoint: .bottomTrailing)
+                    JBDitherBackdrop(palette: JBAppearance.shared.palette)
                 }
             }
         }
@@ -43,8 +40,7 @@ struct WallpaperBackground: View {
     }
 }
 
-/// No-wallpaper backdrops. Deliberately saturated — liquid glass goes flat
-/// over near-black, so even the dark variants keep visible colour depth.
+/// Legacy 1.5 presets, kept only so old settings code compiles; mapped via JBPalette(legacy:).
 enum BackgroundPreset: String, CaseIterable, Identifiable {
     case purple, ocean, forest, sunset, graphite
 

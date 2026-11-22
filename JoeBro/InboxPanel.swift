@@ -20,10 +20,10 @@ struct InboxPanel: View {
                     withAnimation(.spring(duration: 0.25)) { selection = Set(list.map(\.id)) }
                 }
                 .buttonStyle(.borderless)
-                .font(.system(size: 11))
+                .font(.jb(11))
                 Button("Clear all") { confirmClear = true }
                     .buttonStyle(.borderless)
-                    .font(.system(size: 11))
+                    .font(.jb(11))
             }
         } content: {
             ZStack {
@@ -68,20 +68,20 @@ struct InboxPanel: View {
                       selecting: !selection.isEmpty,
                       onToggleCheck: { toggleSelection(n.id, in: &selection) }) {
             Image(systemName: n.icon)
-                .font(.system(size: 13))
-                .foregroundStyle(n.read ? Color.secondary : Color.accentColor)
+                .font(.jb(13))
+                .foregroundStyle(n.read ? Color.secondary : JB.accent)
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 3) {
                 Text(n.title.isEmpty ? "Notice" : n.title)
-                    .font(.system(size: 13, weight: n.read ? .regular : .semibold))
+                    .font(.jb(13, n.read ? .regular : .semibold))
                 if !n.body.isEmpty {
                     Text(n.body)
-                        .font(.system(size: 12))
+                        .font(.jb(12))
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
                 Text(relativeDate(n.createdAt))
-                    .font(.system(size: 10))
+                    .font(.jb(10))
                     .foregroundStyle(.tertiary)
             }
             Spacer()

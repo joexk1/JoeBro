@@ -49,15 +49,15 @@ struct MobileSettingsTab: View {
                     Text("This Wi-Fi network only").tag("lan")
                 }
                 Text(enabled ? "Listening on \(urls.first?.url ?? "…")" : "Off")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.jbCaption).foregroundStyle(.secondary)
                 if enabled && bind != "tailscale" {
                     Text("Anyone on this network who gets the token can read your chats and run what the phone agent is allowed to run.")
-                        .font(.caption).foregroundStyle(.orange)
+                        .font(.jbCaption).foregroundStyle(.orange)
                 }
                 Text("The phone only works while JoeBro is open and this Mac is awake.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.jbCaption).foregroundStyle(.secondary)
                 if let message {
-                    Text(message).font(.caption).foregroundStyle(.red)
+                    Text(message).font(.jbCaption).foregroundStyle(.red)
                 }
             }
             if enabled {
@@ -100,21 +100,21 @@ struct MobileSettingsTab: View {
             }
             LabeledContent("URL") {
                 Text(urls.first?.url ?? "—")
-                    .font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                    .font(.jbMono(12)).textSelection(.enabled)
             }
             ForEach(urls.dropFirst(), id: \.url) { u in
                 LabeledContent(u.label) {
-                    Text(u.url).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                    Text(u.url).font(.jbMono(12)).textSelection(.enabled)
                 }
             }
             LabeledContent("Token") {
                 HStack {
                     Text(showToken ? token : String(repeating: "•", count: 16))
-                        .font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                        .font(.jbMono(12)).textSelection(.enabled)
                     Button(showToken ? "Hide" : "Show") { showToken.toggle() }
                     Button("Copy") { copy(token) }
                 }
-                .buttonStyle(.borderless).font(.system(size: 11))
+                .buttonStyle(.borderless).font(.jb(11))
             }
             HStack {
                 Button("Copy link") { copy(pairURI) }
@@ -123,7 +123,7 @@ struct MobileSettingsTab: View {
                 Spacer()
             }
             if let testResult {
-                Text(testResult).font(.caption).foregroundStyle(.secondary)
+                Text(testResult).font(.jbCaption).foregroundStyle(.secondary)
             }
         }
     }
@@ -131,7 +131,7 @@ struct MobileSettingsTab: View {
     private var devicesSection: some View {
         Section("Connected phones") {
             if devices.isEmpty {
-                Text("No phones yet.").font(.caption).foregroundStyle(.secondary)
+                Text("No phones yet.").font(.jbCaption).foregroundStyle(.secondary)
             }
             ForEach(Array(devices.enumerated()), id: \.offset) { _, d in
                 let id = d["install_id"]?.stringValue ?? ""
@@ -140,7 +140,7 @@ struct MobileSettingsTab: View {
                     VStack(alignment: .leading) {
                         Text(d["name"]?.stringValue ?? "iPhone")
                         Text("\(relativeDate(d["last_seen"]?.stringValue)) · push \((d["enabled"]?.boolValue ?? false) ? "on" : "off")")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.jbCaption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button("Remove", role: .destructive) {
@@ -155,19 +155,19 @@ struct MobileSettingsTab: View {
     private var pushSection: some View {
         Section("Notifications (push)") {
             Text(pushConfigured ? "Push is set up." : "Push is not set up.")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.jb(12, .semibold))
             if !pushBlocker.isEmpty {
-                Text(pushBlocker).font(.caption).foregroundStyle(.orange)
+                Text(pushBlocker).font(.jbCaption).foregroundStyle(.orange)
             }
             Text("1. In your Apple developer account, create an APNs Auth Key (.p8) and note its Key ID.\n2. Copy your Team ID from the Membership page.\n3. Enter the bundle ID of the iPhone app you built.\n4. Choose the .p8 file and save. It is stored only on this Mac and used only to talk to Apple's push servers.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.jbCaption).foregroundStyle(.secondary)
             TextField("Team ID", text: $teamID)
             TextField("Key ID", text: $keyID)
             TextField("Bundle ID", text: $bundleID)
             HStack {
                 Button("Choose .p8 key…") { pickingKey = true }
                 Text(keyFile?.lastPathComponent ?? "No key chosen")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.jbCaption).foregroundStyle(.secondary)
                 Spacer()
             }
             HStack {
@@ -185,7 +185,7 @@ struct MobileSettingsTab: View {
                 Spacer()
             }
             Text("Push is optional. Without it the phone still works, it just can't buzz you.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.jbCaption).foregroundStyle(.secondary)
         }
     }
 
@@ -200,7 +200,7 @@ struct MobileSettingsTab: View {
             Toggle("Use my phone's location for weather", isOn: $location)
                 .onChange(of: location) { pref("location_enabled", location) }
             Text("Weather comes from open-meteo.com and place names from nominatim.openstreetmap.org, only while this is on.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.jbCaption).foregroundStyle(.secondary)
             Toggle("Learn durable facts into phone memory", isOn: $museLearn)
                 .onChange(of: museLearn) { pref("muse_auto_learn", museLearn) }
             Toggle("Background checks (heartbeat)", isOn: $heartbeatOn)
@@ -215,7 +215,7 @@ struct MobileSettingsTab: View {
             Stepper("Pulse every \(pulseInterval) min", value: $pulseInterval, in: 15...480, step: 15)
                 .onChange(of: pulseInterval) { pulse(["interval_minutes": pulseInterval]) }
             Text("Anything the phone agent finds is posted into its chat. Reply there yes or no.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.jbCaption).foregroundStyle(.secondary)
         }
     }
 

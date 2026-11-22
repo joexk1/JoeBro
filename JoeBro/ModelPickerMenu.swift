@@ -70,13 +70,13 @@ struct ModelPickerMenu: View {
                         .foregroundStyle(.secondary)
                 } else {
                     Image(systemName: "cpu")
-                        .font(.system(size: 10.5))
+                        .font(.jb(10.5))
                 }
                 Text(store.selectedModel?.displayWithTag ?? "Select model")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.jb(12, .medium))
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.jb(8, .bold))
                     .foregroundStyle(.secondary)
             }
         }

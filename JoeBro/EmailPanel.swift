@@ -31,7 +31,7 @@ struct EmailPanel: View {
                 }
             } label: {
                 Label(folder, systemImage: "folder")
-                    .font(.system(size: 12))
+                    .font(.jb(12))
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -144,15 +144,15 @@ struct EmailPanel: View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11))
+                    .font(.jb(11))
                     .foregroundStyle(.secondary)
                 TextField("Search emails", text: $search)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 12))
+                    .font(.jb(12))
                 if !search.isEmpty {
                     Button { search = "" } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 11))
+                            .font(.jb(11))
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.borderless)
@@ -171,7 +171,7 @@ struct EmailPanel: View {
             if !selection.isEmpty {
                 HStack(spacing: 10) {
                     Text("\(selection.count) selected")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.jb(11, .semibold))
                     Button(allSelected ? "None" : "All") {
                         if case .loaded(let list) = emails {
                             withAnimation(.spring(duration: 0.25)) {
@@ -180,7 +180,7 @@ struct EmailPanel: View {
                         }
                     }
                     .buttonStyle(.borderless)
-                    .font(.system(size: 11))
+                    .font(.jb(11))
                     Spacer()
                     bulkButton("envelope.open", "Mark read") { uid, f in
                         await APIClient.shared.emailMarkRead(uid: uid, folder: f, read: true)
@@ -198,14 +198,14 @@ struct EmailPanel: View {
                         withAnimation(.spring(duration: 0.25)) { selection = [] }
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 12))
+                            .font(.jb(12))
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.borderless)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(Color.accentColor.opacity(0.10))
+                .background(JB.accent.opacity(0.10))
                 .transition(.move(edge: .top).combined(with: .opacity))
                 Divider().opacity(0.4)
             }
@@ -230,7 +230,7 @@ struct EmailPanel: View {
             }
         } label: {
             Image(systemName: icon)
-                .font(.system(size: 12))
+                .font(.jb(12))
         }
         .buttonStyle(.borderless)
         .help(help)
@@ -401,8 +401,8 @@ private struct EmailRow: View {
             // row under the pointer and made the circle flicker.
             let showCheck = selecting || hovering || isChecked
             Image(systemName: isChecked ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 15))
-                .foregroundStyle(isChecked ? Color.accentColor : .secondary)
+                .font(.jb(15))
+                .foregroundStyle(isChecked ? JB.accent : .secondary)
                 .frame(width: 24, height: 24, alignment: .center)
                 .padding(.top, -3)
                 .contentShape(Rectangle())
@@ -418,7 +418,7 @@ private struct EmailRow: View {
         .background(
             RoundedRectangle(cornerRadius: 14)
                 .fill(isSelected || isChecked
-                      ? Color.accentColor.opacity(0.14)
+                      ? JB.accent.opacity(0.14)
                       : hovering ? Color.white.opacity(0.045) : Color.clear)
         )
         .scaleEffect(hovering ? 1.012 : 1)
@@ -433,38 +433,38 @@ private struct EmailRow: View {
     private var rowContent: some View {
         HStack(alignment: .top, spacing: 8) {
             Circle()
-                .fill(unread ? Color.accentColor : Color.clear)
+                .fill(unread ? JB.accent : Color.clear)
                 .frame(width: 7, height: 7)
                 .padding(.top, 5)
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
                     Text(mail.fromName ?? mail.fromAddress ?? "Unknown")
-                        .font(.system(size: 12.5, weight: unread ? .semibold : .regular))
+                        .font(.jb(12.5, unread ? .semibold : .regular))
                         .lineLimit(1)
                     Spacer()
                     Text(relativeDate(mail.date))
-                        .font(.system(size: 10.5))
+                        .font(.jb(10.5))
                         .foregroundStyle(.tertiary)
                 }
                 Text(mail.subject ?? "(no subject)")
-                    .font(.system(size: 12))
+                    .font(.jb(12))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 if let s = mail.cachedSummary {
                     Text(s)
-                        .font(.system(size: 11))
+                        .font(.jb(11))
                         .foregroundStyle(.tertiary)
                         .lineLimit(2)
                 }
             }
             if mail.isFlagged == true {
                 Image(systemName: "star.fill")
-                    .font(.system(size: 9))
+                    .font(.jb(9))
                     .foregroundStyle(.yellow)
             }
             if mail.hasAttachments == true {
                 Image(systemName: "paperclip")
-                    .font(.system(size: 9))
+                    .font(.jb(9))
                     .foregroundStyle(.tertiary)
             }
         }
@@ -487,7 +487,7 @@ private struct EmailDetailView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text(detail.subject ?? "(no subject)")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.jb(15, .semibold))
                     Spacer()
                     // AI actions
                     Button {
@@ -530,14 +530,14 @@ private struct EmailDetailView: View {
                 }
                 .buttonStyle(.borderless)
                 Text("\(detail.fromName ?? "") <\(detail.fromAddress ?? "")>")
-                    .font(.system(size: 12))
+                    .font(.jb(12))
                     .foregroundStyle(.secondary)
                 HStack {
                     if let to = detail.to, !to.isEmpty {
-                        Text("To: \(to)").font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
+                        Text("To: \(to)").font(.jb(11)).foregroundStyle(.tertiary).lineLimit(1)
                     }
                     Spacer()
-                    Text(relativeDate(detail.date)).font(.system(size: 11)).foregroundStyle(.tertiary)
+                    Text(relativeDate(detail.date)).font(.jb(11)).foregroundStyle(.tertiary)
                 }
                 if let atts = detail.attachments, !atts.isEmpty {
                     HStack(spacing: 6) {
@@ -550,7 +550,7 @@ private struct EmailDetailView: View {
                                 }
                             } label: {
                                 Label(a.filename ?? "file", systemImage: "paperclip")
-                                    .font(.system(size: 11))
+                                    .font(.jb(11))
                                     .lineLimit(1)
                             }
                             .buttonStyle(.borderless)
@@ -562,16 +562,16 @@ private struct EmailDetailView: View {
                     .padding(.top, 4)
                 }
                 if let aiError {
-                    Text(aiError).font(.caption).foregroundStyle(.red).lineLimit(2)
+                    Text(aiError).font(.jbCaption).foregroundStyle(.red).lineLimit(2)
                 }
                 if summarizing || summary != nil {
                     VStack(alignment: .leading, spacing: 4) {
                         Label("AI Summary", systemImage: "sparkles")
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .foregroundStyle(Color.accentColor)
+                            .font(.jb(10.5, .semibold))
+                            .foregroundStyle(JB.accent)
                         if let summary {
                             Text(inlineMarkdown(summary))
-                                .font(.system(size: 12))
+                                .font(.jb(12))
                                 .textSelection(.enabled)
                         } else {
                             ProgressView().controlSize(.small)
@@ -579,7 +579,7 @@ private struct EmailDetailView: View {
                     }
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                    .background(JB.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
                     .padding(.top, 6)
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
@@ -592,7 +592,7 @@ private struct EmailDetailView: View {
             } else {
                 ScrollView {
                     Text(detail.body ?? "")
-                        .font(.system(size: 13))
+                        .font(.jb(13))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(14)
@@ -672,7 +672,7 @@ struct EmailComposeSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Text(titleText)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.jb(14, .semibold))
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
@@ -682,8 +682,8 @@ struct EmailComposeSheet: View {
                     if sending { ProgressView().controlSize(.small) }
                     else { Label("Send", systemImage: "paperplane.fill") }
                 }
-                .buttonStyle(.glassProminent)
-                .tint(Color.accentColor)
+                .buttonStyle(.jbPrimary)
+                .tint(JB.accent)
                 .disabled(sending || to.isEmpty)
             }
             .padding(14)
@@ -701,12 +701,12 @@ struct EmailComposeSheet: View {
                 HStack(spacing: 6) {
                     ForEach(attachments, id: \.token) { a in
                         HStack(spacing: 4) {
-                            Image(systemName: "paperclip").font(.system(size: 10))
-                            Text(a.filename).font(.system(size: 11)).lineLimit(1)
+                            Image(systemName: "paperclip").font(.jb(10))
+                            Text(a.filename).font(.jb(11)).lineLimit(1)
                             Button {
                                 attachments.removeAll { $0.token == a.token }
                             } label: {
-                                Image(systemName: "xmark.circle.fill").font(.system(size: 10))
+                                Image(systemName: "xmark.circle.fill").font(.jb(10))
                             }
                             .buttonStyle(.borderless)
                         }
@@ -721,7 +721,7 @@ struct EmailComposeSheet: View {
             }
 
             TextEditor(text: $bodyText)
-                .font(.system(size: 13))
+                .font(.jb(13))
                 .scrollContentBackground(.hidden)
                 .padding(10)
                 .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
@@ -729,7 +729,7 @@ struct EmailComposeSheet: View {
 
             if let error {
                 Text(error)
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.red)
                     .padding(.bottom, 8)
             }

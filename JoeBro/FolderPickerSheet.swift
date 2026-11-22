@@ -15,7 +15,7 @@ struct FolderPickerSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Text("Bind Project Folder")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.jb(14, .semibold))
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button {
@@ -24,8 +24,8 @@ struct FolderPickerSheet: View {
                     if binding { ProgressView().controlSize(.small) }
                     else { Text("Bind Folder") }
                 }
-                .buttonStyle(.glassProminent)
-                .tint(Color.accentColor)
+                .buttonStyle(.jbPrimary)
+                .tint(JB.accent)
                 .disabled(binding || selectedURL == nil)
             }
             .padding(14)
@@ -33,10 +33,10 @@ struct FolderPickerSheet: View {
 
             VStack(spacing: 18) {
                 Image(systemName: "folder.badge.plus")
-                    .font(.system(size: 44, weight: .light))
-                    .foregroundStyle(Color.accentColor)
+                    .font(.jb(44, .light))
+                    .foregroundStyle(JB.accent)
                 Text(selectedURL?.path ?? "Choose a local project folder")
-                    .font(.system(size: 12, design: selectedURL == nil ? .default : .monospaced))
+                    .font(selectedURL == nil ? .jb(12) : .jbMono(12))
                     .foregroundStyle(selectedURL == nil ? .secondary : .primary)
                     .multilineTextAlignment(.center)
                     .lineLimit(4)
@@ -46,16 +46,16 @@ struct FolderPickerSheet: View {
                 } label: {
                     Label("Choose Folder...", systemImage: "folder")
                 }
-                .buttonStyle(.glassProminent)
-                .tint(Color.accentColor)
+                .buttonStyle(.jbPrimary)
+                .tint(JB.accent)
                 Text("JoeBro reads and writes this folder directly with the access you just granted — nothing leaves your Mac.")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 360)
                 if let error {
                     Text(error)
-                        .font(.caption)
+                        .font(.jbCaption)
                         .foregroundStyle(.red)
                 }
             }

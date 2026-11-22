@@ -175,24 +175,24 @@ struct SkillsPanel: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
                     Text(s["name"]?.stringValue ?? "Unnamed skill")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.jb(13, .semibold))
                         .foregroundStyle(active ? .primary : .secondary)
                     if let cat = s["category"]?.stringValue, !cat.isEmpty {
                         Text(cat)
-                            .font(.system(size: 10))
+                            .font(.jb(10))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 1)
                             .background(.quaternary.opacity(0.6), in: Capsule())
                     }
                     if !active {
                         Text("off")
-                            .font(.system(size: 10))
+                            .font(.jb(10))
                             .foregroundStyle(.tertiary)
                     }
                 }
                 if let desc = s["description"]?.stringValue, !desc.isEmpty {
                     Text(desc)
-                        .font(.system(size: 11.5))
+                        .font(.jb(11.5))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -201,7 +201,7 @@ struct SkillsPanel: View {
                     if let conf = s["confidence"]?.doubleValue { Text("\(Int(conf))% confidence") }
                     if let src = s["source"]?.stringValue { Text(src) }
                 }
-                .font(.system(size: 10))
+                .font(.jb(10))
                 .foregroundStyle(.tertiary)
             }
             Spacer()
@@ -264,15 +264,15 @@ struct SkillEditorSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Text(draft.skillID == nil ? "New Skill" : "Edit Skill")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.jb(14, .semibold))
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button { save() } label: {
                     if saving { ProgressView().controlSize(.small) }
                     else { Text(draft.skillID == nil ? "Add" : "Save") }
                 }
-                .buttonStyle(.glassProminent)
-                .tint(Color.accentColor)
+                .buttonStyle(.jbPrimary)
+                .tint(JB.accent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(saving || draft.name.isEmpty || draft.procedure.isEmpty)
             }
@@ -286,19 +286,19 @@ struct SkillEditorSheet: View {
                     .lineLimit(2...4)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Procedure (markdown)")
-                        .font(.system(size: 11))
+                        .font(.jb(11))
                         .foregroundStyle(.secondary)
                     // Fixed-height TextEditor so a long procedure scrolls inside
                     // the field instead of stretching the whole sheet.
                     TextEditor(text: $draft.procedure)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(.jbMono(12))
                         .frame(height: 240)
                         .scrollContentBackground(.hidden)
                         .padding(6)
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
                 }
                 if let error {
-                    Text(error).font(.caption).foregroundStyle(.red)
+                    Text(error).font(.jbCaption).foregroundStyle(.red)
                 }
             }
             .formStyle(.grouped)
@@ -346,7 +346,7 @@ struct GenerateSkillSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Label("Generate Skill", systemImage: "sparkles")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.jb(14, .semibold))
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button {
@@ -355,8 +355,8 @@ struct GenerateSkillSheet: View {
                     if generating { ProgressView().controlSize(.small) }
                     else { Text("Generate") }
                 }
-                .buttonStyle(.glassProminent)
-                .tint(Color.accentColor)
+                .buttonStyle(.jbPrimary)
+                .tint(JB.accent)
                 .disabled(generating || prompt.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             .padding(14)
@@ -366,10 +366,10 @@ struct GenerateSkillSheet: View {
                           text: $prompt, axis: .vertical)
                     .lineLimit(4...8)
                 Text("Your default model drafts the skill, then it's saved to the library.")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
                 if let error {
-                    Text(error).font(.caption).foregroundStyle(.red)
+                    Text(error).font(.jbCaption).foregroundStyle(.red)
                 }
             }
             .formStyle(.grouped)
@@ -456,8 +456,8 @@ struct SkillRowShell<Content: View>: View {
         let showCheck = selecting || hovering || checked
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: checked ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 15))
-                .foregroundStyle(checked ? Color.accentColor : .secondary)
+                .font(.jb(15))
+                .foregroundStyle(checked ? JB.accent : .secondary)
                 .frame(width: 24, height: 24, alignment: .center)
                 .padding(.top, -3)
                 .contentShape(Rectangle())
@@ -470,7 +470,7 @@ struct SkillRowShell<Content: View>: View {
         .panelCard()
         .background(
             RoundedRectangle(cornerRadius: 14)
-                .fill(checked ? Color.accentColor.opacity(0.14) : .clear)
+                .fill(checked ? JB.accent.opacity(0.14) : .clear)
         )
         .scaleEffect(hovering ? 1.012 : 1)
         .shadow(color: .black.opacity(0.10), radius: 6, y: 3)
@@ -506,7 +506,7 @@ struct LearnSkillsSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Label("Learn from Sources", systemImage: "books.vertical")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.jb(14, .semibold))
                 Spacer()
                 Button(made.isEmpty ? "Cancel" : "Done") { dismiss() }.keyboardShortcut(.cancelAction)
                 if made.isEmpty {
@@ -515,8 +515,8 @@ struct LearnSkillsSheet: View {
                     } label: {
                         if running { ProgressView().controlSize(.small) } else { Text("Learn") }
                     }
-                    .buttonStyle(.glassProminent)
-                    .tint(Color.accentColor)
+                    .buttonStyle(.jbPrimary)
+                    .tint(JB.accent)
                     .disabled(folder == nil || running)
                 }
             }
@@ -531,21 +531,21 @@ struct LearnSkillsSheet: View {
                     Button("Choose folder…") { pick() }.disabled(running)
                 }
                 Text("Your default model studies the folder's documents — exercises, analyses, structures — and saves skill(s) that teach it to do the same kind of work.")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
                 if running {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text(detail.isEmpty ? "Working…" : detail).font(.caption)
+                        Text(detail.isEmpty ? "Working…" : detail).font(.jbCaption)
                     }
                 }
                 if !made.isEmpty {
                     Label("Learned: " + made.joined(separator: ", "), systemImage: "checkmark.circle.fill")
-                        .font(.caption)
+                        .font(.jbCaption)
                         .foregroundStyle(.green)
                 }
                 if let error {
-                    Text(error).font(.caption).foregroundStyle(.red)
+                    Text(error).font(.jbCaption).foregroundStyle(.red)
                 }
             }
             .formStyle(.grouped)

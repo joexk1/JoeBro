@@ -46,16 +46,16 @@ struct ChatView: View {
                 if dropTargeted {
                     VStack(spacing: 10) {
                         Image(systemName: "paperclip.badge.ellipsis")
-                            .font(.system(size: 34, weight: .light))
-                            .foregroundStyle(Color.accentColor)
+                            .font(.jb(34, .light))
+                            .foregroundStyle(JB.accent)
                         Text("Drop to attach")
-                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            .font(.jb(14, .semibold))
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(.ultraThinMaterial)
+                    .background(JB.panelFill)
                     .overlay(
                         RoundedRectangle(cornerRadius: 18)
-                            .strokeBorder(Color.accentColor.opacity(0.7), style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
+                            .strokeBorder(JB.accent.opacity(0.7), style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
                             .padding(6)
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 18))
@@ -114,7 +114,7 @@ struct ChatView: View {
         .sheet(isPresented: $renaming) {
             VStack(spacing: 14) {
                 Text("Rename Chat")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.jb(14, .semibold))
                 TextField("Chat name", text: $renameText)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 280)
@@ -123,8 +123,8 @@ struct ChatView: View {
                     Button("Cancel") { renaming = false }
                         .keyboardShortcut(.cancelAction)
                     Button("Rename", action: doRename)
-                        .buttonStyle(.glassProminent)
-                        .tint(Color.accentColor)
+                        .buttonStyle(.jbPrimary)
+                        .tint(JB.accent)
                         .disabled(renameText.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
@@ -157,7 +157,7 @@ struct ChatView: View {
                 sidebarVisible.toggle()
             } label: {
                 Image(systemName: "sidebar.left")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.jb(13, .medium))
             }
             .buttonStyle(.borderless)
             .help("Toggle sidebar")
@@ -198,10 +198,10 @@ struct ChatView: View {
             } label: {
                 HStack(spacing: 5) {
                     Text(currentTitle)
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .font(.jb(14, .semibold))
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.jb(8, .bold))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -212,7 +212,7 @@ struct ChatView: View {
 
             if !store.messages.isEmpty {
                 Text("\(store.messages.count)")
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .font(.jb(11, .medium))
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
@@ -231,7 +231,7 @@ struct ChatView: View {
                     store.editorVisible = true
                 } label: {
                     Label("\(store.openDocs.count)", systemImage: "doc.text")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.jb(12, .medium))
                 }
                 .buttonStyle(.borderless)
                 .help("Show editor")
@@ -240,24 +240,24 @@ struct ChatView: View {
             if let err = store.loadError {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 10))
+                        .font(.jb(10))
                         .foregroundStyle(.orange)
                     Text(err)
-                        .font(.system(size: 11))
+                        .font(.jb(11))
                         .lineLimit(1)
                         .frame(maxWidth: 320)
                     Button {
                         store.loadError = nil
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 10))
+                            .font(.jb(10))
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.borderless)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .glassEffect(.regular.tint(.orange.opacity(0.15)), in: .capsule)
+                .background(Capsule().fill(.orange.opacity(0.15)))
             }
         }
         .padding(.horizontal, 16)
@@ -282,16 +282,16 @@ struct ChatView: View {
         VStack(spacing: 14) {
             Spacer()
             Image(systemName: "sparkles")
-                .font(.system(size: 42, weight: .light))
-                .foregroundStyle(Color.accentColor.gradient)
+                .font(.jb(42, .light))
+                .foregroundStyle(JB.accent.gradient)
             Text("What can I help with?")
-                .font(.system(.title2, design: .rounded, weight: .semibold))
+                .font(.jb(.title2, .semibold))
             if let model = store.selectedModel {
                 HStack(spacing: 6) {
                     ProviderLogoView(model: model.modelID, size: 12)
                         .foregroundStyle(.secondary)
                     Text(model.displayWithTag)
-                        .font(.system(size: 12))
+                        .font(.jb(12))
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 12)
@@ -336,7 +336,7 @@ struct ChatView: View {
                         } label: {
                             Label("Show earlier messages (\(groupedMessages.count - visibleCount) more)",
                                   systemImage: "arrow.up.circle")
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.jb(12, .medium))
                         }
                         .buttonStyle(.borderless)
                         .padding(.top, 6)
@@ -389,13 +389,13 @@ struct ChatView: View {
                         }
                     } label: {
                         Image(systemName: "arrow.down")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.jb(13, .semibold))
                             .foregroundStyle(.primary)
                             .frame(width: 34, height: 34)
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
-                    .background(.ultraThinMaterial, in: Circle())
+                    .background(JB.panelFill, in: Circle())
                     .overlay(Circle().strokeBorder(.white.opacity(0.18), lineWidth: 1))
                     .shadow(color: .black.opacity(0.2), radius: 10, y: 4)
                     .padding(.bottom, 12)
@@ -422,13 +422,13 @@ struct CommandPermissionPrompt: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 7) {
                 Image(systemName: isDocEdit ? "pencil.line" : "terminal.fill")
-                    .font(.system(size: 12))
+                    .font(.jb(12))
                     .foregroundStyle(Color.orange)
                 Text(isDocEdit ? "Let the AI edit this file?" : "Run \(prompt.tool) command?")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.jb(13, .semibold))
             }
             Text(prompt.command)
-                .font(.system(size: 12, design: .monospaced))
+                .font(.jbMono(12))
                 .foregroundStyle(.secondary)
                 .lineLimit(4)
                 .textSelection(.enabled)
@@ -442,9 +442,9 @@ struct CommandPermissionPrompt: View {
                 Button("Always allow this session") { respond("always") }
                 Button("Allow") { respond("allow") }
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.jbPrimary)
             }
-            .font(.system(size: 12))
+            .font(.jb(12))
         }
         .padding(14)
         .frame(width: 380)

@@ -27,9 +27,9 @@ struct MessageBotTab: View {
         Form {
             Section {
                 Text("Control JoeBro from Telegram — your pocket orchestrator over every chat and agent.")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.jb(12, .semibold))
                 Text("Message the bot and it manages your work: it searches and reads across all your chats, creates chats, binds them to folders, sets their mode and file-access level, and delegates coding/file jobs to them — reporting back what happened. It also uses your email, calendar, memory, web search and deep research directly. It does NOT write code or edit files itself; it hands that to a chat. Reply y/n to approve actions; send /chats to list your chats, or /compact to trim this conversation.")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
             }
             Section("Telegram") {
@@ -37,7 +37,7 @@ struct MessageBotTab: View {
                 SecureField("Bot token", text: $token)
                 TextField("Allowed Telegram IDs (comma-separated)", text: $allowedIDs)
                 Text("Create a bot with @BotFather and paste its token here. Message your bot once — if you're not on the allowed list it replies with your numeric ID to add. Leaving IDs blank allows anyone who finds the bot (not recommended).")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
             }
             Section("Model") {
@@ -47,16 +47,16 @@ struct MessageBotTab: View {
                 }
                 Toggle("Ask before commands & edits", isOn: $askPermissions)
                 Text("When on, anything the bot delegates that needs Full Access (a command) or edits an open document asks you to approve it in Telegram — reply y or n.")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
             }
             Section("System prompt") {
                 TextEditor(text: $systemPrompt)
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(.jbMono(12))
                     .frame(height: 110)
                     .scrollContentBackground(.hidden)
                 Text("Extra instructions appended to the bot's built-in orchestrator prompt. Leave blank for the default behaviour.")
-                    .font(.caption)
+                    .font(.jbCaption)
                     .foregroundStyle(.secondary)
             }
             Section("Show in replies") {

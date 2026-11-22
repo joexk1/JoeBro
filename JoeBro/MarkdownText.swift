@@ -175,7 +175,7 @@ struct MarkdownText: View {
         case .quote(let s):
             HStack(spacing: 10) {
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.accentColor.opacity(0.6))
+                    .fill(JB.accent.opacity(0.6))
                     .frame(width: 3)
                 Text(inline(s))
                     .foregroundStyle(.secondary)
@@ -248,7 +248,7 @@ struct CodeBlockView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text(language.isEmpty ? "code" : language)
-                    .font(.caption.weight(.medium))
+                    .font(.jbCaption.weight(.medium))
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button {
@@ -258,7 +258,7 @@ struct CodeBlockView: View {
                     Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
                 } label: {
                     Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-                        .font(.caption)
+                        .font(.jbCaption)
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
@@ -268,7 +268,7 @@ struct CodeBlockView: View {
             Divider().opacity(0.5)
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(highlighted ?? AttributedString(code))
-                    .font(.system(size: 12.5, design: .monospaced))
+                    .font(.jbMono(12.5))
                     .lineSpacing(2)
                     .padding(12)
                     .textSelection(.enabled)

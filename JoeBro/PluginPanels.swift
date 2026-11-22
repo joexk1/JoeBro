@@ -62,14 +62,14 @@ struct PluginPanelsView: View {
                                     Image(systemName: e.panel.icon ?? "puzzlepiece.extension")
                                         .frame(width: 18)
                                     VStack(alignment: .leading, spacing: 1) {
-                                        Text(e.panel.title).font(.system(size: 13, weight: .medium))
-                                        Text(e.plugin.name).font(.system(size: 10)).foregroundStyle(.secondary)
+                                        Text(e.panel.title).font(.jb(13, .medium))
+                                        Text(e.plugin.name).font(.jb(10)).foregroundStyle(.secondary)
                                     }
                                     Spacer(minLength: 0)
                                 }
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
-                                .background(e.id == current.id ? Color.accentColor.opacity(0.18) : .clear,
+                                .background(e.id == current.id ? JB.accent.opacity(0.18) : .clear,
                                             in: RoundedRectangle(cornerRadius: 8))
                                 .contentShape(Rectangle())
                             }

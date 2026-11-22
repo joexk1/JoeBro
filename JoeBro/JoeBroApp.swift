@@ -104,6 +104,7 @@ struct JoeBroApp: App {
     @State private var store = AppStore()
 
     init() {
+        JBFonts.register()
         if !DemoMode.active { LocalBackend.shared.start() }
         _ = UpdaterManager.shared   // start Sparkle's scheduled update checks
     }
@@ -113,6 +114,8 @@ struct JoeBroApp: App {
             RootView()
                 .environment(store)
                 .environment(GlassSettings.shared)
+                .font(.jbBody)
+                .tint(JB.accent)
                 .frame(minWidth: 880, minHeight: 560)
                 .task { await store.bootstrap() }
         }
@@ -128,6 +131,8 @@ struct JoeBroApp: App {
             SettingsView()
                 .environment(store)
                 .environment(GlassSettings.shared)
+                .font(.jbBody)
+                .tint(JB.accent)
         }
 
         // Pop-out editor — same surface, own window. Shares the store, so
@@ -143,6 +148,8 @@ struct JoeBroApp: App {
             .frame(minWidth: 520, minHeight: 480)
             .environment(store)
             .environment(GlassSettings.shared)
+            .font(.jbBody)
+            .tint(JB.accent)
             .onAppear { store.editorDetached = true }
             .onDisappear { store.editorDetached = false }
         }

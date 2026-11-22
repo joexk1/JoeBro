@@ -51,13 +51,13 @@ struct CalendarPanel: View {
             Button { step(-1) } label: { Image(systemName: "chevron.left") }
                 .buttonStyle(.borderless)
             Text(titleLabel)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.jb(12, .semibold))
                 .frame(minWidth: 110)
             Button { step(1) } label: { Image(systemName: "chevron.right") }
                 .buttonStyle(.borderless)
             Button("Today") { anchor = cal.startOfDay(for: Date()) }
                 .buttonStyle(.borderless)
-                .font(.system(size: 12))
+                .font(.jb(12))
             Button {
                 editing = EventDraft()
             } label: {
@@ -312,7 +312,7 @@ struct CalendarPanel: View {
                 HStack(spacing: 0) {
                     ForEach(weekdays, id: \.self) { d in
                         Text(d)
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.jb(10, .semibold))
                             .foregroundStyle(.tertiary)
                             .frame(width: cellWidth, height: headerHeight)
                     }
@@ -360,29 +360,29 @@ struct CalendarPanel: View {
         return VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text("\(cal.component(.day, from: day))")
-                    .font(.system(size: 11, weight: isToday ? .bold : .regular))
+                    .font(.jb(11, isToday ? .bold : .regular))
                     .foregroundStyle(isToday ? Color.white : (inMonth ? Color.primary : Color.secondary.opacity(0.45)))
                     .frame(width: 20, height: 20, alignment: .center)
-                    .background(isToday ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.clear), in: Circle())
+                    .background(isToday ? AnyShapeStyle(JB.accent) : AnyShapeStyle(.clear), in: Circle())
                 Spacer(minLength: 0)
             }
             .frame(height: 22, alignment: .topLeading)
 
             ForEach(dayEvents.prefix(3)) { ev in
                 Text(ev.summary)
-                    .font(.system(size: 9.5, weight: .medium))
+                    .font(.jb(9.5, .medium))
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1.5)
                     .frame(maxWidth: .infinity, maxHeight: 16, alignment: .leading)
-                    .background(Color.accentColor.opacity(ev.allDay == true || isMultiDay(ev) ? 0.30 : 0.16),
+                    .background(JB.accent.opacity(ev.allDay == true || isMultiDay(ev) ? 0.30 : 0.16),
                                 in: RoundedRectangle(cornerRadius: 4))
                     .onTapGesture { editing = EventDraft(from: ev) }
             }
             if dayEvents.count > 3 {
                 Text("+\(dayEvents.count - 3) more")
-                    .font(.system(size: 8.5))
+                    .font(.jb(8.5))
                     .lineLimit(1)
                     .foregroundStyle(.tertiary)
             }
@@ -418,21 +418,21 @@ struct CalendarPanel: View {
                 ForEach(days, id: \.self) { day in
                     VStack(spacing: 3) {
                         Text(day.formatted(.dateTime.weekday(.abbreviated)))
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.jb(10, .semibold))
                             .foregroundStyle(.tertiary)
                         Text("\(cal.component(.day, from: day))")
-                            .font(.system(size: 13, weight: cal.isDateInToday(day) ? .bold : .regular))
+                            .font(.jb(13, cal.isDateInToday(day) ? .bold : .regular))
                             .foregroundStyle(cal.isDateInToday(day) ? Color.white : Color.primary)
                             .frame(width: 24, height: 24)
-                            .background(cal.isDateInToday(day) ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.clear), in: Circle())
+                            .background(cal.isDateInToday(day) ? AnyShapeStyle(JB.accent) : AnyShapeStyle(.clear), in: Circle())
                         ForEach(eventsOn(day, list).filter { $0.allDay == true }.prefix(2)) { ev in
                             Text(ev.summary)
-                                .font(.system(size: 9, weight: .medium))
+                                .font(.jb(9, .medium))
                                 .lineLimit(1)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 2)
                                 .frame(maxWidth: .infinity)
-                                .background(Color.accentColor.opacity(0.30), in: RoundedRectangle(cornerRadius: 5))
+                                .background(JB.accent.opacity(0.30), in: RoundedRectangle(cornerRadius: 5))
                                 .onTapGesture { editing = EventDraft(from: ev) }
                         }
                     }
@@ -451,7 +451,7 @@ struct CalendarPanel: View {
                         VStack(spacing: 0) {
                             ForEach(firstHour..<24, id: \.self) { h in
                                 Text(String(format: "%02d:00", h))
-                                    .font(.system(size: 9))
+                                    .font(.jb(9))
                                     .foregroundStyle(.tertiary)
                                     .frame(width: 40, height: hourHeight, alignment: .topTrailing)
                                     // Centre the label ON its grid line, not under it
@@ -485,7 +485,7 @@ struct CalendarPanel: View {
         let gridStart = cal.date(bySettingHour: firstHour, minute: 0, second: 0, of: day) ?? day
         return ZStack(alignment: .top) {
             if cal.isDateInToday(day) {
-                Color.accentColor.opacity(0.045)
+                JB.accent.opacity(0.045)
             }
             // Hour lines
             VStack(spacing: 0) {
@@ -522,11 +522,11 @@ struct CalendarPanel: View {
                 let h = max(CGFloat(e.timeIntervalSince(s) / 3600) * hourHeight, 18)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(ev.summary)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.jb(10, .semibold))
                         .lineLimit(h > 34 ? 2 : 1)
                     if h > 30 {
                         Text(s.formatted(date: .omitted, time: .shortened))
-                            .font(.system(size: 9))
+                            .font(.jb(9))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -534,10 +534,10 @@ struct CalendarPanel: View {
                 .padding(.vertical, 3)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .frame(height: h, alignment: .topLeading)
-                .background(Color.accentColor.opacity(0.22), in: RoundedRectangle(cornerRadius: 6))
+                .background(JB.accent.opacity(0.22), in: RoundedRectangle(cornerRadius: 6))
                 .overlay(alignment: .leading) {
                     UnevenRoundedRectangle(topLeadingRadius: 6, bottomLeadingRadius: 6)
-                        .fill(Color.accentColor)
+                        .fill(JB.accent)
                         .frame(width: 2.5)
                 }
                 .padding(.horizontal, 2)
@@ -564,8 +564,8 @@ struct CalendarPanel: View {
                 ForEach(days, id: \.self) { day in
                     VStack(alignment: .leading, spacing: 6) {
                         Text(dayLabel(day))
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .foregroundStyle(cal.isDateInToday(day) ? Color.accentColor : .secondary)
+                            .font(.jb(12, .semibold))
+                            .foregroundStyle(cal.isDateInToday(day) ? JB.accent : .secondary)
                         ForEach(groups[day] ?? []) { ev in
                             agendaRow(ev)
                         }
@@ -586,11 +586,11 @@ struct CalendarPanel: View {
     private func agendaRow(_ ev: CalEvent) -> some View {
         HStack(spacing: 10) {
             RoundedRectangle(cornerRadius: 2)
-                .fill(Color.accentColor)
+                .fill(JB.accent)
                 .frame(width: 3, height: 30)
             VStack(alignment: .leading, spacing: 1) {
                 Text(ev.summary)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.jb(13, .medium))
                 HStack(spacing: 6) {
                     if ev.allDay == true {
                         Text(isMultiDay(ev) ? "All day · multi-day" : "All day")
@@ -602,7 +602,7 @@ struct CalendarPanel: View {
                         Label(loc, systemImage: "mappin").lineLimit(1)
                     }
                 }
-                .font(.system(size: 11))
+                .font(.jb(11))
                 .foregroundStyle(.secondary)
             }
             Spacer()
@@ -663,7 +663,7 @@ struct EventEditorSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Text(draft.uid == nil ? "New Event" : "Edit Event")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.jb(14, .semibold))
                 Spacer()
                 if let uid = draft.uid {
                     Button(role: .destructive) {
@@ -680,8 +680,8 @@ struct EventEditorSheet: View {
                 }
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(draft.uid == nil ? "Add" : "Save") { save() }
-                    .buttonStyle(.glassProminent)
-                    .tint(Color.accentColor)
+                    .buttonStyle(.jbPrimary)
+                    .tint(JB.accent)
                     .disabled(saving || draft.summary.isEmpty)
             }
             .padding(14)
@@ -697,7 +697,7 @@ struct EventEditorSheet: View {
                 TextField("Notes", text: $draft.notes, axis: .vertical)
                     .lineLimit(3...6)
                 if let error {
-                    Text(error).font(.caption).foregroundStyle(.red)
+                    Text(error).font(.jbCaption).foregroundStyle(.red)
                 }
             }
             .formStyle(.grouped)

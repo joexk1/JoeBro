@@ -16,7 +16,7 @@ struct PhoneMemoryView: View {
         HStack(spacing: 10) {
             VStack(spacing: 6) {
                 List(files, id: \.self, selection: $selected) { f in
-                    Label(f, systemImage: "doc.text").font(.system(size: 12))
+                    Label(f, systemImage: "doc.text").font(.jb(12))
                 }
                 .scrollContentBackground(.hidden)
                 HStack {
@@ -26,7 +26,7 @@ struct PhoneMemoryView: View {
                         .disabled(selected == nil || selected == "about-me")
                 }
                 .buttonStyle(.borderless)
-                .font(.system(size: 11))
+                .font(.jb(11))
                 .padding(.horizontal, 8)
                 .padding(.bottom, 6)
             }
@@ -38,16 +38,16 @@ struct PhoneMemoryView: View {
                     ContentUnavailableView("Pick a file", systemImage: "doc.text")
                 } else {
                     TextEditor(text: $text)
-                        .font(.system(size: 12.5, design: .monospaced))
+                        .font(.jbMono(12.5))
                         .scrollContentBackground(.hidden)
                         .padding(8)
                         .onChange(of: text) { scheduleSave() }
                 }
                 if let error {
-                    Text(error).font(.system(size: 11)).foregroundStyle(.red)
+                    Text(error).font(.jb(11)).foregroundStyle(.red)
                 }
                 Text("These are plain Markdown files in JoeBro's data folder. The phone agent reads about-me every time and the other files only when relevant.")
-                    .font(.system(size: 10.5))
+                    .font(.jb(10.5))
                     .foregroundStyle(.tertiary)
                     .padding([.horizontal, .bottom], 10)
             }

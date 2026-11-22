@@ -15,9 +15,9 @@ struct PanelChrome<Actions: View, Content: View>: View {
         VStack(spacing: 12) {
             HStack(spacing: 10) {
                 Image(systemName: icon)
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(JB.accent)
                 Text(title)
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .font(.jb(14, .semibold))
                 Spacer()
                 actions
             }
@@ -71,7 +71,7 @@ extension View {
         self
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .joeGlassRect(14)
+            .jbSurface(.raised, radius: JB.rCard)
     }
 }
 
@@ -104,9 +104,8 @@ struct HoverBounce: ViewModifier {
                     }
                 }
             )
-            .scaleEffect(hovering ? scale : 1)
             .onHover { h in
-                withAnimation(.spring(duration: 0.22)) { hovering = h }
+                withAnimation(JB.fade) { hovering = h }
             }
     }
 }
@@ -118,241 +117,69 @@ extension View {
 }
 
 
-// MARK: - Adjustable glass
+// MARK: - Surfaces
 
-/// User-tunable panel clarity. 0 = clearest glass, 0.5 = the stock look
-/// (default), 1 = nearly solid. One global scale, fixed surface ratios.
+/// The environment handle older views read. All state lives in JBAppearance
+/// (shared with iOS): palette, panel opacity, backdrop.
 @Observable
 final class GlassSettings {
     static let shared = GlassSettings()
-    var solidity: Double = UserDefaults.standard.object(forKey: "glassSolidity2") == nil
-        ? 0.5 : UserDefaults.standard.double(forKey: "glassSolidity2") {
-        didSet { UserDefaults.standard.set(solidity, forKey: "glassSolidity2") }
+    var solidity: Double {
+        get { JBAppearance.shared.solidity }
+        set { JBAppearance.shared.solidity = newValue }
     }
-    /// Backdrop when no wallpaper is set — see BackgroundPreset.
-    var backgroundPreset: String = UserDefaults.standard.string(forKey: "bgPreset") ?? "purple" {
-        didSet { UserDefaults.standard.set(backgroundPreset, forKey: "bgPreset") }
-    }
-    /// Trade the live Liquid Glass for a cheap frosted material. Liquid Glass
-    /// re-composites every surface when the window's active state flips (e.g.
-    /// switching Spaces), which can stutter on dense layouts / older Macs; the
-    /// material doesn't. Off by default; also forced on by the system's
-    /// "Reduce transparency" accessibility setting (see JoeGlass).
-    var reduceGlass: Bool = UserDefaults.standard.bool(forKey: "reduceGlass") {
-        didSet { UserDefaults.standard.set(reduceGlass, forKey: "reduceGlass") }
-    }
-}
-
-private struct JoeGlass: ViewModifier {
-    var cornerRadius: CGFloat?    // nil = capsule
-    var interactive = false
-    var backingRatio = 0.85       // chrome panels take the full effect
-    @Environment(GlassSettings.self) private var settings
-    // Liquid Glass caches its render and won't refresh when the system flips
-    // light/dark while the app is open — rebuild the glass layer on the change.
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-
-    func body(content: Content) -> some View {
-        // Reduced mode: a static frosted material instead of live Liquid Glass.
-        // The OS re-renders glass on every window active-state change (Space
-        // switch, app focus); a material doesn't, so this kills that stutter.
-        if settings.reduceGlass || reduceTransparency {
-            return AnyView(content.modifier(JoeReducedSurface(cornerRadius: cornerRadius)))
-        }
-        return AnyView(glassBody(content))
-    }
-
-    private func glassBody(_ content: Content) -> some View {
-        let s = settings.solidity
-        // The glass itself lives in a background layer so it can FADE:
-        // left of centre the frost dissolves toward bare wallpaper;
-        // right of centre a solid backing grows underneath it.
-        let glassOpacity = s < 0.5 ? max(0.1, s * 2) : 1.0
-        let backing = Color(nsColor: .windowBackgroundColor)
-            .opacity(s > 0.5 ? (s - 0.5) * 2 * backingRatio : 0)
-        let g: Glass = interactive ? Glass.regular.interactive() : .regular
-        return content.background {
-            if let r = cornerRadius {
-                ZStack {
-                    RoundedRectangle(cornerRadius: r).fill(backing)
-                    Color.clear
-                        .glassEffect(g, in: .rect(cornerRadius: r))
-                        .opacity(glassOpacity)
-                        .id(colorScheme)
-                    // Control-Center depth: a soft specular sheen down from the
-                    // top edge, and a faint darkening toward the bottom — this is
-                    // what gives that glass its rich, lit-from-above look.
-                    RoundedRectangle(cornerRadius: r)
-                        .fill(LinearGradient(colors: [.white.opacity(0.18), .white.opacity(0.02), .clear],
-                                             startPoint: .top, endPoint: .center))
-                        .blendMode(.plusLighter)
-                        .allowsHitTesting(false)
-                    RoundedRectangle(cornerRadius: r)
-                        .fill(LinearGradient(colors: [.clear, .black.opacity(0.10)],
-                                             startPoint: .center, endPoint: .bottom))
-                        .allowsHitTesting(false)
-                    RoundedRectangle(cornerRadius: r)
-                        .strokeBorder(.white.opacity(0.28 - min(s, 1) * 0.10), lineWidth: 0.9)
-                        .blendMode(.plusLighter)
-                    RoundedRectangle(cornerRadius: r)
-                        .strokeBorder(.black.opacity(0.18), lineWidth: 1)
-                        .mask(
-                            RoundedRectangle(cornerRadius: r)
-                                .fill(LinearGradient(colors: [.clear, .black.opacity(0.9)],
-                                                     startPoint: .top, endPoint: .bottom))
-                        )
-                    RoundedRectangle(cornerRadius: max(0, r - 1))
-                        .strokeBorder(.white.opacity(0.14), lineWidth: 0.7)
-                        .padding(1)
-                        .mask(
-                            RoundedRectangle(cornerRadius: r)
-                                .fill(LinearGradient(colors: [.white, .clear],
-                                                     startPoint: .topLeading, endPoint: .bottomTrailing))
-                        )
-                }
-            } else {
-                ZStack {
-                    Capsule().fill(backing)
-                    Color.clear
-                        .glassEffect(g, in: .capsule)
-                        .opacity(glassOpacity)
-                        .id(colorScheme)
-                    Capsule()
-                        .strokeBorder(.white.opacity(0.28 - min(s, 1) * 0.10), lineWidth: 0.9)
-                        .blendMode(.plusLighter)
-                    Capsule()
-                        .strokeBorder(.black.opacity(0.18), lineWidth: 1)
-                        .mask(
-                            Capsule()
-                                .fill(LinearGradient(colors: [.clear, .black.opacity(0.9)],
-                                                     startPoint: .top, endPoint: .bottom))
-                        )
-                    Capsule()
-                        .strokeBorder(.white.opacity(0.14), lineWidth: 0.7)
-                        .padding(1)
-                        .mask(
-                            Capsule()
-                                .fill(LinearGradient(colors: [.white, .clear],
-                                                     startPoint: .topLeading, endPoint: .bottomTrailing))
-                        )
-                }
-            }
-        }
-    }
-}
-
-/// Cheap stand-in for JoeGlass: a frosted material + soft border, no Liquid
-/// Glass. Used when "Reduce glass effects" (or the system Reduce Transparency
-/// setting) is on, so window active-state changes don't re-composite glass.
-private struct JoeReducedSurface: ViewModifier {
-    var cornerRadius: CGFloat?
-    @Environment(GlassSettings.self) private var settings
-
-    func body(content: Content) -> some View {
-        let backing = Color(nsColor: .windowBackgroundColor).opacity(0.25 + settings.solidity * 0.5)
-        return content.background {
-            if let r = cornerRadius {
-                ZStack {
-                    RoundedRectangle(cornerRadius: r).fill(.ultraThinMaterial)
-                    RoundedRectangle(cornerRadius: r).fill(backing)
-                    RoundedRectangle(cornerRadius: r).strokeBorder(.white.opacity(0.12), lineWidth: 0.8)
-                }
-            } else {
-                ZStack {
-                    Capsule().fill(.ultraThinMaterial)
-                    Capsule().fill(backing)
-                    Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 0.8)
-                }
-            }
-        }
+    var backgroundPreset: String {
+        get { JBAppearance.shared.palette.rawValue }
+        set { JBAppearance.shared.palette = JBPalette(legacy: newValue) }
     }
 }
 
 extension View {
-    func joeGlassRect(_ cornerRadius: CGFloat) -> some View {
-        modifier(JoeGlass(cornerRadius: cornerRadius))
-    }
-    func joeGlassRectInteractive(_ cornerRadius: CGFloat) -> some View {
-        modifier(JoeGlass(cornerRadius: cornerRadius, interactive: true))
-    }
-    func joeGlassCapsule() -> some View {
-        modifier(JoeGlass(cornerRadius: nil))
-    }
-    func joeGlassCapsuleInteractive() -> some View {
-        modifier(JoeGlass(cornerRadius: nil, interactive: true))
-    }
+    func joeGlassRect(_ cornerRadius: CGFloat) -> some View { jbSurface(.panel, radius: cornerRadius) }
+    func joeGlassRectInteractive(_ cornerRadius: CGFloat) -> some View { jbSurface(.panel, radius: cornerRadius) }
+    func joeGlassCapsule() -> some View { jbSurface(.chrome, radius: nil) }
+    func joeGlassCapsuleInteractive() -> some View { jbSurface(.chrome, radius: nil) }
+    func joeCard(_ cornerRadius: CGFloat) -> some View { jbSurface(.raised, radius: cornerRadius) }
 }
 
-
-/// Content-card surface (bubbles, tool rows): the material
-/// fades toward bare on the clear side and solidifies on the right —
-/// tracking the chrome at the same ratio.
-private struct JoeCard: ViewModifier {
-    var cornerRadius: CGFloat
-    @Environment(GlassSettings.self) private var settings
-
-    func body(content: Content) -> some View {
-        let s = settings.solidity
-        let materialOpacity = s < 0.5 ? max(0.12, s * 2) : 1.0
-        let backing = max(0, s - 0.5) * 2 * 0.5
-        return content.background {
-            ZStack {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(Color(nsColor: .windowBackgroundColor).opacity(backing))
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(.ultraThinMaterial)
-                    .opacity(materialOpacity)
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .strokeBorder(.white.opacity(0.18), lineWidth: 0.7)
-                    .blendMode(.plusLighter)
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .strokeBorder(.black.opacity(0.12), lineWidth: 0.8)
-                    .mask(
-                        RoundedRectangle(cornerRadius: cornerRadius)
-                            .fill(LinearGradient(colors: [.clear, .black.opacity(0.8)],
-                                                 startPoint: .top, endPoint: .bottom))
-                    )
-            }
-        }
-    }
-}
-
-extension View {
-    func joeCard(_ cornerRadius: CGFloat) -> some View {
-        modifier(JoeCard(cornerRadius: cornerRadius))
-    }
-}
-
-/// In-window glass tuner — lives in the main window because macOS renders
-/// glass differently while the window is inactive (i.e. whenever the
-/// Settings window is focused), making remote tuning misleading.
+/// In-window appearance tuner: palette + panel opacity, live over the backdrop.
 struct GlassTunerPopover: View {
-    @Environment(GlassSettings.self) private var settings
+    @Bindable private var look = JBAppearance.shared
 
     var body: some View {
-        @Bindable var settings = settings
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Glass")
-                .font(.system(size: 12, weight: .semibold))
-            HStack(spacing: 8) {
-                Image(systemName: "circle.dotted")
-                    .foregroundStyle(.secondary)
-                Slider(value: $settings.solidity, in: 0...1)
-                    .frame(width: 180)
-                Image(systemName: "circle.fill")
-                    .foregroundStyle(.secondary)
-            }
-            HStack {
-                Spacer()
-                Button("Restore Default") {
-                    withAnimation(.spring(duration: 0.3)) { settings.solidity = 0.5 }
-                }
-                .font(.system(size: 11))
-                .disabled(abs(settings.solidity - 0.5) < 0.01)
-            }
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Palette").jbEyebrow()
+            JBPaletteRow(selection: $look.palette)
+            Text("Opacity").jbEyebrow()
+            Slider(value: $look.solidity, in: 0.35...1)
+                .frame(width: 208)
+                .tint(JB.accent)
         }
         .padding(14)
+    }
+}
+
+/// Swatch row for the shared palette list.
+struct JBPaletteRow: View {
+    @Binding var selection: JBPalette
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(JBPalette.allCases) { p in
+                Button {
+                    withAnimation(JB.snap) { selection = p }
+                } label: {
+                    Circle()
+                        .fill(p == .mono ? JB.ink : p.accent)
+                        .frame(width: 18, height: 18)
+                        .overlay(Circle().strokeBorder(JB.line, lineWidth: 1))
+                        .padding(3)
+                        .overlay(Circle().strokeBorder(selection == p ? JB.ink : .clear, lineWidth: 1.5))
+                }
+                .buttonStyle(JBPressStyle())
+                .help(p.label)
+                .accessibilityLabel(p.label)
+            }
+        }
     }
 }
 
@@ -371,16 +198,16 @@ struct QuickAddBar: View {
         HStack(spacing: 8) {
             TextField(placeholder, text: $text)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13))
+                .font(.jb(13))
                 .onSubmit(fire)
                 .disabled(busy)
             if busy {
                 ProgressView().controlSize(.small)
             } else if let errorText {
-                Text(errorText).font(.caption).foregroundStyle(.red).lineLimit(1)
+                Text(errorText).font(.jbCaption).foregroundStyle(.red).lineLimit(1)
             } else {
                 Button(action: fire) {
-                    Image(systemName: actionIcon).foregroundStyle(Color.accentColor)
+                    Image(systemName: actionIcon).foregroundStyle(JB.accent)
                 }
                 .buttonStyle(.borderless)
                 .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -412,18 +239,18 @@ struct PanelSearchField: View {
         HStack(spacing: 6) {
             if open {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11))
+                    .font(.jb(11))
                     .foregroundStyle(.secondary)
                 TextField(placeholder, text: $text)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 12))
+                    .font(.jb(12))
                     .frame(width: 150)
                     .focused($focused)
                 Button {
                     withAnimation(.spring(duration: 0.25)) { text = ""; open = false }
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 11))
+                        .font(.jb(11))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.borderless)
@@ -456,21 +283,21 @@ struct SelectionBar: View {
     var body: some View {
         HStack(spacing: 10) {
             Text("\(selection.count) selected")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.jb(11, .semibold))
             Button(selection.count == total ? "None" : "All") {
                 withAnimation(.spring(duration: 0.25)) {
                     selection = selection.count == total ? [] : Set(allIDs)
                 }
             }
             .buttonStyle(.borderless)
-            .font(.system(size: 11))
+            .font(.jb(11))
             Spacer()
             Button {
                 let ids = selection
                 selection = []          // clear first: the rows are about to go
                 onDelete(Array(ids))
             } label: {
-                Image(systemName: "trash").font(.system(size: 12))
+                Image(systemName: "trash").font(.jb(12))
             }
             .buttonStyle(.borderless)
             .help("Delete selected")
@@ -478,14 +305,14 @@ struct SelectionBar: View {
                 withAnimation(.spring(duration: 0.25)) { selection = [] }
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 12))
+                    .font(.jb(12))
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color.accentColor.opacity(0.10))
+        .background(JB.accent.opacity(0.10))
         .transition(.move(edge: .top).combined(with: .opacity))
     }
 }

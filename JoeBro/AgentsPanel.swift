@@ -96,30 +96,30 @@ struct AgentsPanel: View {
                     .padding(.top, 4)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(run.title.isEmpty ? run.kindLabel : run.title)
-                        .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
+                        .font(.jb(12.5, isSelected ? .semibold : .regular))
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
                     HStack(spacing: 5) {
-                        Image(systemName: run.kindIcon).font(.system(size: 9))
+                        Image(systemName: run.kindIcon).font(.jb(9))
                         Text(run.kindLabel)
                         Text("·")
                         Text(run.live && !run.progress.isEmpty ? run.progress : run.status)
                             .lineLimit(1)
                     }
-                    .font(.system(size: 10.5))
+                    .font(.jb(10.5))
                     .foregroundStyle(.secondary)
                     if run.parentID.isEmpty, case let kids = all.filter({ $0.parentID == run.id }), !kids.isEmpty {
                         Label("\(kids.count) subagent\(kids.count == 1 ? "" : "s") · \(kids.filter(\.live).count) running", systemImage: "arrow.triangle.branch")
-                            .font(.system(size: 10)).foregroundStyle(.secondary)
+                            .font(.jb(10)).foregroundStyle(.secondary)
                     }
                     if !run.parentID.isEmpty {
                         Text("spawned by \(parentName(run, in: all))")
-                            .font(.system(size: 10))
+                            .font(.jb(10))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
                     Text(relativeDate(run.finishedAt.isEmpty ? run.createdAt : run.finishedAt))
-                        .font(.system(size: 10))
+                        .font(.jb(10))
                         .foregroundStyle(.tertiary)
                 }
                 Spacer(minLength: 0)
@@ -164,18 +164,18 @@ struct AgentsPanel: View {
                     header(run)
                     if !run.error.isEmpty {
                         Label(run.error, systemImage: "exclamationmark.triangle")
-                            .font(.system(size: 11.5))
+                            .font(.jb(11.5))
                             .foregroundStyle(run.status == "failed" ? .red : .secondary)
                     }
                     if let note = cancelNote {
                         Label(note, systemImage: "stop.circle")
-                            .font(.system(size: 11.5))
+                            .font(.jb(11.5))
                             .foregroundStyle(.secondary)
                     }
                     if run.result.isEmpty {
                         Text(run.live ? "No output yet — still working."
                                       : "This run produced no output.")
-                            .font(.system(size: 12))
+                            .font(.jb(12))
                             .foregroundStyle(.secondary)
                     } else {
                         MarkdownText(text: run.result)
@@ -183,21 +183,21 @@ struct AgentsPanel: View {
                     if let msgs = run.messages, !msgs.isEmpty {
                         Divider().padding(.vertical, 2)
                         Text("Transcript — \(msgs.count) message\(msgs.count == 1 ? "" : "s")")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.jb(11, .semibold))
                             .foregroundStyle(.secondary)
                         ForEach(msgs.prefix(12)) { m in
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(m.role.capitalized)
-                                    .font(.system(size: 10, weight: .semibold))
+                                    .font(.jb(10, .semibold))
                                     .foregroundStyle(.tertiary)
                                 Text(m.content.prefix(600))
-                                    .font(.system(size: 11.5))
+                                    .font(.jb(11.5))
                                     .textSelection(.enabled)
                             }
                         }
                     } else if !run.sessionID.isEmpty {
                         Text("No stored transcript for this run — its chat has been deleted.")
-                            .font(.system(size: 11))
+                            .font(.jb(11))
                             .foregroundStyle(.tertiary)
                     }
                 }
@@ -218,7 +218,7 @@ struct AgentsPanel: View {
             HStack(spacing: 8) {
                 Image(systemName: run.kindIcon).foregroundStyle(.secondary)
                 Text(run.title.isEmpty ? run.kindLabel : run.title)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.jb(15, .semibold))
                 Spacer(minLength: 8)
                 if run.kind == "coding" && run.status == "waiting" {
                     Button {
@@ -266,7 +266,7 @@ struct AgentsPanel: View {
                 }
                 Text("·"); Text(relativeDate(run.finishedAt.isEmpty ? run.createdAt : run.finishedAt))
             }
-            .font(.system(size: 11))
+            .font(.jb(11))
             .foregroundStyle(.secondary)
         }
     }

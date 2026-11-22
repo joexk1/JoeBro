@@ -15,19 +15,19 @@ struct ThinkingSection: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "brain")
-                        .font(.system(size: 10))
+                        .font(.jb(10))
                     Text(inProgress ? "Thinking…" : (expanded ? "Hide \(label)" : "View \(label)"))
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.jb(11, .medium))
                     if let seconds, !inProgress {
                         Text(String(format: "%.1fs", seconds))
-                            .font(.system(size: 10))
+                            .font(.jb(10))
                             .foregroundStyle(.tertiary)
                     }
                     if inProgress {
                         ProgressView().controlSize(.mini)
                     } else {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 7, weight: .bold))
+                            .font(.jb(7, .bold))
                             .rotationEffect(.degrees(expanded ? 90 : 0))
                     }
                 }
@@ -38,7 +38,7 @@ struct ThinkingSection: View {
 
             if expanded || inProgress {
                 Text(thinking)
-                    .font(.system(size: 12))
+                    .font(.jb(12))
                     .foregroundStyle(.secondary)
                     .lineSpacing(2)
                     .textSelection(.enabled)
@@ -83,9 +83,9 @@ struct MessageBubbleView: View, Equatable {
             Spacer()
             HStack(spacing: 6) {
                 Image(systemName: "arrow.down.right.and.arrow.up.left")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.jb(9, .semibold))
                 Text("Compacted chat")
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .font(.jb(11, .medium))
             }
             .foregroundStyle(.secondary)
             .padding(.horizontal, 12)
@@ -111,7 +111,7 @@ struct MessageBubbleView: View, Equatable {
                         .padding(.horizontal, 15)
                         .padding(.vertical, 10)
                         .joeCard(17)
-                        .background(Color.accentColor.opacity(0.30), in: RoundedRectangle(cornerRadius: 17))
+                        .background(JB.accent.opacity(0.30), in: RoundedRectangle(cornerRadius: 17))
                         .overlay(RoundedRectangle(cornerRadius: 17).strokeBorder(.white.opacity(0.14), lineWidth: 1))
                         .contextMenu {
                             Button {
@@ -151,10 +151,10 @@ struct MessageBubbleView: View, Equatable {
             if let model = message.modelName {
                 HStack(spacing: 6) {
                     ProviderLogoView(model: model, size: 13)
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(JB.accent)
                     Text(model.components(separatedBy: "/").last ?? model)
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(Color.accentColor)
+                        .font(.jb(11, .semibold))
+                        .foregroundStyle(JB.accent)
                 }
             }
 
@@ -214,7 +214,7 @@ struct MessageBubbleView: View, Equatable {
                         .help("Context window used")
                     }
                 }
-                .font(.system(size: 10.5))
+                .font(.jb(10.5))
                 .foregroundStyle(.tertiary)
             }
         }
@@ -282,17 +282,17 @@ struct MessageBubbleView: View, Equatable {
                     Link(destination: URL(string: src.url) ?? URL(string: "about:blank")!) {
                         HStack(spacing: 5) {
                             Text("\(i + 1)")
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.jb(9, .bold))
                                 .frame(width: 14, height: 14)
-                                .background(Color.accentColor.opacity(0.25), in: Circle())
+                                .background(JB.accent.opacity(0.25), in: Circle())
                             Text(src.title)
-                                .font(.system(size: 11))
+                                .font(.jb(11))
                                 .lineLimit(1)
                                 .frame(maxWidth: 180, alignment: .leading)
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
-                        .background(.ultraThinMaterial, in: Capsule())
+                        .background(JB.panelFill, in: Capsule())
                     }
                     .buttonStyle(.plain)
                 }
@@ -333,7 +333,7 @@ private struct WorkspaceActionButtons: View {
                             open(action.target)
                         } label: {
                             Label(action.label, systemImage: action.icon)
-                                .font(.system(size: 11, weight: .medium))
+                                .font(.jb(11, .medium))
                         }
                         .buttonStyle(.plain)
                         .padding(.horizontal, 10)
@@ -422,14 +422,14 @@ struct ToolRowView: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: toolIcon)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Color.accentColor)
+                        .font(.jb(11, .medium))
+                        .foregroundStyle(JB.accent)
                     Text((toolLabel + (message.groupedToolCount > 1 ? " (\(message.groupedToolCount))" : "")).uppercased())
-                        .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                        .font(.jb(10.5, .bold))
                         .tracking(0.6)
                     if message.toolDone {
                         Text(failed ? "failed" : "done")
-                            .font(.system(size: 10.5))
+                            .font(.jb(10.5))
                             .foregroundStyle(failed ? Color.red : Color.secondary)
                     } else {
                         ProgressView()
@@ -437,13 +437,13 @@ struct ToolRowView: View {
                     }
                     if !expanded, let cmd = message.command, !cmd.isEmpty {
                         Text(cmd)
-                            .font(.system(size: 10.5, design: .monospaced))
+                            .font(.jbMono(10.5))
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.jb(8, .bold))
                         .foregroundStyle(.tertiary)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                 }
@@ -457,7 +457,7 @@ struct ToolRowView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     if let cmd = message.command, !cmd.isEmpty {
                         Text(cmd)
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(.jbMono(11))
                             .textSelection(.enabled)
                             .padding(8)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -466,7 +466,7 @@ struct ToolRowView: View {
                     if let out = message.toolOutput, !out.isEmpty {
                         ScrollView {
                             Text(message.groupedToolCount > 1 ? out : (out.count > 4000 ? String(out.prefix(4000)) + "\n…" : out))
-                                .font(.system(size: 11, design: .monospaced))
+                                .font(.jbMono(11))
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -539,12 +539,12 @@ struct PluginsUsedView: View {
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "puzzlepiece.extension.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.accentColor)
+                        .font(.jb(10))
+                        .foregroundStyle(JB.accent)
                     Text("\(plugins.count) plugin\(plugins.count == 1 ? "" : "s") used")
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.jb(10.5, .medium))
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 7, weight: .bold))
+                        .font(.jb(7, .bold))
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                 }
                 .foregroundStyle(.secondary)
@@ -555,11 +555,11 @@ struct PluginsUsedView: View {
                 ForEach(Array(plugins.enumerated()), id: \.offset) { _, p in
                     HStack(alignment: .top, spacing: 5) {
                         Image(systemName: "puzzlepiece.extension")
-                            .font(.system(size: 8))
-                            .foregroundStyle(Color.accentColor)
+                            .font(.jb(8))
+                            .foregroundStyle(JB.accent)
                             .padding(.top, 2)
                         Text(p)
-                            .font(.system(size: 11))
+                            .font(.jb(11))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -580,12 +580,12 @@ struct SkillsUsedView: View {
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "graduationcap.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.accentColor)
+                        .font(.jb(10))
+                        .foregroundStyle(JB.accent)
                     Text("\(skills.count) skill\(skills.count == 1 ? "" : "s") used")
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.jb(10.5, .medium))
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 7, weight: .bold))
+                        .font(.jb(7, .bold))
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                 }
                 .foregroundStyle(.secondary)
@@ -596,11 +596,11 @@ struct SkillsUsedView: View {
                 ForEach(Array(skills.enumerated()), id: \.offset) { _, s in
                     HStack(alignment: .top, spacing: 5) {
                         Image(systemName: "graduationcap")
-                            .font(.system(size: 8))
-                            .foregroundStyle(Color.accentColor)
+                            .font(.jb(8))
+                            .foregroundStyle(JB.accent)
                             .padding(.top, 2)
                         Text(s)
-                            .font(.system(size: 11))
+                            .font(.jb(11))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -621,11 +621,11 @@ struct MemoriesUsedView: View {
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "brain.head.profile")
-                        .font(.system(size: 10))
+                        .font(.jb(10))
                     Text("\(memories.count) memor\(memories.count == 1 ? "y" : "ies") used")
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.jb(10.5, .medium))
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 7, weight: .bold))
+                        .font(.jb(7, .bold))
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                 }
                 .foregroundStyle(.secondary)
@@ -636,11 +636,11 @@ struct MemoriesUsedView: View {
                 ForEach(Array(memories.enumerated()), id: \.offset) { _, m in
                     HStack(alignment: .top, spacing: 5) {
                         Image(systemName: "sparkle")
-                            .font(.system(size: 8))
-                            .foregroundStyle(Color.accentColor)
+                            .font(.jb(8))
+                            .foregroundStyle(JB.accent)
                             .padding(.top, 2)
                         Text(m)
-                            .font(.system(size: 11))
+                            .font(.jb(11))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -693,10 +693,10 @@ struct CopyResponseButton: View {
             }
         } label: {
             Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.jb(11, .semibold))
                 .foregroundStyle(copied ? Color.green : Color.secondary)
                 .frame(width: 26, height: 26)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                .background(JB.panelFill, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.white.opacity(0.12), lineWidth: 1))
                 .scaleEffect(copied ? 1.12 : 1)
         }
@@ -743,13 +743,13 @@ private struct ToolActivityView: View {
                 HStack(spacing: 10) {
                     HStack(spacing: 6) {
                         if running { ProgressView().controlSize(.mini) }
-                        else { Image(systemName: failed ? "exclamationmark.circle" : "wrench.and.screwdriver").font(.system(size: 10)) }
-                        Text("\(calls.count) \(calls.count == 1 ? "step" : "steps")").font(.system(size: 11, weight: .medium))
-                        Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).rotationEffect(.degrees(expanded ? 180 : 0))
+                        else { Image(systemName: failed ? "exclamationmark.circle" : "wrench.and.screwdriver").font(.jb(10)) }
+                        Text("\(calls.count) \(calls.count == 1 ? "step" : "steps")").font(.jb(11, .medium))
+                        Image(systemName: "chevron.down").font(.jb(8, .semibold)).rotationEffect(.degrees(expanded ? 180 : 0))
                     }
                     .padding(.horizontal, 10).padding(.vertical, 6)
                     .background(.primary.opacity(expanded ? 0.12 : 0.06), in: Capsule())
-                    Text(summary).font(.system(size: 12, weight: .medium)).foregroundStyle(.primary).lineLimit(2)
+                    Text(summary).font(.jb(12, .medium)).foregroundStyle(.primary).lineLimit(2)
                     Spacer(minLength: 0)
                 }.foregroundStyle(.primary.opacity(0.85)).frame(maxWidth: .infinity, minHeight: 28, alignment: .leading).contentShape(Rectangle())
             }.buttonStyle(.plain)
@@ -776,17 +776,17 @@ private struct ToolActivityStep: View {
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
             VStack(alignment: .leading, spacing: 6) {
-                if let command = message.command, !command.isEmpty { Text(command).font(.system(size: 11, design: .monospaced)).textSelection(.enabled) }
+                if let command = message.command, !command.isEmpty { Text(command).font(.jbMono(11)).textSelection(.enabled) }
                 if let output = message.toolOutput, !output.isEmpty {
-                    ScrollView { Text(output).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 220)
+                    ScrollView { Text(output).font(.jbMono(11)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 220)
                 }
             }.padding(.vertical, 6)
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: !message.toolDone ? "ellipsis" : (message.exitCode ?? 0) != 0 ? "xmark" : "checkmark")
-                    .foregroundStyle((message.exitCode ?? 0) != 0 ? Color.red : Color.secondary).font(.system(size: 10)).frame(width: 12)
+                    .foregroundStyle((message.exitCode ?? 0) != 0 ? Color.red : Color.secondary).font(.jb(10)).frame(width: 12)
                 Text(prettyToolName(message.toolName) + (message.groupedToolCount > 1 ? " (\(message.groupedToolCount))" : ""))
-                    .font(.system(size: 12, weight: .medium)).lineLimit(2)
+                    .font(.jb(12, .medium)).lineLimit(2)
             }.padding(.vertical, 3)
         }.tint(.secondary)
     }

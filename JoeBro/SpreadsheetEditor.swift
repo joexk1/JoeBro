@@ -24,13 +24,13 @@ struct SpreadsheetEditor: View {
                     ForEach(rows.indices, id: \.self) { r in
                         GridRow {
                             Text("\(r + 1)")
-                                .font(.system(size: 10, design: .monospaced))
+                                .font(.jbMono(10))
                                 .foregroundStyle(.tertiary)
                                 .frame(width: 34, alignment: .trailing)
                             ForEach(columnRange(r), id: \.self) { c in
                                 TextField("", text: cellBinding(r, c))
                                     .textFieldStyle(.plain)
-                                    .font(.system(size: 12))
+                                    .font(.jb(12))
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 3)
                                     .frame(width: 130, alignment: .leading)
@@ -54,11 +54,11 @@ struct SpreadsheetEditor: View {
             Button { addColumn() } label: { Label("Column", systemImage: "plus") }
             Spacer()
             if doc?.dirty == true {
-                Text("unsaved").font(.system(size: 10)).foregroundStyle(.secondary)
+                Text("unsaved").font(.jb(10)).foregroundStyle(.secondary)
             }
         }
         .buttonStyle(.borderless)
-        .font(.system(size: 11))
+        .font(.jb(11))
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
     }

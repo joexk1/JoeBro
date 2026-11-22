@@ -19,10 +19,10 @@ struct AICheckPanel: View {
                     }
                 }
                 .buttonStyle(.borderless)
-                .font(.system(size: 12, weight: .medium))
+                .font(.jb(12, .medium))
                 .disabled(text.isEmpty && result == nil)
                 Text("ZeroGPT")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.jb(12, .medium))
                     .foregroundStyle(.tertiary)
             }
             .frame(height: 18, alignment: .center)
@@ -31,13 +31,13 @@ struct AICheckPanel: View {
                 // Input
                 VStack(spacing: 10) {
                     TextEditor(text: $text)
-                        .font(.system(size: 13))
+                        .font(.jb(13))
                         .scrollContentBackground(.hidden)
                         .padding(10)
                         .overlay(alignment: .topLeading) {
                             if text.isEmpty {
                                 Text("Paste text to check (at least ~20 words)…")
-                                    .font(.system(size: 13))
+                                    .font(.jb(13))
                                     .foregroundStyle(.tertiary)
                                     .padding(.top, 14)
                                     .padding(.leading, 16)
@@ -46,7 +46,7 @@ struct AICheckPanel: View {
                         }
                     HStack {
                         Text("\(text.split(separator: " ").count) words")
-                            .font(.system(size: 11))
+                            .font(.jb(11))
                             .foregroundStyle(.tertiary)
                         Spacer()
                         Button {
@@ -55,8 +55,8 @@ struct AICheckPanel: View {
                             if checking { ProgressView().controlSize(.small) }
                             else { Label("Check", systemImage: "wand.and.rays") }
                         }
-                        .buttonStyle(.glassProminent)
-                        .tint(Color.accentColor)
+                        .buttonStyle(.jbPrimary)
+                        .tint(JB.accent)
                         .disabled(checking || text.split(separator: " ").count < 20)
                     }
                     .padding(.horizontal, 12)
@@ -74,11 +74,11 @@ struct AICheckPanel: View {
                             ScrollView {
                                 VStack(alignment: .leading, spacing: 6) {
                                     Text("Flagged sentences")
-                                        .font(.system(size: 11, weight: .semibold))
+                                        .font(.jb(11, .semibold))
                                         .foregroundStyle(.secondary)
                                     ForEach(Array(flagged.enumerated()), id: \.offset) { _, s in
                                         Text(s)
-                                            .font(.system(size: 12))
+                                            .font(.jb(12))
                                             .padding(8)
                                             .frame(maxWidth: .infinity, alignment: .leading)
                                             .background(Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
@@ -88,7 +88,7 @@ struct AICheckPanel: View {
                             }
                         } else {
                             Text("No sentences flagged")
-                                .font(.system(size: 12))
+                                .font(.jb(12))
                                 .foregroundStyle(.tertiary)
                         }
                         Spacer()
@@ -115,16 +115,16 @@ struct AICheckPanel: View {
                     .rotationEffect(.degrees(-90))
                 VStack(spacing: 0) {
                     Text("\(Int(r.aiPercent))%")
-                        .font(.system(size: 26, weight: .bold, design: .rounded))
+                        .font(.jb(26, .bold))
                     Text("AI")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.jb(10, .semibold))
                         .foregroundStyle(.secondary)
                 }
             }
             .frame(width: 110, height: 110)
             if let words = r.totalWords, let ai = r.aiWords {
                 Text("\(ai) of \(words) words read as AI")
-                    .font(.system(size: 11))
+                    .font(.jb(11))
                     .foregroundStyle(.secondary)
             }
         }
