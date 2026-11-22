@@ -156,9 +156,11 @@ struct WebBackdropView: NSViewRepresentable {
         guard let target else { return view }
         let isUser = fileURL != nil
         Task { @MainActor in
-            if isUser, let list = try? await WKContentRuleListStore.default()
-                .compileContentRuleList(forIdentifier: "jbBackdropNoNet", encodedContentRuleList: blockNetworkRules) {
-                cfg.userContentController.add(list)
+            if isUser {
+                // Fail closed: a user backdrop never loads without the network block in place.
+                guard let list = try? await WKContentRuleListStore.default()
+                    .compileContentRuleList(forIdentifier: "jbBackdropNoNet", encodedContentRuleList: blockNetworkRules) else { return }
+                view.configuration.userContentController.add(list)
             }
             view.loadFileURL(target, allowingReadAccessTo: target.deletingLastPathComponent())
         }

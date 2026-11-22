@@ -417,7 +417,7 @@ struct ModelsSettingsTab: View {
             Section {
                 switch endpoints {
                 case .loading:
-                    ProgressView()
+                    JBSpinner()
                 case .failed(let e):
                     Text(e).foregroundStyle(JB.danger).font(.jbCaption)
                 case .loaded(let list):
@@ -436,9 +436,6 @@ struct ModelsSettingsTab: View {
                 }
             } header: {
                 Text("Endpoints & API Keys")
-            } footer: {
-                Text("Untick a model to hide it from the picker.")
-                    .font(.jbCaption)
             }
         }
         .formStyle(.grouped)
@@ -578,7 +575,7 @@ struct ModelsSettingsTab: View {
                     .toggleStyle(.checkbox)
                 }
             } else {
-                ProgressView().controlSize(.small)
+                JBSpinner()
             }
         } label: {
             HStack {
@@ -658,7 +655,7 @@ struct AddEndpointSheet: View {
                 Button {
                     save()
                 } label: {
-                    if saving { ProgressView().controlSize(.small) }
+                    if saving { JBSpinner() }
                     else { Text("Add") }
                 }
                 .buttonStyle(.jbPrimary)
@@ -826,7 +823,7 @@ private struct ConnectionSheetChrome<Content: View>: View {
                 Button {
                     onSave()
                 } label: {
-                    if saving { ProgressView().controlSize(.small) }
+                    if saving { JBSpinner() }
                     else { Text("Connect") }
                 }
                 .buttonStyle(.jbPrimary)

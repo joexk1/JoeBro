@@ -634,7 +634,7 @@ struct ComputerUseSettingsSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Label("Agent Desktop", systemImage: "cpu")
+                HStack(spacing: 6) { JBSymbol(name: "cpu"); Text("Agent Desktop") }
                     .font(.jb(14, .semibold))
                 Spacer()
                 Button("Done") { save(); dismiss() }
@@ -706,7 +706,7 @@ struct AdvisorSettingsSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Label("Advisor", systemImage: "graduationcap")
+                HStack(spacing: 6) { JBSymbol(name: "graduationcap"); Text("Advisor") }
                     .font(.jb(14, .semibold))
                 Spacer()
                 Button("Done") { save(); dismiss() }

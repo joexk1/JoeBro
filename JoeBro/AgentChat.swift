@@ -154,7 +154,7 @@ struct AgentChatThread: View {
                     .padding(.horizontal, JB.s3).padding(.vertical, 8)
                     .jbField(focused: focused)
                     .onSubmit { Task { await send() } }
-                Button { showScreen.toggle() } label: { Image(systemName: "terminal") }
+                Button { showScreen.toggle() } label: { JBSymbol(name: "terminal", size: 15) }
                     .buttonStyle(JBIconButtonStyle(size: 30, active: showScreen)).help("Terminal")
                 Button { Task { await send() } } label: { Image(systemName: "arrow.up") }
                     .buttonStyle(JBIconButtonStyle(size: 30, active: !draft.isEmpty))

@@ -10,7 +10,7 @@ struct JBSymbol: View {
         "brain": .memory, "brain.head.profile": .memory,
         "moon.zzz": .nightShift, "moon.stars": .nightShift,
         "graduationcap": .skills, "hammer": .tools, "wrench.and.screwdriver": .tools,
-        "terminal": .coding, "puzzlepiece": .plugin, "puzzlepiece.extension": .plugin,
+        "terminal": .coding, "cpu": .tools, "puzzlepiece": .plugin, "puzzlepiece.extension": .plugin,
         "checklist": .tasks, "clock.badge.checkmark": .tasks,
         "person.3.sequence": .agent, "person.crop.circle": .agent,
         "antenna.radiowaves.left.and.right": .research, "sparkle.magnifyingglass": .research,
