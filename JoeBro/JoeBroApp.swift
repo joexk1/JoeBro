@@ -62,13 +62,14 @@ final class LocalBackend {
 
     private func backendScriptURL() -> URL? {
         let fm = FileManager.default
-        let candidates: [URL?] = [
+        var candidates: [URL?] = [
             Bundle.main.url(forResource: "joebro_backend", withExtension: "py"),
             Bundle.main.resourceURL?.appendingPathComponent("Backend/joebro_backend.py"),
-            URL(fileURLWithPath: #filePath)
-                .deletingLastPathComponent()
-                .appendingPathComponent("Backend/joebro_backend.py"),
         ]
+        #if DEBUG
+        // Running from Xcode: the source tree's copy. (Debug only: #filePath bakes the build path into the binary.)
+        candidates.append(URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Backend/joebro_backend.py"))
+        #endif
         return candidates.compactMap { $0 }.first { fm.fileExists(atPath: $0.path) }
     }
 

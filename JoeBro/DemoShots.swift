@@ -110,7 +110,7 @@ import WebKit
             else { ap.backdrop = .palette; ap.solidity = 1 }
             if let p = JBPalette(rawValue: look.palette) { ap.palette = p }
             await wait(look.backdrop == "scene" ? 4 : 1.5)
-            let full = li == 0 || li == 1
+            let full = li < (Int(option("-JoeBroShotsFull") ?? "") ?? 2)   // how many looks get every screen
             func snap(_ name: String, settle: Double = 2.2) async {
                 if let only, !only.contains(name) { return }
                 await wait(settle)

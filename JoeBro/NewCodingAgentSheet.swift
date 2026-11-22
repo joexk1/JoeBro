@@ -48,9 +48,11 @@ struct NewCodingAgentSheet: View {
             Text("New coding agent").font(.jb(17, .semibold)).tracking(-0.2)
 
             HStack(spacing: JB.s3) {
-                field("Device") {
-                    select(hosts.first { $0.id == host }.map { $0.up == false ? $0.label + " (offline)" : $0.label } ?? "Choose") {
-                        ForEach(hosts) { h in option(h.up == false ? h.label + " (offline)" : h.label, on: h.id == host) { host = h.id } }
+                if hosts.count > 1 {    // only with more than one linked computer
+                    field("Device") {
+                        select(hosts.first { $0.id == host }.map { $0.up == false ? $0.label + " (offline)" : $0.label } ?? "Choose") {
+                            ForEach(hosts) { h in option(h.up == false ? h.label + " (offline)" : h.label, on: h.id == host) { host = h.id } }
+                        }
                     }
                 }
                 field("Agent") {
