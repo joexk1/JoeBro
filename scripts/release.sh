@@ -62,7 +62,7 @@ if [[ ! -x "$TOOLS/generate_appcast" || ! -x "$TOOLS/sign_update" ]]; then
   mkdir -p "$TOOLS"
   for t in generate_appcast sign_update generate_keys; do
     "$XCB" -project "$SPK/Sparkle.xcodeproj" -scheme "$t" -configuration Release \
-      -derivedDataPath "$TOOLS/dd" CODE_SIGNING_ALLOWED=NO build >/dev/null 2>&1
+      -derivedDataPath "$TOOLS/dd" CODE_SIGNING_ALLOWED=NO MACOSX_DEPLOYMENT_TARGET=12.0 build >/dev/null 2>&1
     cp "$TOOLS/dd/Build/Products/Release/$t" "$TOOLS/"
   done
   rm -rf "$TOOLS/dd"
