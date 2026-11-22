@@ -291,6 +291,8 @@ struct AgentChatThread: View {
         }
         .padding(JB.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Waiting on you: always solid, so the options read over any wallpaper.
+        .background(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).fill(JB.surface.opacity(active ? 0.96 : 0)))
         .jbSurface(.raised, radius: JB.rCard)
         .overlay(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).strokeBorder(JB.warn.opacity(active ? 0.5 : 0), lineWidth: 1))
     }

@@ -92,8 +92,11 @@ import WebKit
         guard let dir else { return }
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         NSApp.activate(ignoringOtherApps: true)
-        await wait(3)
-        guard let window = mainWindow() else { print("DemoShots: no window"); exit(1) }
+        // Launched over SSH, the first window only appears once the app gets a reopen (jbshots.sh sends one).
+        var found: NSWindow?
+        for _ in 0..<60 where found == nil { await wait(0.5); found = mainWindow() }
+        guard let window = found else { print("DemoShots: no window"); exit(1) }
+        await wait(1.5)
         window.aspectRatio = NSSize(width: 1440, height: 900)
         window.contentMinSize = NSSize(width: 100, height: 100)
         window.setContentSize(NSSize(width: 1440, height: 900))
@@ -118,7 +121,9 @@ import WebKit
             if let first = store.sessions.first { store.select(first.id); await wait(1.5); await snap("chat") }
             // A coding agent as a chat (Claude Code / Codex / OpenCode under one roof).
             await AgentNav.shared.refresh()
-            if let agent = AgentNav.shared.runs.first(where: { $0.live }) ?? AgentNav.shared.runs.first {
+            // The one waiting on you: its question card shows answering an agent right in the chat.
+            if let agent = AgentNav.shared.runs.first(where: { $0.status == "waiting" })
+                ?? AgentNav.shared.runs.first(where: { $0.live }) ?? AgentNav.shared.runs.first {
                 AgentNav.shared.open(agent.id); await snap("coding-agent", settle: 3)
                 AgentNav.shared.close()
             }

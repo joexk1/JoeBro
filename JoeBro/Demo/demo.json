@@ -919,7 +919,35 @@
       "host": "pc",
       "source": "codex",
       "cwd": "~/projects/ledger-api",
-      "can_send": true
+      "can_send": true,
+      "prompt": {
+        "question": "Would you like to run the following command?  go test ./...",
+        "header": "",
+        "numbered": true,
+        "options": [
+          {
+            "key": "1",
+            "label": "Yes, proceed",
+            "description": "",
+            "selected": true,
+            "freeform": false
+          },
+          {
+            "key": "2",
+            "label": "Yes, and don't ask again for go test",
+            "description": "",
+            "selected": false,
+            "freeform": false
+          },
+          {
+            "key": "3",
+            "label": "No, and tell Codex what to do differently",
+            "description": "",
+            "selected": false,
+            "freeform": true
+          }
+        ]
+      }
     }
   },
   "GET /api/agents/cx1a": {
