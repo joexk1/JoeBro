@@ -68,6 +68,23 @@ class Migration(unittest.TestCase):
         # and it is a real user-scope fact
         self.assertEqual(sm.fact_out(store, store.one("select * from shared_facts where id=?", (r["id"],)))["scope"], "user")
 
+    def test_one_store_remember_and_recall_both_ways(self):
+        """What a Brain write saves, the app's recall finds; what the app remembers, the Brain list shows; agents never see `user`."""
+        store, _ = fixture()
+        h = H(store)
+        um.migrate(store)
+        r = h.upsert_memory({"text": "Allergic to peanuts, carries an EpiPen", "category": "health"})
+        out = sm._dispatch(store, "POST", "recall", {}, {"project": "user", "query": "peanuts allergy epipen"}, caller="app")
+        self.assertIn(r["id"], [f["id"] for f in out["facts"]])
+        out = sm._dispatch(store, "POST", "", {}, {"project": "user", "text": "Prefers window seats on trains", "kind": "preference"}, caller="app")
+        self.assertEqual(out["outcome"], "added")
+        self.assertIn("window seats", " ".join(x["text"] for x in um.mem_rows(store)))
+        self.assertTrue(any(f["scope"] == "user" for f in sm._dispatch(store, "GET", "", {}, {}, caller="app")["facts"]))
+        agent = sm._dispatch(store, "GET", "", {}, {}, caller="agent")
+        self.assertFalse(any(f["scope"] == "user" for f in agent["facts"]))
+        with self.assertRaises(LookupError):
+            sm._dispatch(store, "POST", "recall", {}, {"project": "user", "query": "peanuts"}, caller="agent")
+
     def test_muse_alias_roundtrip(self):
         store, _ = fixture()
         h = H(store)

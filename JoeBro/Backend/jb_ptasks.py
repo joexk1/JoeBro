@@ -27,13 +27,10 @@ PTASK_PREFIX = "ptask_"
 _NOTHING = re.compile(r"^\W*(nothing|no update|nothing to report)\b", re.I)
 
 RUN_SUFFIX = (
-    "\n\n---\nThis is a user-requested personal background task. Do the work using real tools, "
-    "then write a COMPLETE useful message for the user's personal chat. This is not a notification-sized "
-    "output: include everything important and report unavailable sources honestly. For a morning briefing, "
-    "cover the user's requested sources in a concise readable briefing, not a fragment. "
-    "Never include credentials or passwords from source material. You may start with TITLE: <heading>. "
-    "Only when there is genuinely no new information, reply exactly NOTHING. Do not call notify_me; "
-    "the completed chat message gets a short lock-screen preview automatically.")
+    "\n\n---\nUser-requested personal background task. Use real tools, then write a COMPLETE message for the user's personal chat "
+    "(not notification-sized): everything important, unavailable sources reported honestly; a briefing covers the requested sources, readable. "
+    "Never include credentials. You may start with TITLE: <heading>. Only if there is no new information at all, reply exactly NOTHING. "
+    "Don't call notify_me: the message gets a lock-screen preview automatically.")
 
 
 # id -> (title, prompt, schedule, time). Written to be safe on a fresh install:

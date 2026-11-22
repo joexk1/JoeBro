@@ -1223,9 +1223,12 @@ struct TaskItem: Decodable, Identifiable, Hashable {
     var status: String?
     var permissionMode: String?
     var repeatDay: Int?
+    var codingAgent: String?, codingRepo: String?, codingHost: String?, codingModel: String?, codingStatus: String?
 
     enum CodingKeys: String, CodingKey {
         case id, name, prompt, schedule, status
+        case codingAgent = "coding_agent", codingRepo = "coding_repo", codingHost = "coding_host"
+        case codingModel = "coding_model", codingStatus = "coding_status"
         case taskType = "task_type"
         case scheduledTime = "scheduled_time"
         case nextRun = "next_run"
@@ -1233,6 +1236,7 @@ struct TaskItem: Decodable, Identifiable, Hashable {
         case permissionMode = "permission_mode"
         case repeatDay = "repeat_day"
     }
+    var isCoding: Bool { !(codingAgent ?? "").isEmpty }
 }
 
 // MARK: - Filesystem browse (folder picker)

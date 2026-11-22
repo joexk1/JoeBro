@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// Muse-style memory files the phone agent reads: plain Markdown, one file each.
-/// Separate from the Brain by design.
+/// Plain Markdown memory files the phone agent reads, shown as the "Files" view of Memory.
 struct PhoneMemoryView: View {
     @State private var files: [String] = []
     @State private var selected: String?
@@ -13,46 +12,41 @@ struct PhoneMemoryView: View {
     @State private var saveTask: Task<Void, Never>?
 
     var body: some View {
-        HStack(spacing: 10) {
-            VStack(spacing: 6) {
-                List(files, id: \.self, selection: $selected) { f in
-                    Label(f, systemImage: "doc.text").font(.jb(12))
+        HStack(spacing: JB.s3) {
+            VStack(spacing: 0) {
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(files, id: \.self) { f in
+                            Button { selected = f } label: {
+                                Text(f).font(.jbMono(12)).foregroundStyle(selected == f ? JB.ink : JB.ink2)
+                                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 6)
+                                    .jbHoverRow(selected: selected == f)
+                            }.buttonStyle(.plain)
+                        }
+                    }.padding(6)
                 }
-                .scrollContentBackground(.hidden)
                 HStack {
-                    Button { showNew = true } label: { Label("New file", systemImage: "plus") }
+                    ExtrasIconButton(symbol: "plus", help: "New file") { showNew = true }
                     Spacer()
-                    Button(role: .destructive) { delete() } label: { Image(systemName: "trash") }
-                        .disabled(selected == nil || selected == "about-me")
-                }
-                .buttonStyle(.borderless)
-                .font(.jb(11))
-                .padding(.horizontal, 8)
-                .padding(.bottom, 6)
+                    ExtrasIconButton(symbol: "trash", help: "Delete file") { delete() }.disabled(selected == nil || selected == "about-me")
+                }.padding(6)
             }
-            .frame(width: 170)
-            .joeGlassRect(16)
+            .frame(width: 190).jbSurface(.panel)
 
             VStack(spacing: 6) {
                 if selected == nil {
-                    ContentUnavailableView("Pick a file", systemImage: "doc.text")
+                    JBEmptyState(art: .files, text: "Pick a file")
                 } else {
                     TextEditor(text: $text)
-                        .font(.jbMono(12.5))
+                        .font(.jbMono(12.5)).foregroundStyle(JB.ink)
                         .scrollContentBackground(.hidden)
                         .padding(8)
                         .onChange(of: text) { scheduleSave() }
                 }
-                if let error {
-                    Text(error).font(.jb(11)).foregroundStyle(.red)
-                }
-                Text("These are plain Markdown files in JoeBro's data folder. The phone agent reads about-me every time and the other files only when relevant.")
-                    .font(.jb(10.5))
-                    .foregroundStyle(.tertiary)
-                    .padding([.horizontal, .bottom], 10)
+                if let error { Text(error).font(.jbMono(11)).foregroundStyle(JB.danger).padding([.horizontal, .bottom], 10) }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .joeGlassRect(16)
+            .jbSurface(.panel)
         }
         .task { await reload() }
         .onChange(of: selected) { old, new in

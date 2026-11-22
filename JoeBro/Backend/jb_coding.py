@@ -690,8 +690,12 @@ def coding_loop(server):
                 pass
             if len(pushed) > 400:
                 pushed.clear()
-            try:                   # Night Shift scheduler + the nightly memory consolidation
+            try:                   # Night Shift scheduler (its own try: a failure here must not skip the memory upkeep)
                 h.night_tick()
+            except Exception:
+                import traceback
+                traceback.print_exc()
+            try:
                 import jb_sharedmem
                 jb_sharedmem.nightly(server.store)
             except Exception:

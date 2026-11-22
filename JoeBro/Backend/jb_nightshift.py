@@ -16,6 +16,7 @@ import time
 import types
 from pathlib import Path
 
+import jb_ext
 import jb_nightworker as worker
 import jb_sharedmem
 
@@ -69,6 +70,14 @@ def node_seen(name, within=180):
     return time.time() - _NODES.get(str(name or ""), 0) < within
 
 
+def _local_label():
+    ids = sorted(x for x in _local_hosts() if x)
+    if ids:
+        return ids[0]
+    import socket
+    return (socket.gethostname() or "this computer").split(".")[0]
+
+
 SEND_SESSION_TOOL = {"type": "function", "function": {
     "name": "send_to_coding_session",
     "description": ("Tell a coding session what to do next (a follow-up, an answer, 'carry on', 'run the tests'). If the session is open "
@@ -114,15 +123,49 @@ class NightShiftMixin:
             worktree TEXT NOT NULL DEFAULT '', created REAL NOT NULL, updated REAL NOT NULL, started REAL, finished REAL,
             error TEXT NOT NULL DEFAULT '', followups TEXT NOT NULL DEFAULT '[]', result TEXT NOT NULL DEFAULT '{}', decision TEXT NOT NULL DEFAULT '{}')""")
         if not getattr(self.store, "_night_cols", False):     # node-runner columns (a node reports its diff; decisions park for it)
-            for col in ("pending_action TEXT NOT NULL DEFAULT ''", "diff_text TEXT NOT NULL DEFAULT ''", "diff_truncated INTEGER NOT NULL DEFAULT 0"):
+            for col in ("pending_action TEXT NOT NULL DEFAULT ''", "diff_text TEXT NOT NULL DEFAULT ''", "diff_truncated INTEGER NOT NULL DEFAULT 0",
+                        "task_ref TEXT NOT NULL DEFAULT ''"):
                 try:
                     self.store.exec("ALTER TABLE night_tasks ADD COLUMN " + col)
+                except Exception:
+                    pass
+            for col in ("coding_agent TEXT DEFAULT ''", "coding_repo TEXT DEFAULT ''", "coding_host TEXT DEFAULT ''", "coding_model TEXT DEFAULT ''",
+                        "coding_status TEXT DEFAULT ''", "coding_night_id TEXT DEFAULT ''"):      # tasks that start a coding agent (see jb_taskagent)
+                try:
+                    self.store.exec("ALTER TABLE tasks ADD COLUMN " + col)
                 except Exception:
                     pass
             try:
                 self.store._night_cols = True
             except Exception:
                 pass
+
+    def night_hosts(self):
+        """Computers a task can run on: this backend plus every linked node that has polled (or run a session) lately.
+        An extension may relabel them or list computers that are offline (hook `night_hosts`)."""
+        local = next(iter(sorted(x for x in _local_hosts() if x)), "")
+        hosts = {local: {"id": local, "name": _local_label(), "local": True, "up": True}}
+        for n in _NODES:
+            if n not in _local_hosts():
+                hosts[n] = {"id": n, "name": n, "local": False, "up": node_seen(n)}
+        try:
+            for r in self.store.rows("SELECT DISTINCT host FROM night_tasks WHERE host<>'' UNION SELECT DISTINCT host FROM coding_agents WHERE host<>''"):
+                if r["host"] not in hosts and r["host"] not in _local_hosts():
+                    hosts[r["host"]] = {"id": r["host"], "name": r["host"], "local": False, "up": node_seen(r["host"])}
+        except Exception:       # no coding_agents table yet: night tasks alone
+            try:
+                for r in self.store.rows("SELECT DISTINCT host FROM night_tasks WHERE host<>''"):
+                    if r["host"] not in hosts and r["host"] not in _local_hosts():
+                        hosts[r["host"]] = {"id": r["host"], "name": r["host"], "local": False, "up": node_seen(r["host"])}
+            except Exception:
+                pass
+        for extra in jb_ext.call("night_hosts", self, [dict(x) for x in hosts.values()]):
+            for h in extra or []:
+                hid = str(h.get("id") or "")
+                hid = local if hid in _local_hosts() else hid
+                row = hosts.setdefault(hid, {"id": hid, "name": hid, "local": False, "up": node_seen(hid)})
+                row["name"] = str(h.get("name") or row["name"])
+        return list(hosts.values())
 
     # ------------------------------------------------------------------ config
     def night_config(self):
@@ -171,6 +214,7 @@ class NightShiftMixin:
         out = {k: r[k] for k in ("id", "kind", "title", "position", "repo", "prompt", "agent", "model", "host", "window_start", "window_end",
                                  "run_after", "max_minutes", "budget_usd", "test_command", "status", "attempts", "runner", "agent_id",
                                  "branch", "base_branch", "base_commit", "head_commit", "worktree", "error", "resume_id")}
+        out["task_ref"] = r.get("task_ref") or ""
         out.update(repo_name=os.path.basename(r["repo"].rstrip("/")), on_approve=r["on_approve"] or self.night_config()["on_approve"],
                    run_now=bool(r["run_now"]), created_at=_iso(r["created"]), updated_at=_iso(r["updated"]), started_at=_iso(r["started"]),
                    finished_at=_iso(r["finished"]), followups=json.loads(r["followups"] or "[]"),
@@ -206,7 +250,7 @@ class NightShiftMixin:
                 f[k] = str(f[k]).strip()[:300]
         return f
 
-    def night_add(self, body, kind="task", run_now=False, resume_id=""):
+    def night_add(self, body, kind="task", run_now=False, resume_id="", task_ref=""):
         self._night_table()
         cfg = self.night_config()
         f = self._night_fields(body, cfg)
@@ -218,8 +262,8 @@ class NightShiftMixin:
         tid = "ns_" + os.urandom(5).hex()
         now = time.time()
         pos = (self.store.one("SELECT COALESCE(MAX(position),0)+1 AS p FROM night_tasks") or {}).get("p", 1)
-        cols = list(f) + ["id", "position", "kind", "run_now", "resume_id", "created", "updated"]
-        vals = list(f.values()) + [tid, pos, kind, int(run_now), resume_id, now, now]
+        cols = list(f) + ["id", "position", "kind", "run_now", "resume_id", "task_ref", "created", "updated"]
+        vals = list(f.values()) + [tid, pos, kind, int(run_now), resume_id, task_ref, now, now]
         self.store.exec("INSERT INTO night_tasks(%s) VALUES(%s)" % (",".join(cols), ",".join("?" * len(cols))), vals)
         return self.night_task(tid)
 
@@ -255,6 +299,11 @@ class NightShiftMixin:
             if k in f and not isinstance(f[k], str):
                 f[k] = json.dumps(f[k], ensure_ascii=False)
         self.store.exec("UPDATE night_tasks SET %s, updated=? WHERE id=?" % ",".join(k + "=?" for k in f), (*f.values(), time.time(), tid))
+        if "status" in f:       # a task that started this run shows its progress
+            try:
+                self.store.exec("UPDATE tasks SET coding_status=? WHERE coding_night_id=?", (f["status"], tid))
+            except Exception:
+                pass
 
     def night_cancel(self, tid):
         r = self.night_task(tid)
@@ -296,7 +345,7 @@ class NightShiftMixin:
         started = []
         with _LOCK:
             for r in self.store.rows("SELECT * FROM night_tasks WHERE status='running'"):
-                if r["id"] not in _RUNNING and r["runner"] == "local":
+                if r["id"] not in _RUNNING and r["runner"] == "local" and r["kind"] == "task":
                     self._night_set(r["id"], status="failed", finished=now,
                                     error="interrupted (the backend restarted during the run); the worktree is kept")
             for r in self.store.rows("SELECT * FROM night_tasks WHERE status='running' AND runner LIKE 'node:%'"):
@@ -308,8 +357,8 @@ class NightShiftMixin:
                     continue
                 if not self._night_due(r, cfg, now) or not os.path.isdir(r["repo"]):
                     continue        # a repo that is not on this machine waits for a node that has it
-                if r["host"] and r["host"] not in _local_hosts() and node_seen(r["host"]):
-                    continue        # pinned to another computer whose node is polling: it is theirs
+                if r["host"] and r["host"] not in _local_hosts() and (node_seen(r["host"]) or r["host"] in _NODES):
+                    continue        # pinned to another computer that has linked a node: it waits for that node, never runs here instead
                 stop = threading.Event()
                 if r["kind"] == "task":
                     _RUNNING[r["id"]] = stop
@@ -335,15 +384,14 @@ class NightShiftMixin:
         followups = json.loads(r["followups"] or "[]")
         if followups:
             prev = (json.loads(r["result"] or "{}").get("summary") or "")[:600]
-            text += "\n\nYou already worked on this (branch %s). Your earlier summary: %s\nFollow-up from the user: %s" % (
+            text += "\n\nEarlier work on this (branch %s): %s\nFollow-up from the user: %s" % (
                 branch, prev or "(none)", followups[-1]["text"])
         return text + (
             "\n\n--- JoeBro Night Shift ---\n"
-            "You are running unattended in a dedicated git worktree on branch %s. Work only in this folder and commit your work "
-            "locally. Never push and never touch other branches.%s\n"
-            "End your reply with:\nSUMMARY: 2-4 sentences on what you changed and what is left.\n"
-            "LEARNED: one thing you found out that a future session would not know from the code or AGENTS.md/CLAUDE.md (a decision and why, a gotcha, something that failed), one per line, at most 3. Not how to build or test. Usually there is none: then write no LEARNED line.\n"
-            "Optional: save a screenshot of a visible change to .joebro/night/screenshot.png."
+            "Unattended run in a git worktree on branch %s. Work only in this folder, commit locally, never push or touch other branches.%s\n"
+            "End with:\nSUMMARY: 2-4 sentences: what changed, what is left.\n"
+            "LEARNED: optional, max 3 lines, one per line: a decision and why, a gotcha, or a failed attempt that a future session could not tell from the code or AGENTS.md/CLAUDE.md. No build or test how-to. Usually none: then omit it.\n"
+            "A visible change: save a screenshot to .joebro/night/screenshot.png."
             % (branch, (" Check your work with: %s" % r["test_command"]) if r["test_command"] else ""))
 
     def _night_dir(self, tid):
@@ -722,12 +770,12 @@ def route(h, method, path, q):
             note_node(q.get("node"))
             if not head:
                 tasks = h.night_list(q.get("status") or "")
-                out = {"ok": True, "tasks": tasks, "reviews": h.night_review_cards(), "config": h.night_config(),
+                out = {"ok": True, "tasks": tasks, "reviews": h.night_review_cards(), "config": h.night_config(), "hosts": h.night_hosts(),
                        "running": sum(t["status"] == "running" for t in tasks), "queued": sum(t["status"] == "queued" for t in tasks)}
             elif head == "reviews":
                 out = {"ok": True, "cards": h.night_review_cards()}
             elif head == "config":
-                out = {"ok": True, "config": h.night_config()}
+                out = {"ok": True, "config": h.night_config(), "hosts": h.night_hosts()}
             elif action == "diff":
                 r = h.night_task(head)
                 if r["runner"].startswith("node:"):       # the repo is on the node: serve what it reported

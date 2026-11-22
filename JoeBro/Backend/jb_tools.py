@@ -1494,6 +1494,8 @@ class ToolsMixin:
         # access for tomorrow. Only the Tasks UI sets this, over the HTTP route.
         args.pop("permission_mode", None)
         args.pop("scope", None)               # personal tasks belong to the personal_task_* tools
+        for k in ("coding_agent", "coding_repo", "coding_host", "coding_model"):
+            args.pop(k, None)                 # likewise: an unattended coding agent is set up in the Tasks UI only
         if action in ("add", "create"):
             return json.dumps(self.upsert_task(args), ensure_ascii=False)
         if action in ("edit", "update"):

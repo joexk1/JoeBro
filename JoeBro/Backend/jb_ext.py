@@ -23,6 +23,7 @@ caller, which reports it to the user like any other validation error.
 Hook names core calls today (each is optional; absent = the generic behaviour):
 
   pref_default(key) -> value              default for a pref the user never set
+  night_hosts(handler,hosts) -> [{id,name}]   relabel or add Night Shift run targets (hosts = this backend + linked nodes)
   ptask_seeds() -> [(id,title,prompt,schedule,time,weekday,status)]   phone-agent tasks seeded once
   ptask_run(handler,row) -> reply|None    run a phone-agent task without a model
   autonomy_routines() -> {id: {title,enabled,every_days,at,timezone,quiet_hours,report}}
