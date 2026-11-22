@@ -204,11 +204,6 @@ struct MessageBubbleView: View, Equatable {
                 HStack(spacing: 8) {
                     HStack(spacing: 0) {
                         ChatCopyButton(text: message.content)
-                        Button {
-                            if let last = store.messages.last(where: { $0.isUser }) { store.resend(last) }
-                        } label: { Image(systemName: "arrow.clockwise") }
-                            .buttonStyle(JBIconButtonStyle(size: 24))
-                            .help("Retry")
                     }
                     .opacity(hovering ? 1 : 0)
                     .animation(JB.fade, value: hovering)

@@ -82,10 +82,9 @@ extension AppStore {
         return ""
     }
 
-    /// Moves a user message back into the composer. The last one is removed
-    /// from the chat so resending replaces it.
+    /// Puts a user message back in the composer as a new draft. Nothing is
+    /// deleted; sending it adds a new message.
     func beginEdit(_ message: Message) {
-        if !isStreaming, messages.last(where: { $0.isUser })?.id == message.id { unsend(message) }
         NotificationCenter.default.post(name: .chatFillComposer, object: message.content)
     }
 }
