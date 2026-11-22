@@ -12,9 +12,10 @@
 #   3. Run Sparkle's generate_appcast over dist/, which EdDSA-signs every DMG
 #      with the private key in your login Keychain and writes/updates appcast.xml.
 #
-# Needs a "Developer ID Application" certificate and stored notarytool
-# credentials; the script checks for both up front and tells you how to make
-# them if they're missing.
+# Signs with a local "Developer ID Application" cert when there is one, otherwise
+# with your team's cloud-managed one through Xcode (no certificate to install,
+# no notarytool password). Run it from a GUI Terminal on the Mac, not over SSH:
+# Xcode's account and the keychain are only unlocked in the logged-in session.
 #
 # After it finishes, follow the printed steps to publish (create a GitHub
 # Release, upload the DMG, commit appcast.xml). See RELEASING.md for the full
@@ -36,33 +37,21 @@ NOTARY_PROFILE="${JOEBRO_NOTARY_PROFILE:-joebro}"
 
 ADHOC="${JOEBRO_ADHOC:-0}"   # 1 = ad-hoc signed, not notarized (first open: right-click → Open)
 
-# --- 0. refuse to build a release we can't notarize, rather than quietly
-# shipping an ad-hoc DMG that makes every user do the right-click → Open dance.
+# --- 0. pick how to sign. Three ways, best available first:
+#   local   a "Developer ID Application" cert in this keychain + notarytool credentials
+#   cloud   no local cert: Xcode signs with your team's cloud-managed Developer ID
+#           certificate and notarizes through the Apple ID signed in to Xcode
+#           (Xcode → Settings → Accounts). Needs the Account Holder or Admin role.
+#   adhoc   JOEBRO_ADHOC=1: ad-hoc signed, not notarized (first open: right-click → Open)
 if [[ "$ADHOC" == 1 ]]; then
-  echo "==> JOEBRO_ADHOC=1: ad-hoc signed release, no notarization"
-elif ! security find-identity -v -p codesigning | grep -q "Developer ID Application"; then
-  cat <<'MSG' >&2
-No "Developer ID Application" certificate in the keychain.
-
-  Xcode → Settings → Accounts → (your Apple ID) → Manage Certificates
-  → + → Developer ID Application
-
-Then re-run this script.
-MSG
-  exit 1
+  MODE=adhoc
+elif security find-identity -v -p codesigning | grep -q "Developer ID Application" \
+     && xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
+  MODE=local
+else
+  MODE=cloud
 fi
-if [[ "$ADHOC" != 1 ]] && ! xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
-  cat <<MSG >&2
-No notarytool credentials stored under the profile "$NOTARY_PROFILE".
-
-  xcrun notarytool store-credentials $NOTARY_PROFILE \\
-      --apple-id <your-apple-id> --team-id $TEAM_ID \\
-      --password <app-specific-password from appleid.apple.com>
-
-Then re-run this script.
-MSG
-  exit 1
-fi
+echo "==> Signing: $MODE"
 
 # --- locate Sparkle tools (build them from the resolved SPM checkout if needed)
 TOOLS="$REPO_DIR/.sparkle-tools"
@@ -79,33 +68,60 @@ if [[ ! -x "$TOOLS/generate_appcast" || ! -x "$TOOLS/sign_update" ]]; then
   rm -rf "$TOOLS/dd"
 fi
 
-# --- 1. build Release app at the requested version
-if [[ "$ADHOC" == 1 ]]; then
-  SIGN_ARGS=(CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=)
-else
-  SIGN_ARGS=("CODE_SIGN_IDENTITY=Developer ID Application" CODE_SIGN_STYLE=Manual "DEVELOPMENT_TEAM=$TEAM_ID" OTHER_CODE_SIGN_FLAGS=--timestamp)
-fi
-echo "==> Building JoeBro $VERSION ($BUILD)…"
+# --- 1. build the Release app at the requested version, signed and notarized
 BUILD_DD="$REPO_DIR/.build-dd"
 rm -rf "$BUILD_DD"
-"$XCB" -project "$REPO_DIR/JoeBro.xcodeproj" -scheme JoeBro -configuration Release \
-  -derivedDataPath "$BUILD_DD" -destination 'platform=macOS' \
-  MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" \
-  "${SIGN_ARGS[@]}" build >/dev/null
-APP="$BUILD_DD/Build/Products/Release/JoeBro.app"
-[[ -d "$APP" ]] || { echo "Build produced no app"; exit 1; }
-
-# --- 1b. notarize the .app and staple the ticket INTO the bundle, so a copy
-# that never came from the DMG (a Sparkle update, an unzipped app) is trusted
-# offline too. Apple only accepts archives, hence the throwaway zip.
-if [[ "$ADHOC" != 1 ]]; then
-echo "==> Notarizing JoeBro.app (this takes a few minutes)…"
-APPZIP="$(mktemp -d)/JoeBro.zip"
-ditto -c -k --keepParent "$APP" "$APPZIP"
-xcrun notarytool submit "$APPZIP" --keychain-profile "$NOTARY_PROFILE" --wait
-xcrun stapler staple "$APP"
-rm -rf "$(dirname "$APPZIP")"
+VERS=(MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD")
+echo "==> Building JoeBro $VERSION ($BUILD)…"
+if [[ "$MODE" == cloud ]]; then
+  ARCHIVE="$BUILD_DD/JoeBro.xcarchive"; EXPORT="$BUILD_DD/export"
+  "$XCB" -project "$REPO_DIR/JoeBro.xcodeproj" -scheme JoeBro -configuration Release \
+    -derivedDataPath "$BUILD_DD" -destination 'generic/platform=macOS' -archivePath "$ARCHIVE" \
+    -allowProvisioningUpdates "${VERS[@]}" CODE_SIGN_STYLE=Automatic "DEVELOPMENT_TEAM=$TEAM_ID" \
+    CODE_SIGN_IDENTITY="Apple Development" archive | grep -E "error:|ARCHIVE" || true
+  [[ -d "$ARCHIVE" ]] || { echo "Archive failed"; exit 1; }
+  cat > "$BUILD_DD/ExportOptions.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>method</key><string>developer-id</string>
+  <key>signingStyle</key><string>automatic</string>
+  <key>teamID</key><string>$TEAM_ID</string>
+  <key>destination</key><string>upload</string>
+</dict></plist>
+PLIST
+  echo "==> Signing with the cloud Developer ID cert and sending to Apple's notary service…"
+  "$XCB" -exportArchive -archivePath "$ARCHIVE" -exportOptionsPlist "$BUILD_DD/ExportOptions.plist" \
+    -exportPath "$EXPORT" -allowProvisioningUpdates | grep -E "error:|EXPORT|Upload" || true
+  echo "==> Waiting for notarization (usually 2–10 minutes)…"
+  for _ in $(seq 1 120); do
+    if "$XCB" -exportNotarizedApp -archivePath "$ARCHIVE" -exportPath "$EXPORT" >/dev/null 2>&1; then break; fi
+    sleep 15
+  done
+  APP="$EXPORT/JoeBro.app"
+  xcrun stapler validate "$APP" >/dev/null 2>&1 || { echo "Notarization didn't finish: see Xcode → Organizer → Archives"; exit 1; }
+else
+  if [[ "$MODE" == adhoc ]]; then
+    SIGN_ARGS=(CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=)
+  else
+    SIGN_ARGS=("CODE_SIGN_IDENTITY=Developer ID Application" CODE_SIGN_STYLE=Manual "DEVELOPMENT_TEAM=$TEAM_ID" OTHER_CODE_SIGN_FLAGS=--timestamp)
+  fi
+  "$XCB" -project "$REPO_DIR/JoeBro.xcodeproj" -scheme JoeBro -configuration Release \
+    -derivedDataPath "$BUILD_DD" -destination 'platform=macOS' "${VERS[@]}" "${SIGN_ARGS[@]}" build >/dev/null
+  APP="$BUILD_DD/Build/Products/Release/JoeBro.app"
+  [[ -d "$APP" ]] || { echo "Build produced no app"; exit 1; }
+  # Notarize the .app and staple the ticket INTO the bundle, so a copy that never came from
+  # the DMG (a Sparkle update, an unzipped app) is trusted offline too.
+  if [[ "$MODE" == local ]]; then
+    echo "==> Notarizing JoeBro.app (this takes a few minutes)…"
+    APPZIP="$(mktemp -d)/JoeBro.zip"
+    ditto -c -k --keepParent "$APP" "$APPZIP"
+    xcrun notarytool submit "$APPZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+    xcrun stapler staple "$APP"
+    rm -rf "$(dirname "$APPZIP")"
+  fi
 fi
+[[ "$MODE" == adhoc ]] || spctl -a -t exec -vv "$APP"
 
 # --- 2. package into a DMG (drag-to-Applications layout)
 echo "==> Packaging DMG…"
@@ -122,7 +138,8 @@ rm -rf "$STAGE"
 # with a normal double-click. This MUST happen before generate_appcast:
 # stapling rewrites the DMG, and Sparkle's EdDSA signature has to cover the
 # final bytes or every update will fail its signature check.
-if [[ "$ADHOC" != 1 ]]; then
+# (Cloud mode leaves the DMG itself unsigned: the stapled app inside is what Gatekeeper checks.)
+if [[ "$MODE" == local ]]; then
 echo "==> Notarizing the DMG…"
 codesign --force --sign "Developer ID Application" --timestamp "$DMG"
 xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait

@@ -293,6 +293,8 @@ class CodingAgentsMixin:
         rec["can_send"] = node["status"] != "ended"
         pending = next((d[2:] for d in reversed(node["detail"]) if d.startswith("⏸")), "") if node["waiting"] else ""
         rec["pending_approval"] = pending or ("needs your approval" if node["waiting"] else "")
+        # A question or menu on its screen: the apps show it as buttons (only looked for while it waits on you).
+        rec["prompt"] = self.coding_prompt(aid) if node["status"] in ("waiting", "running") and node["waiting"] else None
         return rec
 
     @staticmethod
@@ -319,7 +321,7 @@ class CodingAgentsMixin:
         if not waiting:   # nothing pending: any leftover request was answered in the terminal
             for m in out:
                 if m["role"] == "approval":
-                    m.update(role="event", content="Asked: " + re.sub(r"^(approve)\s*", "", m["content"], flags=re.I))
+                    m.update(role="event", content="Asked: " + re.sub(r"^(approve|question:)\s*", "", m["content"], flags=re.I))
         return out
 
     @staticmethod
@@ -564,6 +566,162 @@ class CodingAgentsMixin:
             raise ValueError(str(r["error"])[:300])
         return {"ok": True, "source": "terminal", "screen": r.get("screen") or r.get("text") or r}
 
+    # ------------------------------------------------------------------ questions and menus, answered from the apps
+    # Whatever an agent puts up as a menu (Claude's AskUserQuestion and permission prompts, Codex approvals,
+    # the folder-trust prompt...) is read off its terminal and answered with the same keys you'd press there.
+    _MENU_HINT = re.compile(r"enter to (select|confirm|submit)|esc to (cancel|exit|interrupt)|to navigate|tab/arrow|↑/?↓|\(y/n\)|\[y/n\]", re.I)
+    _OPTION = re.compile(r"^\s*([❯›>▶●])?\s*(?:(\d{1,2})[.)]\s+)?(\S.*?)\s*$")
+    _CHROME = re.compile(r"^[\s─━═\-_│|╭╮╰╯]*$")
+    _SKIP = re.compile(r"^(chat about this|type here to tell)", re.I)
+    _FREEFORM = re.compile(r"^(type something|other|no, and tell|tell (claude|codex) what)", re.I)
+
+    @classmethod
+    def parse_menu(cls, screen):
+        """The menu at the bottom of a terminal screen, or None.
+        {question, header, options: [{key, label, description, selected, freeform}], numbered}"""
+        lines = [l.rstrip() for l in str(screen or "").splitlines()]
+        while lines and not lines[-1].strip():
+            lines.pop()
+        tail = lines[-40:]
+        hint = next((i for i in range(len(tail) - 1, max(-1, len(tail) - 8), -1) if cls._MENU_HINT.search(tail[i])), None)
+        if hint is None:
+            # No key hint on screen (cut off): only a cursor on a numbered row right at the bottom counts.
+            if not any(re.match(r"^\s*[❯›>▶]\s*\d{1,2}[.)]\s", l) for l in tail[-6:]):
+                return None
+            hint = len(tail)
+        body = tail[:hint]
+        # Walk up from the hint collecting the option block (options, their indented descriptions, rules).
+        opts, i, numbered = [], len(body) - 1, False
+        pending_desc, plain = [], []          # plain: unnumbered rows below the cursor row (label column, label)
+        while i >= 0:
+            raw = body[i]
+            if cls._CHROME.match(raw):
+                i -= 1
+                continue
+            m = cls._OPTION.match(raw)
+            cursor, num, label = m.group(1), m.group(2), m.group(3)
+            col = raw.index(label)
+            indent = len(raw) - len(raw.lstrip())
+            if num or cursor:
+                numbered = numbered or bool(num)
+                if cursor and not num and plain:      # unnumbered menu: rows below in the same column are its options
+                    opts[:0] = [{"key": "", "label": l, "description": "", "selected": False} for c, l in plain if c == col]
+                    plain = []
+                opts.insert(0, {"key": num or "", "label": label, "description": " ".join(pending_desc).strip(),
+                                "selected": bool(cursor)})
+                pending_desc = []
+            elif opts and not numbered and any(not o["key"] for o in opts) and col == next(
+                    (body[k].index(o["label"]) for k in range(i + 1, len(body)) for o in opts[:1] if o["label"] in body[k]), -1):
+                opts.insert(0, {"key": "", "label": label, "description": "", "selected": False})
+            elif not opts and indent <= 4 and len(label) < 80 and not pending_desc:
+                plain.insert(0, (col, label))
+            elif indent >= 4 and len(label) < 200:
+                pending_desc.insert(0, label)
+            else:
+                break
+            i -= 1
+        if pending_desc and not opts:
+            return None
+        if numbered:
+            opts = [o for o in opts if o["key"]]
+        opts = [o for o in opts if not cls._SKIP.match(o["label"])]
+        if len(opts) < 2 or not any(o["selected"] for o in opts) and not numbered:
+            return None
+        for o in opts:
+            o["freeform"] = bool(cls._FREEFORM.match(o["label"]))
+            o["label"] = re.sub(r"\s*\((y|n|esc|enter|shift\+tab|tab)\)\s*$", "", o["label"], flags=re.I)
+        # The question: nearest real line above the block; a "☐ Colour ☐ Size" bar gives the header.
+        question, header = "", ""
+        j = i
+        while j >= 0 and j > i - 8:
+            t = body[j].strip()
+            if t and not cls._CHROME.match(t):
+                if re.search(r"[☐☒✔]", t):
+                    header = " · ".join(re.findall(r"[☐☒]\s*([^☐☒✔→←]+?)\s*(?=[☐☒✔→]|$)", t))
+                elif not question:
+                    question = t.lstrip("❯›> ").strip()
+                    if header:
+                        break
+                else:
+                    break
+            j -= 1
+        if "?" not in question:      # prefer the actual question a few lines up ("…one you trust?")
+            asked = next((body[k].strip() for k in range(i, max(-1, i - 10), -1) if k >= 0 and "?" in body[k]), "")
+            if asked:
+                question = re.split(r"(?<=\?)\s", asked)[0]
+        if "review your answers" in question.lower() or any(o["label"].lower().startswith("submit answers") for o in opts):
+            question = "Review your answers"
+        return {"question": question[:400], "header": header[:120], "options": opts[:12], "numbered": numbered}
+
+    def coding_prompt(self, aid, row=None):
+        """The menu the agent is showing right now (cached briefly: the apps poll the detail)."""
+        cache = self.__dict__.setdefault("_prompt_cache", {})
+        hit = cache.get(aid)
+        if hit and time.time() - hit[0] < 1.5:
+            return hit[1]
+        row = row or self._coding_row(aid)
+        menu = None
+        try:
+            term = self._coding_terminal(row)
+            if term:
+                r = self._agent_control("agent_get_screen", {"session_id": term["session_id"], "host": row["host"], "lines": 45, "clear_ansi": True})
+                menu = self.parse_menu(r.get("screen") or r.get("text") or "")
+        except Exception:
+            menu = None
+        cache[aid] = (time.time(), menu)
+        return menu
+
+    def coding_answer(self, aid, key=None, text=None):
+        """Pick an option of the agent's on-screen menu (key = its number, or its label for an
+        unnumbered menu), optionally typing free text for a "Type something" option.
+        Returns the next menu, if one follows (multi-question forms, the review screen)."""
+        row = self._coding_row(aid)
+        term = self._coding_terminal(row)
+        if not term:
+            raise ValueError("this agent isn't in a controllable Kitty/tmux terminal")
+        self.__dict__.setdefault("_prompt_cache", {}).pop(aid, None)
+        menu = self.coding_prompt(aid, row)
+        if not menu:
+            if text:      # no menu up: a plain reply
+                return self.coding_send(aid, text, "app")
+            raise ValueError("the agent isn't asking anything right now")
+        key, text = str(key or "").strip(), str(text or "").strip()
+        opt = next((o for o in menu["options"] if key and (o["key"] == key or o["label"] == key)), None)
+        if not opt and text:
+            opt = next((o for o in menu["options"] if o["freeform"]), None)
+        if not opt:
+            raise ValueError("no such option")
+        send = lambda k: self._agent_control("agent_send_keys", {"session_id": term["session_id"], "host": row["host"], "keys": k})
+        if menu["numbered"]:
+            r = send(opt["key"])
+        else:
+            idx = menu["options"].index(opt)
+            cur = next((n for n, o in enumerate(menu["options"]) if o["selected"]), 0)
+            for _ in range(abs(idx - cur)):
+                send("down" if idx > cur else "up")
+                time.sleep(0.08)
+            r = send("enter")
+        if r.get("error"):
+            raise ValueError(str(r["error"])[:300])
+        if opt["freeform"] and text:
+            time.sleep(0.4)
+            r = self._agent_control("agent_send_input", {"session_id": term["session_id"], "host": row["host"], "text": text, "press_enter": True})
+            if r.get("error"):
+                raise ValueError(str(r["error"])[:300])
+        # Logged like a typed message (the agent's hooks don't report menu picks), shown as "Answered: …".
+        said = text if (opt["freeform"] and text) else opt["label"]
+        if menu["question"] != "Review your answers":     # the review screen's "Submit" isn't an answer
+            det = json.loads(self.store.one("SELECT detail_json FROM coding_agents WHERE id=?", (aid,))["detail_json"] or "[]")
+            det.append("› ⟦answer⟧ " + said[:300])
+            self.store.exec("UPDATE coding_agents SET detail_json=? WHERE id=?", (json.dumps(det[-200:], ensure_ascii=False), aid))
+        time.sleep(0.7)
+        self.__dict__["_prompt_cache"].pop(aid, None)
+        nxt = self.coding_prompt(aid, row)
+        if not nxt and row["status"] == "waiting":
+            # Answered: back to work (the agent's next hook confirms it).
+            self.store.exec("UPDATE coding_agents SET status='running' WHERE id=? AND status='waiting'", (aid,))
+        return {"ok": True, "answered": opt["label"], "prompt": nxt}
+
     # ------------------------------------------------------------------ approvals from the phone
     def _coding_decisions_table(self):
         self.store.exec("""CREATE TABLE IF NOT EXISTS coding_decisions(agent_id TEXT PRIMARY KEY, decision TEXT NOT NULL,
@@ -592,7 +750,11 @@ class CodingAgentsMixin:
             data = {"agent": row["id"], "kind": "coding_approval"}
             if nid:
                 data["inbox_id"] = nid
-            send_push(self.store, title, body[:300], category="CODING_APPROVAL" if actionable else None,
+            # A question needs its options (in the app); only yes/no approvals get lock-screen buttons.
+            question = what.startswith("Question:")
+            if question:
+                title = "%s%s is asking" % (SOURCES.get(row["source"], row["source"]), _where(row["host"]))
+            send_push(self.store, title, body[:300], category="CODING_APPROVAL" if actionable and not question else None,
                       data=data)
         except Exception:
             pass
@@ -822,6 +984,8 @@ def _harness_event(text):
     event line; "" means hide it; None means it's a real message."""
     t = (text or "").strip()
     low = t.lower()
+    if t.startswith("⟦answer⟧ "):          # an option picked from the apps (coding_answer)
+        return "Answered: " + t[len("⟦answer⟧ "):]
     if t.startswith("<task-notification>"):
         summ = re.search(r"<summary>(.*?)</summary>", t, re.S)
         status = re.search(r"<status>(.*?)</status>", t, re.S)

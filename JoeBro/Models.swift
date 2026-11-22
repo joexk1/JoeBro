@@ -527,6 +527,37 @@ struct PluginPanel: Codable, Hashable, Identifiable {
 
 // MARK: - Agents (the backend's unified run registry: research / chat / task)
 
+/// A question or menu a coding agent is showing (AskUserQuestion, a permission prompt, a trust
+/// prompt…), read off its terminal by the backend. Answered with POST …/answer.
+struct AgentPrompt: Decodable, Hashable {
+    struct Option: Decodable, Hashable {
+        var key: String
+        var label: String
+        var description: String
+        var selected: Bool
+        var freeform: Bool
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            key = (try? c.decode(String.self, forKey: .key)) ?? ""
+            label = (try? c.decode(String.self, forKey: .label)) ?? ""
+            description = (try? c.decode(String.self, forKey: .description)) ?? ""
+            selected = (try? c.decode(Bool.self, forKey: .selected)) ?? false
+            freeform = (try? c.decode(Bool.self, forKey: .freeform)) ?? false
+        }
+        enum CodingKeys: String, CodingKey { case key, label, description, selected, freeform }
+    }
+    var question: String
+    var header: String
+    var options: [Option]
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        question = (try? c.decode(String.self, forKey: .question)) ?? ""
+        header = (try? c.decode(String.self, forKey: .header)) ?? ""
+        options = (try? c.decode([Option].self, forKey: .options)) ?? []
+    }
+    enum CodingKeys: String, CodingKey { case question, header, options }
+}
+
 struct AgentRun: Decodable, Identifiable, Hashable {
     var id: String
     var kind: String
@@ -547,9 +578,10 @@ struct AgentRun: Decodable, Identifiable, Hashable {
     var resultChars: Int
     var resultTruncated: Bool
     var messages: [AgentMessage]?
+    var prompt: AgentPrompt?    // coding: the question / menu on its screen while it waits on you
 
     enum CodingKeys: String, CodingKey {
-        case id, kind, title, status, live, open, progress, model, error, result, messages
+        case id, kind, title, status, live, open, progress, model, error, result, messages, prompt
         case sessionID = "session_id", refID = "ref_id", parentID = "parent_id"
         case createdAt = "created_at", startedAt = "started_at", finishedAt = "finished_at"
         case resultChars = "result_chars", resultTruncated = "result_truncated"
@@ -578,6 +610,7 @@ struct AgentRun: Decodable, Identifiable, Hashable {
         resultChars = (try? c.decode(Int.self, forKey: .resultChars)) ?? 0
         resultTruncated = (try? c.decode(Bool.self, forKey: .resultTruncated)) ?? false
         messages = try? c.decode([AgentMessage].self, forKey: .messages)
+        prompt = try? c.decode(AgentPrompt.self, forKey: .prompt)
     }
 
     var kindLabel: String {

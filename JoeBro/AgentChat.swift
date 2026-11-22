@@ -18,6 +18,93 @@ extension APIClient {
     }
 }
 
+extension APIClient {
+    /// Pick an option of the agent's on-screen question/menu (or type free text). Returns the next one, if any.
+    func codingAnswer(id: String, key: String?, text: String?) async throws -> AgentPrompt? {
+        var body: [String: Any] = [:]
+        if let key { body["key"] = key }
+        if let text { body["text"] = text }
+        let out = try await sendJSON("api/coding-agents/\(id)/answer", body: body)
+        guard let p = out["prompt"], !(p is NSNull),
+              let data = try? JSONSerialization.data(withJSONObject: p) else { return nil }
+        return try? JSONDecoder().decode(AgentPrompt.self, from: data)
+    }
+}
+
+/// The question a coding agent is asking, as buttons: one per option,
+/// plus a text field when it takes a typed answer. Multi-question forms step through in place.
+struct AgentPromptCard: View {
+    let agentID: String
+    let prompt: AgentPrompt
+    var onDone: () async -> Void = {}
+    @State private var shown: AgentPrompt?
+    @State private var typed = ""
+    @State private var busy = false
+    @State private var note: String?
+    @FocusState private var typing: Bool
+
+    private var p: AgentPrompt { shown ?? prompt }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: JB.s2) {
+            if !p.header.isEmpty { Text(p.header).jbEyebrow() }
+            if !p.question.isEmpty { Text(p.question).font(.jb(13, .medium)).foregroundStyle(JB.ink).fixedSize(horizontal: false, vertical: true) }
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(p.options.filter { !$0.freeform }.enumerated()), id: \.element) { i, o in
+                    Button { Task { await answer(key: o.key.isEmpty ? o.label : o.key, text: nil) } } label: {
+                        HStack(alignment: .firstTextBaseline, spacing: JB.s2) {
+                            Text(o.key.isEmpty ? "\(i + 1)" : o.key).font(.jbMono(10.5)).foregroundStyle(JB.ink3).frame(width: 14)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(o.label).font(.jb(12.5)).foregroundStyle(JB.ink).lineLimit(3)
+                                if !o.description.isEmpty && o.description != o.label {
+                                    Text(o.description).font(.jb(11)).foregroundStyle(JB.ink3).lineLimit(4)
+                                }
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, JB.s2).padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(JBMenuRowStyle())
+                }
+            }
+            if p.options.contains(where: \.freeform) {
+                HStack(spacing: JB.s2) {
+                    TextField("Type your own answer", text: $typed)
+                        .textFieldStyle(.plain).font(.jb(12.5)).focused($typing)
+                        .onSubmit { send() }
+                        .padding(.horizontal, JB.s2).padding(.vertical, 6)
+                        .jbField(focused: typing)
+                    Button("Send") { send() }.buttonStyle(.jbSecondary)
+                        .disabled(typed.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            HStack(spacing: 6) {
+                if busy { JBSpinner() }
+                if let note { Text(note).font(.jb(10.5)).foregroundStyle(JB.ink3).lineLimit(2) }
+            }
+        }
+        .disabled(busy)
+        .onChange(of: prompt) { _, _ in shown = nil }
+    }
+
+    private func send() {
+        let t = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        Task { await answer(key: nil, text: t) }
+    }
+
+    private func answer(key: String?, text: String?) async {
+        busy = true; note = nil
+        defer { busy = false }
+        do {
+            let next = try await APIClient.shared.codingAnswer(id: agentID, key: key, text: text)
+            typed = ""
+            if let next { shown = next } else { note = "Answered"; await onDone() }
+        } catch { note = error.localizedDescription }
+    }
+}
+
 /// Approve / deny a coding agent's pending permission prompt. Reports the outcome in place.
 struct AgentApprovalButtons: View {
     let agentID: String
@@ -195,8 +282,12 @@ struct AgentChatThread: View {
     private func approvalCard(_ text: String, active: Bool = true) -> some View {
         VStack(alignment: .leading, spacing: JB.s2) {
             HStack(spacing: 6) { JBStatusDot(color: JB.warn, live: active, size: 6); Text("Needs you").jbEyebrow() }
-            Text(text).font(.jb(11.5)).foregroundStyle(JB.ink)
-            if active { AgentApprovalButtons(agentID: run.id, onDone: onChanged) }
+            if active, let prompt = run.prompt, !prompt.options.isEmpty {
+                AgentPromptCard(agentID: run.id, prompt: prompt, onDone: onChanged)
+            } else {
+                Text(text.replacingOccurrences(of: "Question: ", with: "")).font(.jb(11.5)).foregroundStyle(JB.ink)
+                if active { AgentApprovalButtons(agentID: run.id, onDone: onChanged) }
+            }
         }
         .padding(JB.s3)
         .frame(maxWidth: .infinity, alignment: .leading)
