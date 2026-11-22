@@ -40,6 +40,9 @@ class AssistantMixin:
         row = self.store.one("select * from tasks where id=?", (task_id,))
         if not row:
             return None
+        if row.get("coding_agent") and row.get("coding_repo"):      # a coding-agent task: the Night Shift runner, no model turn
+            import jb_taskagent
+            return jb_taskagent.run(self, row)
         personal = (row.get("scope") or "general") == "personal"
         if personal and str(self.pref("personal_automation_paused")).lower() in ("true", "1", "yes", "on"):
             return "Phone automation is paused. Resume it in Settings > Mobile to run this task."
@@ -335,6 +338,8 @@ class AssistantMixin:
             rday = max(0, min(6, int(rday or 0)))
         except (TypeError, ValueError):
             rday = 0
+        import jb_taskagent
+        coding = jb_taskagent.parse(body, existing)
         scheduled_date = body.get("date") or body.get("scheduled_date") or (existing or {}).get("scheduled_date") or ""
         if schedule and schedule not in ("once", "daily", "weekly", "monthly"):
             raise ValueError("schedule must be once, daily, weekly or monthly")
@@ -358,6 +363,7 @@ class AssistantMixin:
                 (tid, title, prompt, schedule, scheduled_time, status, pmode, rday, scope, now, now),
             )
         self.store.exec("UPDATE tasks SET scheduled_date=? WHERE id=?", (scheduled_date, tid))
+        jb_taskagent.save(self, tid, coding)
         return {"ok": True, "task": self.task_json(self.store.one("select * from tasks where id=?", (tid,)))}
 
     def upsert_skill(self, body, skill_id=None):
@@ -695,6 +701,12 @@ class AssistantMixin:
             "repeat_day": int(r.get("repeat_day") or 0),
             "scope": r.get("scope") or "general",
             "last_run": r.get("last_run") or "",
+            "coding_agent": r.get("coding_agent") or "",
+            "coding_repo": r.get("coding_repo") or "",
+            "coding_host": r.get("coding_host") or "",
+            "coding_model": r.get("coding_model") or "",
+            "coding_status": r.get("coding_status") or "",
+            "coding_night_id": r.get("coding_night_id") or "",
             "created_at": r.get("created_at"),
             "updated_at": r.get("updated_at"),
         }

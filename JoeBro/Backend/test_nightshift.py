@@ -322,7 +322,7 @@ class NodeRunner(Base):
         with self.assertRaises(PermissionError): h.night_claim(other["id"], {"node": "box"})          # pinned to another computer
         c = h.night_claim(tid, {"node": "box"})
         self.assertEqual((c["task"]["status"], c["task"]["runner"], c["task"]["attempts"]), ("running", "node:box", 1))
-        self.assertIn("Never push", c["prompt"])
+        self.assertIn("never push", c["prompt"])
         with self.assertRaises(PermissionError): h.night_claim(tid, {"node": "box2"})                  # atomic: one winner
         with self.assertRaises(PermissionError): h.night_report(tid, {"node": "box2", "status": "failed"})
         png = __import__("base64").b64encode(b"\x89PNG fake").decode()
