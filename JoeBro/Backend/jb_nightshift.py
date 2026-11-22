@@ -149,12 +149,17 @@ class NightShiftMixin:
             if n not in _local_hosts():
                 hosts[n] = {"id": n, "name": n, "local": False, "up": node_seen(n)}
         try:
-            for r in self.store.rows("SELECT DISTINCT host FROM night_tasks WHERE host<>''"):
+            for r in self.store.rows("SELECT DISTINCT host FROM night_tasks WHERE host<>'' UNION SELECT DISTINCT host FROM coding_agents WHERE host<>''"):
                 if r["host"] not in hosts and r["host"] not in _local_hosts():
                     hosts[r["host"]] = {"id": r["host"], "name": r["host"], "local": False, "up": node_seen(r["host"])}
-        except Exception:
-            pass
-        for extra in jb_ext.call("night_hosts", self):
+        except Exception:       # no coding_agents table yet: night tasks alone
+            try:
+                for r in self.store.rows("SELECT DISTINCT host FROM night_tasks WHERE host<>''"):
+                    if r["host"] not in hosts and r["host"] not in _local_hosts():
+                        hosts[r["host"]] = {"id": r["host"], "name": r["host"], "local": False, "up": node_seen(r["host"])}
+            except Exception:
+                pass
+        for extra in jb_ext.call("night_hosts", self, [dict(x) for x in hosts.values()]):
             for h in extra or []:
                 hid = str(h.get("id") or "")
                 hid = local if hid in _local_hosts() else hid
