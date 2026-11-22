@@ -10,7 +10,7 @@
 
 JoeBro is a free, open-source Mac workspace for your AI agents: Claude Code, Codex and OpenCode sessions, your own API keys and local models (Ollama, LM Studio) as agents, your files and editor, one memory they all share, and an iPhone companion. It is for people who already use more than one AI tool: a chat with one model, Claude Code on one machine, Codex on another, a local model on a third. JoeBro brings them into one app, with a memory they share and one place to check on them. It is free, and there is no JoeBro server: your data stays on your own devices.
 
-**Website:** [joebro.pages.dev](https://joebro.pages.dev/) · **iPhone app:** [JoeBro Mobile](https://github.com/joexk1/JoeBro-Mobile) · **Plugins:** [joebro-plugins](https://github.com/joexk1/joebro-plugins)
+**Website:** [joebro.pages.dev](https://joebro.pages.dev/) · **iPhone app:** [JoeBro Mobile](https://github.com/joexk1/JoeBro-Mobile) · **Plugins:** [joebro-plugins](https://github.com/joexk1/joebro-plugins) · **Comparing tools?** [How JoeBro compares](https://joebro.pages.dev/mac-app-for-claude-code-codex-opencode/)
 
 ### Install everything with one command
 
