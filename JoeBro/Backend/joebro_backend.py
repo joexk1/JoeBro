@@ -768,10 +768,17 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
                 err = self.ensure_mail_bridge()
                 if err:
                     return self.json({"ok": False, "error": err}, 400)
+            else:
+                err = self.email_login_error(account)
+                if err:
+                    return self.json({"ok": False, "error": err}, 400)
             account_id = self.upsert_email_account(account["type"], account)
             return self.json({"ok": True, "configured": True, "type": account["type"], "id": account_id})
         if path == "/api/email/connect-imap":
-            body = self._json_body()
+            body = self.email_infer_ssl(self._json_body())
+            err = self.email_login_error(body)
+            if err:
+                return self.json({"ok": False, "error": err}, 400)
             self.upsert_email_account("imap", body)
             return self.json({"ok": True, "configured": True, "type": "imap"})
         if path == "/api/email/disconnect":
