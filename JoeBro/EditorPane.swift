@@ -15,6 +15,9 @@ struct EditorPane: View {
     @State private var richFontSize: Double = 12
     @State private var richFontName: String = "Calibri"
     @State private var richExtraSaveTask: Task<Void, Never>?
+    @State private var outline = DocOutlineModel()
+    @AppStorage("editorOutlineVisible") private var outlineVisible = true
+    @State private var previewProxy: ScrollViewProxy?
 
     /// The ~20 families that cover the overwhelming majority of Word / Google
     /// Docs documents. macOS substitutes a close match for any not installed.
@@ -28,7 +31,7 @@ struct EditorPane: View {
     var body: some View {
         VStack(spacing: 0) {
             tabBar
-            Divider().opacity(0.4)
+            Rectangle().fill(JB.line).frame(height: 1)
             if let i = store.docIndex(store.activeDocID) {
                 if store.openDocs[i].flashcards {
                     FlashcardsEditor(index: i, study: previewMode)
@@ -57,8 +60,25 @@ struct EditorPane: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .background {
+            Button("") { withAnimation(JB.snap) { outlineVisible.toggle() } }
+                .keyboardShortcut("o", modifiers: [.command, .option])
+                .opacity(0).allowsHitTesting(false)
+        }
         .joeGlassRect(18)
-        .shadow(color: .black.opacity(0.16), radius: 18, y: 8)
+    }
+
+    private func isMarkdownDoc(_ doc: EditorDoc) -> Bool {
+        ["markdown", "md", ""].contains(docLanguage(doc).lowercased()) && !isEmailDoc(doc)
+    }
+
+    private func selectHeading(_ h: MDHeading) {
+        outline.active = h.id
+        if previewMode {
+            withAnimation(JB.smooth) { previewProxy?.scrollTo(markdownHeadingID(h.id), anchor: .top) }
+        } else {
+            commands.scroll(toOffset: h.offset)
+        }
     }
 
     private func isEmailDoc(_ doc: EditorDoc) -> Bool {
@@ -72,166 +92,105 @@ struct EditorPane: View {
     @State private var showDiff = false
 
     private func approvalBanner(doc: EditorDoc, pending: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button {
-                withAnimation(.spring(duration: 0.25)) { showDiff.toggle() }
-            } label: {
-                HStack(spacing: 6) {
-                    Label("JoeBro wants to edit this document", systemImage: "sparkles")
-                        .font(.jb(12, .semibold))
-                        .foregroundStyle(JB.accent)
-                    Image(systemName: "chevron.right")
-                        .font(.jb(8, .bold))
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(showDiff ? 90 : 0))
-                    Text(showDiff ? "hide changes" : "view changes")
-                        .font(.jb(10.5))
-                        .foregroundStyle(.tertiary)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Button {
+                    withAnimation(JB.smooth) { showDiff.toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        JBIcon(.spark, size: 13).foregroundStyle(JB.accent)
+                        Text("JoeBro edited this").font(.jb(12, .medium)).foregroundStyle(JB.ink)
+                        Text(changeSummary(old: doc.content, new: pending))
+                            .font(.jbMono(11)).foregroundStyle(JB.ink3)
+                        Image(systemName: "chevron.right")
+                            .font(.jb(8, .semibold))
+                            .foregroundStyle(JB.ink3)
+                            .rotationEffect(.degrees(showDiff ? 90 : 0))
+                    }
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .help(showDiff ? "Hide changes" : "View changes")
+                Spacer()
+                Button("Reject") {
+                    store.resolvePendingAIEdit(docID: doc.id, accept: false)
+                }
+                .buttonStyle(.jbSecondary)
+                Button("Apply") {
+                    store.resolvePendingAIEdit(docID: doc.id, accept: true)
+                }
+                .buttonStyle(.jbPrimary)
             }
-            .buttonStyle(.plain)
-            Text(changeSummary(old: doc.content, new: pending))
-                .font(.jb(11))
-                .foregroundStyle(.secondary)
+            .controlSize(.small)
             if showDiff {
                 DiffView(old: doc.content, new: pending)
                     .frame(maxHeight: 220)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
-            HStack(spacing: 8) {
-                Button {
-                    store.resolvePendingAIEdit(docID: doc.id, accept: true)
-                } label: {
-                    Label("Apply", systemImage: "checkmark")
-                        .font(.jb(11.5, .medium))
-                }
-                .buttonStyle(.jbPrimary)
-                .tint(.green)
-                .controlSize(.small)
-                Button {
-                    store.resolvePendingAIEdit(docID: doc.id, accept: false)
-                } label: {
-                    Label("Reject", systemImage: "xmark")
-                        .font(.jb(11.5, .medium))
-                }
-                .buttonStyle(.jbSecondary)
-                .controlSize(.small)
-            }
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(JB.accent.opacity(0.10))
-        .overlay(Rectangle().frame(height: 1).foregroundStyle(.separator.opacity(0.4)), alignment: .bottom)
+        .background(JB.accentSoft)
+        .overlay(alignment: .leading) { Rectangle().fill(JB.accent).frame(width: 2) }
+        .overlay(alignment: .bottom) { Rectangle().fill(JB.line).frame(height: 1) }
     }
 
     private func changeSummary(old: String, new: String) -> String {
-        let oldLines = old.components(separatedBy: "\n").count
-        let newLines = new.components(separatedBy: "\n").count
-        let delta = newLines - oldLines
-        let sign = delta >= 0 ? "+" : ""
-        return "\(old.count) → \(new.count) characters (\(sign)\(delta) lines). Apply to view the change, Reject to keep your version."
+        let delta = new.utf8.reduce(1) { $1 == 10 ? $0 + 1 : $0 } - old.utf8.reduce(1) { $1 == 10 ? $0 + 1 : $0 }
+        return "\(delta >= 0 ? "+" : "−")\(abs(delta)) lines"
     }
 
     // MARK: Tabs
 
     private var tabBar: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 2) {
             HStack(spacing: 0) {
                 modeButton(icon: "square.and.pencil", active: !previewMode, help: "Edit") { previewMode = false }
-                modeButton(icon: "eye", active: previewMode, help: "Preview (rendered)") { previewMode = true }
+                modeButton(icon: "eye", active: previewMode, help: "Preview") { previewMode = true }
             }
-            .padding(2)
-            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+            .padding(.leading, 8)
+            .padding(.trailing, 6)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
+                HStack(spacing: 0) {
                     ForEach(store.openDocs) { doc in
-                        tab(doc)
+                        EditorTab(doc: doc, isActive: doc.id == store.activeDocID,
+                                  select: { store.activeDocID = doc.id },
+                                  close: { store.closeDoc(doc.id) })
                     }
                 }
             }
             Spacer(minLength: 4)
-            if !store.editorDetached {
+            if let i = store.docIndex(store.activeDocID), isMarkdownDoc(store.openDocs[i]) {
                 Button {
-                    openWindow(id: "editor")
-                } label: {
-                    Image(systemName: "macwindow.on.rectangle")
-                        .font(.jb(11))
-                }
-                .buttonStyle(.borderless)
-                .help("Open editor in its own window")
+                    withAnimation(JB.snap) { outlineVisible.toggle() }
+                } label: { Image(systemName: "list.bullet.indent") }
+                .buttonStyle(JBIconButtonStyle(size: 26, active: outlineVisible))
+                .help("Outline (⌥⌘O)")
+            }
+            if !store.editorDetached {
+                Button { openWindow(id: "editor") } label: { Image(systemName: "macwindow.on.rectangle") }
+                    .buttonStyle(JBIconButtonStyle(size: 26))
+                    .help("Open in window")
             }
             if let i = store.docIndex(store.activeDocID) {
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(store.openDocs[i].content, forType: .string)
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                        .font(.jb(11))
-                }
-                .buttonStyle(.borderless)
-                .help("Copy entire document")
+                CopyIconButton(text: store.openDocs[i].content)
             }
             Button {
-                if store.editorDetached {
-                    dismissWindow(id: "editor")
-                } else {
-                    store.editorVisible = false
-                }
-            } label: {
-                Image(systemName: store.editorDetached ? "xmark.circle" : "sidebar.trailing")
-                    .font(.jb(12))
-            }
-            .buttonStyle(.borderless)
-            .help(store.editorDetached ? "Close editor window" : "Hide editor")
+                if store.editorDetached { dismissWindow(id: "editor") } else { store.editorVisible = false }
+            } label: { Image(systemName: store.editorDetached ? "xmark" : "sidebar.trailing") }
+            .buttonStyle(JBIconButtonStyle(size: 26))
+            .help(store.editorDetached ? "Close window" : "Hide editor")
+            .padding(.trailing, 6)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .frame(height: 36)
     }
 
     private func modeButton(icon: String, active: Bool, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.jb(11, .medium))
-                .frame(width: 26, height: 22)
-                .background(active ? AnyShapeStyle(.quaternary.opacity(0.8)) : AnyShapeStyle(.clear),
-                            in: RoundedRectangle(cornerRadius: 6))
-        }
-        .buttonStyle(.borderless)
-        .help(help)
-    }
-
-    private func tab(_ doc: EditorDoc) -> some View {
-        let isActive = doc.id == store.activeDocID
-        return HStack(spacing: 5) {
-            if doc.aiWriting {
-                ProgressView().controlSize(.mini)
-            }
-            Text(doc.title)
-                .font(.jb(11.5, isActive ? .semibold : .regular))
-                .lineLimit(1)
-                .frame(maxWidth: 140)
-            if doc.dirty {
-                Circle().fill(JB.accent).frame(width: 5, height: 5)
-            }
-            Button {
-                store.closeDoc(doc.id)
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.jb(8, .bold))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.borderless)
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .background(
-            Capsule().fill(isActive ? AnyShapeStyle(JB.accent.opacity(0.20)) : AnyShapeStyle(.quaternary.opacity(0.4)))
-        )
-        .contentShape(Capsule())
-        .hoverBounce(1.04)
-        .onTapGesture { store.activeDocID = doc.id }
+        Button(action: action) { Image(systemName: icon) }
+            .buttonStyle(JBIconButtonStyle(size: 26, active: active))
+            .help(help)
     }
 
     // MARK: Rich Word-document editor (.doc / .docx)
@@ -265,19 +224,19 @@ struct EditorPane: View {
                     } label: {
                         HStack(spacing: 3) {
                             Text(richFontName).font(.jb(11)).lineLimit(1)
-                            Image(systemName: "chevron.down").font(.jb(7, .bold)).foregroundStyle(.tertiary)
+                            Image(systemName: "chevron.down").font(.jb(7, .bold)).foregroundStyle(JB.ink3)
                         }
                         .frame(width: 110, alignment: .leading)
                     }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
                     .fixedSize()
-                    Divider().frame(height: 14).padding(.horizontal, 4)
+                    Rectangle().fill(JB.line).frame(width: 1, height: 14).padding(.horizontal, 4)
                     fmtButton("bold", "Bold (⌘B)") { richCommands.bold() }
                     fmtButton("italic", "Italic (⌘I)") { richCommands.italic() }
-                    Divider().frame(height: 14).padding(.horizontal, 4)
+                    Rectangle().fill(JB.line).frame(width: 1, height: 14).padding(.horizontal, 4)
                     fmtButton("list.bullet", "Bullet list") { richCommands.bullet() }
-                    Divider().frame(height: 14).padding(.horizontal, 4)
+                    Rectangle().fill(JB.line).frame(width: 1, height: 14).padding(.horizontal, 4)
                     fmtButton("minus", "Smaller") { adjustFontSize(-1) }
                     TextField("", value: $richFontSize, format: .number)
                         .textFieldStyle(.plain)
@@ -285,14 +244,14 @@ struct EditorPane: View {
                         .font(.jb(11, .medium))
                         .frame(width: 30)
                         .padding(.vertical, 2)
-                        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 5))
+                        .background(JB.raised, in: RoundedRectangle(cornerRadius: 5))
                         .onSubmit { richCommands.setSize(CGFloat(richFontSize)) }
                     fmtButton("plus", "Larger") { adjustFontSize(+1) }
                     Spacer()
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                Divider().opacity(0.3)
+                Rectangle().fill(JB.line).frame(height: 1)
                 RichDocEditor(url: url, commands: richCommands, editable: true,
                               onChange: {
                                   guard store.openDocs.indices.contains(i) else { return }
@@ -314,7 +273,7 @@ struct EditorPane: View {
                 docBand(index: i, region: "footer", label: "Footer & footnotes",
                         icon: "text.append", preview: previewMode)
             }
-            Divider().opacity(0.4)
+            Rectangle().fill(JB.line).frame(height: 1)
             footer(doc)
         }
     }
@@ -350,7 +309,7 @@ struct EditorPane: View {
         return VStack(alignment: .leading, spacing: 3) {
             Label(label, systemImage: icon)
                 .font(.jb(9.5, .semibold))
-                .foregroundStyle(preview ? Color.black.opacity(0.45) : Color.secondary)
+                .foregroundStyle(preview ? Color.black.opacity(0.45) : JB.ink2)
             if isEditing {
                 TextEditor(text: binding)
                     .font(.jb(11))
@@ -363,7 +322,7 @@ struct EditorPane: View {
                     if text.isEmpty {
                         Text("")
                             .font(.jb(11))
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(JB.ink3)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         Text(text)
@@ -415,7 +374,7 @@ struct EditorPane: View {
         let marker = NSAttributedString(
             string: "\(next)",
             attributes: [
-                .font: NSFont.systemFont(ofSize: 8),
+                .font: JBFonts.nsFont(8),
                 .baselineOffset: 5,
                 .foregroundColor: textView.textColor ?? NSColor.labelColor,
             ]
@@ -462,73 +421,84 @@ struct EditorPane: View {
     private func editor(index i: Int) -> some View {
         @Bindable var store = store
         let doc = store.openDocs[i]
+        let md = isMarkdownDoc(doc)
 
         VStack(spacing: 0) {
-            if doc.aiWriting {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        Text(doc.content)
-                            .font(editorFont(docLanguage(doc)))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(12)
-                            .id("doc-tail")
+            HStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    if doc.aiWriting {
+                        ScrollViewReader { proxy in
+                            ScrollView {
+                                Text(doc.content)
+                                    .font(editorFont(docLanguage(doc)))
+                                    .foregroundStyle(JB.ink)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(12)
+                                    .id("doc-tail")
+                            }
+                            .onChange(of: doc.content) {
+                                proxy.scrollTo("doc-tail", anchor: .bottom)
+                            }
+                        }
+                        .overlay(alignment: .topTrailing) {
+                            HStack(spacing: 6) {
+                                JBSpinner(size: 10, tint: JB.accent)
+                                Text("writing").font(.jbMono(10.5)).foregroundStyle(JB.ink2)
+                            }
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 4)
+                            .jbSurface(.raised, radius: JB.rControl)
+                            .padding(10)
+                        }
+                    } else if previewMode {
+                        renderedPreview(doc)
+                    } else {
+                        if !isMonospaced(doc) {
+                            HStack(spacing: 0) {
+                                fmtButton("bold", "Bold (⌘B)") { commands.bold() }
+                                fmtButton("italic", "Italic (⌘I)") { commands.italic() }
+                                Rectangle().fill(JB.line).frame(width: 1, height: 14).padding(.horizontal, 4)
+                                fmtButton("list.bullet", "Bullets") { commands.bullet() }
+                                fmtButton("list.number", "Numbers") { commands.numbered() }
+                                Spacer()
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            Rectangle().fill(JB.line).frame(height: 1)
+                        }
+                        EditorTextView(text: $store.openDocs[i].content,
+                                       monospaced: isMonospaced(doc),
+                                       commands: commands)
+                            .onChange(of: store.openDocs[i].content) {
+                                guard store.openDocs.indices.contains(i) else { return }
+                                store.openDocs[i].dirty = true
+                                store.scheduleAutosave(doc.id)
+                            }
                     }
-                    .onChange(of: doc.content) {
-                        proxy.scrollTo("doc-tail", anchor: .bottom)
-                    }
-                }
-                .overlay(alignment: .topTrailing) {
-                    Label("AI writing…", systemImage: "sparkles")
-                        .font(.jb(10.5, .medium))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(JB.accent.opacity(0.25)))
-                        .padding(10)
-                }
-            } else if previewMode {
-                renderedPreview(doc)
-            } else {
-                if !isMonospaced(doc) {
-                    // Markdown formatting toolbar
-                    HStack(spacing: 2) {
-                        fmtButton("bold", "Bold (⌘B)") { commands.bold() }
-                        fmtButton("italic", "Italic (⌘I)") { commands.italic() }
-                        Divider().frame(height: 14).padding(.horizontal, 4)
-                        fmtButton("list.bullet", "Bullet list") { commands.bullet() }
-                        fmtButton("list.number", "Numbered list") { commands.numbered() }
-                        Spacer()
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    Divider().opacity(0.3)
-                }
-                EditorTextView(text: $store.openDocs[i].content,
-                               monospaced: isMonospaced(doc),
-                               commands: commands)
-                    .onChange(of: store.openDocs[i].content) {
-                        guard store.openDocs.indices.contains(i) else { return }
-                        store.openDocs[i].dirty = true
-                        store.scheduleAutosave(doc.id)
-                    }
-            }
 
-            if !doc.suggestions.isEmpty {
-                suggestionsView(doc)
+                    if !doc.suggestions.isEmpty {
+                        suggestionsView(doc)
+                    }
+                }
+                if md && outlineVisible && !outline.headings.isEmpty {
+                    DocOutlineView(model: outline, onSelect: selectHeading)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
             }
+            .animation(JB.smooth, value: outlineVisible)
 
-            Divider().opacity(0.4)
+            Rectangle().fill(JB.line).frame(height: 1)
             footer(doc)
         }
+        .onAppear { commands.onTopOffset = { [outline] in outline.track(offset: $0) } }
+        .task(id: doc.id) { outline.refresh(text: doc.content, markdown: md, immediately: true) }
+        .onChange(of: doc.content) { outline.refresh(text: doc.content, markdown: md) }
     }
 
     private func fmtButton(_ icon: String, _ help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.jb(11, .medium))
-                .frame(width: 24, height: 20)
-        }
-        .buttonStyle(.borderless)
-        .help(help)
+        Button(action: action) { Image(systemName: icon) }
+            .buttonStyle(JBIconButtonStyle(size: 24))
+            .help(help)
     }
 
     private func isMonospaced(_ doc: EditorDoc) -> Bool {
@@ -546,8 +516,8 @@ struct EditorPane: View {
 
     private func editorFont(_ language: String) -> Font {
         ["markdown", "md", "email", "text", ""].contains(language.lowercased())
-            ? .system(size: 13)
-            : .system(size: 12.5, design: .monospaced)
+            ? .jb(14)
+            : .jbMono(12.5)
     }
 
     /// Rendered view — markdown native, HTML via WebKit, PDF via PDFKit,
@@ -556,10 +526,15 @@ struct EditorPane: View {
     private func renderedPreview(_ doc: EditorDoc) -> some View {
         switch docLanguage(doc).lowercased() {
         case "markdown", "md", "email", "text", "":
-            ScrollView {
-                MarkdownText(text: doc.content)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(14)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    MarkdownText(text: doc.content, document: true)
+                        .frame(maxWidth: 720, alignment: .leading)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 20)
+                }
+                .onAppear { previewProxy = proxy }
             }
         case "html":
             HTMLView(html: doc.content)
@@ -587,18 +562,19 @@ struct EditorPane: View {
             VStack(spacing: 8) {
                 ForEach(doc.suggestions) { s in
                     VStack(alignment: .leading, spacing: 6) {
-                        Label(s.reason, systemImage: "lightbulb")
-                            .font(.jb(11, .medium))
-                            .foregroundStyle(JB.accent)
+                        Text(s.reason)
+                            .font(.jb(11.5, .medium))
+                            .foregroundStyle(JB.ink)
                         HStack(alignment: .top, spacing: 8) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(s.find)
                                     .font(.jbMono(10.5))
                                     .strikethrough()
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(JB.danger)
                                     .lineLimit(3)
                                 Text(s.replace)
                                     .font(.jbMono(10.5))
+                                    .foregroundStyle(JB.live)
                                     .lineLimit(3)
                             }
                             Spacer()
@@ -607,10 +583,9 @@ struct EditorPane: View {
                                     store.resolveSuggestion(docID: doc.id, suggestion: s, accept: true)
                                 } label: {
                                     Image(systemName: "checkmark")
-                                        .font(.jb(10, .bold))
+                                        .font(.jb(10, .semibold))
                                 }
                                 .buttonStyle(.jbPrimary)
-                                .tint(.green)
                                 .controlSize(.small)
                                 Button {
                                     store.resolveSuggestion(docID: doc.id, suggestion: s, accept: false)
@@ -624,7 +599,8 @@ struct EditorPane: View {
                         }
                     }
                     .padding(10)
-                    .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+                    .background(JB.raised, in: RoundedRectangle(cornerRadius: JB.rCard, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).strokeBorder(JB.line, lineWidth: 1))
                 }
             }
             .padding(10)
@@ -635,35 +611,27 @@ struct EditorPane: View {
     // MARK: Footer
 
     private func footer(_ doc: EditorDoc) -> some View {
-        HStack(spacing: 10) {
-            Text(docLanguage(doc))
-                .font(.jb(10.5, .medium))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(.quaternary.opacity(0.5), in: Capsule())
+        HStack(spacing: 8) {
+            Text(docLanguage(doc).isEmpty ? "text" : docLanguage(doc))
+            if !outline.stats.isEmpty {
+                Text("·")
+                Text(outline.stats)
+            }
             if !doc.suggestions.isEmpty {
-                Text("\(doc.suggestions.count) suggestion\(doc.suggestions.count == 1 ? "" : "s")")
-                    .font(.jb(10.5))
-                    .foregroundStyle(JB.accent)
+                Text("·")
+                Text("\(doc.suggestions.count) suggested").foregroundStyle(JB.accent)
             }
             Spacer()
-            // Autosave status — no button to remember
-            HStack(spacing: 4) {
-                if doc.dirty {
-                    ProgressView().controlSize(.mini)
-                    Text("Saving…")
-                } else {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green.opacity(0.8))
-                    Text("Saved")
-                }
+            if doc.dirty {
+                JBSpinner(size: 10)
+            } else {
+                Image(systemName: "checkmark").font(.jb(9, .medium)).foregroundStyle(JB.ink3)
             }
-            .font(.jb(10.5))
-            .foregroundStyle(.secondary)
         }
+        .font(.jbMono(10.5))
+        .foregroundStyle(JB.ink3)
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .frame(height: 26)
     }
 }
 
@@ -689,33 +657,27 @@ struct EmailDocEditor: View {
             .font(.jb(12.5))
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            Divider().opacity(0.4)
+            Rectangle().fill(JB.line).frame(height: 1)
             EditorTextView(text: $fields.body, monospaced: false)
-            Divider().opacity(0.4)
+            Rectangle().fill(JB.line).frame(height: 1)
             HStack {
-                Text("email")
-                    .font(.jb(10.5, .medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(.quaternary.opacity(0.5), in: Capsule())
+                Text("email").font(.jbMono(10.5)).foregroundStyle(JB.ink3)
                 if let error {
-                    Text(error).font(.jbCaption).foregroundStyle(.red).lineLimit(1)
+                    Text(error).font(.jbCaption).foregroundStyle(JB.danger).lineLimit(1)
                 }
                 Spacer()
                 Button {
                     send()
                 } label: {
                     if sending {
-                        ProgressView().controlSize(.small)
+                        JBSpinner(size: 11, tint: JB.onAccent)
                     } else if sent {
                         Label("Sent", systemImage: "checkmark")
                     } else {
-                        Label("Send", systemImage: "paperplane.fill")
+                        Label("Send", systemImage: "paperplane")
                     }
                 }
                 .buttonStyle(.jbPrimary)
-                .tint(sent ? .green : JB.accent)
                 .controlSize(.small)
                 .disabled(sending || sent || fields.to.isEmpty)
             }
@@ -771,12 +733,15 @@ struct EmailDocEditor: View {
 
 // MARK: - PDF preview
 
-/// Image preview — opens in the editor pane like a PDF: fit to width, scrollable,
-/// pinch to zoom (double-click to reset).
+/// Image preview: fit to width, pinch or buttons to zoom, double-click to reset.
 struct ImagePreview: View {
     let url: URL
     @State private var scale: CGFloat = 1
     @State private var committed: CGFloat = 1
+
+    private func set(_ v: CGFloat) {
+        withAnimation(JB.snap) { scale = max(0.25, min(v, 8)); committed = scale }
+    }
 
     var body: some View {
         Group {
@@ -794,8 +759,11 @@ struct ImagePreview: View {
                         .onChanged { scale = max(0.25, min(committed * $0.magnification, 8)) }
                         .onEnded { _ in committed = scale }
                 )
-                .onTapGesture(count: 2) {
-                    withAnimation(.spring(duration: 0.25)) { scale = 1; committed = 1 }
+                .onTapGesture(count: 2) { set(1) }
+                .overlay(alignment: .bottomTrailing) {
+                    ViewerControls(label: "\(Int((scale * 100).rounded()))%",
+                                   minus: { set(scale / 1.25) }, plus: { set(scale * 1.25) }, fit: { set(1) })
+                        .padding(10)
                 }
             } else {
                 ContentUnavailableView("Couldn't open image", systemImage: "photo")
@@ -806,9 +774,84 @@ struct ImagePreview: View {
     }
 }
 
-struct PDFPreview: NSViewRepresentable {
+/// Quiet floating zoom cluster shared by the image and PDF viewers.
+struct ViewerControls: View {
+    let label: String
+    let minus: () -> Void
+    let plus: () -> Void
+    let fit: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button(action: minus) { Image(systemName: "minus") }
+                .buttonStyle(JBIconButtonStyle(size: 24)).help("Zoom out")
+            Text(label).font(.jbMono(10.5)).foregroundStyle(JB.ink2)
+                .frame(minWidth: 52).onTapGesture(perform: fit).help("Fit")
+            Button(action: plus) { Image(systemName: "plus") }
+                .buttonStyle(JBIconButtonStyle(size: 24)).help("Zoom in")
+        }
+        .padding(2)
+        .jbSurface(.raised, radius: JB.rControl)
+    }
+}
+
+/// PDF viewer: PDFKit with a mono page indicator and zoom cluster.
+struct PDFPreview: View {
     var data: Data? = nil
     var url: URL? = nil
+    @State private var model = PDFModel()
+
+    var body: some View {
+        PDFKitView(data: data, url: url, model: model)
+            .overlay(alignment: .bottomTrailing) {
+                HStack(spacing: 8) {
+                    if model.pages > 0 {
+                        Text("\(model.page) / \(model.pages)")
+                            .font(.jbMono(10.5)).foregroundStyle(JB.ink2)
+                            .padding(.horizontal, 9).frame(height: 28)
+                            .jbSurface(.raised, radius: JB.rControl)
+                    }
+                    ViewerControls(label: "\(Int((model.zoom * 100).rounded()))%",
+                                   minus: { model.view?.zoomOut(nil) }, plus: { model.view?.zoomIn(nil) },
+                                   fit: { model.view?.autoScales = true })
+                }
+                .padding(10)
+            }
+    }
+}
+
+@Observable
+final class PDFModel {
+    var page = 1
+    var pages = 0
+    var zoom: CGFloat = 1
+    @ObservationIgnored weak var view: PDFView?
+    @ObservationIgnored private var tokens: [NSObjectProtocol] = []
+
+    func attach(_ v: PDFView) {
+        view = v
+        tokens.forEach(NotificationCenter.default.removeObserver)
+        let nc = NotificationCenter.default
+        tokens = [
+            nc.addObserver(forName: .PDFViewPageChanged, object: v, queue: .main) { [weak self] _ in self?.sync() },
+            nc.addObserver(forName: .PDFViewScaleChanged, object: v, queue: .main) { [weak self] _ in self?.sync() },
+        ]
+        sync()
+    }
+
+    func sync() {
+        guard let v = view, let doc = v.document else { return }
+        pages = doc.pageCount
+        page = v.currentPage.map { doc.index(for: $0) + 1 } ?? 1
+        zoom = v.scaleFactor / max(v.scaleFactorForSizeToFit, 0.01)
+    }
+    deinit { tokens.forEach(NotificationCenter.default.removeObserver) }
+}
+
+struct PDFKitView: NSViewRepresentable {
+    var data: Data?
+    var url: URL?
+    let model: PDFModel
 
     func makeNSView(context: Context) -> PDFView {
         let v = PDFView()
@@ -818,6 +861,7 @@ struct PDFPreview: NSViewRepresentable {
         v.minScaleFactor = 0.25
         v.maxScaleFactor = 6
         v.document = makeDoc()
+        model.attach(v)
         return v
     }
 
@@ -825,6 +869,7 @@ struct PDFPreview: NSViewRepresentable {
         let doc = makeDoc()
         if v.document?.documentURL != doc?.documentURL || v.document == nil {
             v.document = doc
+            model.attach(v)
         }
     }
 
@@ -860,9 +905,9 @@ struct DiffView: View {
         return ScrollView {
             VStack(alignment: .leading, spacing: 1) {
                 if rows.isEmpty {
-                    Text("No line-level changes (whitespace or reorder only)")
+                    Text("whitespace only")
                         .font(.jb(11))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(JB.ink3)
                 }
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, entry in
                     HStack(alignment: .top, spacing: 6) {
@@ -872,14 +917,15 @@ struct DiffView: View {
                             .font(.jbMono(10.5))
                             .lineLimit(2)
                     }
-                    .foregroundStyle(entry.1 == 1 ? Color.green : Color.red)
+                    .foregroundStyle(entry.1 == 1 ? JB.live : JB.danger)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 1)
-                    .background((entry.1 == 1 ? Color.green : Color.red).opacity(0.08))
+                    .background((entry.1 == 1 ? JB.live : JB.danger).opacity(0.10))
                 }
             }
         }
-        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+        .background(JB.raised, in: RoundedRectangle(cornerRadius: JB.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: JB.rControl, style: .continuous).strokeBorder(JB.line, lineWidth: 1))
     }
 }
