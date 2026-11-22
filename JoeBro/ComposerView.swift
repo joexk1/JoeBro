@@ -7,7 +7,6 @@ struct ComposerView: View {
     @State private var text = ""
     @State private var showFileImporter = false
     @State private var mic = MicRecorder()
-    @State private var showPermissions = false
     @State private var inputHeight: CGFloat = 22
     @State private var focused = false
     @State private var slashIndex = 0
@@ -19,7 +18,21 @@ struct ComposerView: View {
     }
 
     /// Suggestions while the text is a single "/token" at the start.
+    /// "/query" typed mid-message (after a space, at the end): suggests skills to drop in.
+    private var midSlash: (prefix: String, query: String)? {
+        guard !text.hasPrefix("/"), let r = text.range(of: "/", options: .backwards),
+              text[..<r.lowerBound].last?.isWhitespace == true else { return nil }
+        let q = text[r.upperBound...]
+        guard !q.contains(where: \.isWhitespace) else { return nil }
+        return (String(text[..<r.lowerBound]), String(q))
+    }
+
     private var slashItems: [ChatSlashItem] {
+        if !slashDismissed, let m = midSlash { return slash.matches(m.query).filter { $0.kind == .skill } }
+        return startSlashItems
+    }
+
+    private var startSlashItems: [ChatSlashItem] {
         guard !slashDismissed, text.hasPrefix("/"), !text.contains(where: \.isNewline),
               text.filter({ $0 == " " }).count <= 1 else { return [] }
         if text.contains(" "), ChatSlashSource.options(for: String(text.dropFirst().prefix(while: { $0 != " " })).lowercased()).isEmpty { return [] }
@@ -57,41 +70,24 @@ struct ComposerView: View {
                     .disabled(!store.agentMode)
                     .opacity(store.agentMode ? 1 : 0.35)
 
-                Button {
-                    showPermissions.toggle()
+                JBMenu {
+                    permissionRow("sandbox", "Bound folder", "folder", JB.ink2)
+                    permissionRow("readonly", "Read-only", "eye", JB.warn)
+                    permissionRow("full", "Full access", "exclamationmark.triangle", JB.danger)
+                    if store.permissionMode == "full" {
+                        Divider().padding(.vertical, 3)
+                        Toggle(isOn: $store.askBeforeCommands) { Text("Ask before running commands") }
+                    }
                 } label: {
                     Image(systemName: "lock")
+                        .font(.jb(13))
                         .foregroundStyle(
                             store.permissionMode == "sandbox" ? JB.ink2 :
                             store.permissionMode == "readonly" ? JB.warn : JB.danger)
+                        .frame(width: 26, height: 26)
+                        .background(RoundedRectangle(cornerRadius: JB.rControl, style: .continuous).fill(Color.clear))
                 }
-                .buttonStyle(JBIconButtonStyle(size: 26))
                 .help("Agent file access mode")
-                .popover(isPresented: $showPermissions, arrowEdge: .top) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        permissionRow("sandbox", "Bound folder", "folder", JB.ink2)
-                        permissionRow("readonly", "Read-only", "eye", JB.warn)
-                        permissionRow("full", "Full access", "exclamationmark.triangle", JB.danger)
-                        if store.permissionMode == "full" {
-                            Rectangle().fill(JB.line).frame(height: 1).padding(.vertical, 4)
-                            Toggle(isOn: $store.askBeforeCommands) {
-                                Text("Ask before running commands")
-                                    .font(.jb(11.5))
-                                    .foregroundStyle(JB.ink)
-                            }
-                            .toggleStyle(JBSwitchStyle())
-                            .controlSize(.mini)
-                            .padding(.horizontal, 6)
-                            .frame(width: 220)
-                            .transition(.opacity.combined(with: .move(edge: .top)))
-                        }
-                    }
-                    .padding(8)
-                    .animation(JB.snap, value: store.permissionMode)
-                    // Force the popover body to re-evaluate the instant the mode
-                    // changes (popover content otherwise snapshots on present).
-                    .id(store.permissionMode)
-                }
 
                 Spacer()
 
@@ -137,11 +133,14 @@ struct ComposerView: View {
                     .strokeBorder(focused ? JB.accent.opacity(0.7) : JB.line, lineWidth: 1))
         }
         .animation(JB.fade, value: focused)
-        .overlay(alignment: .top) {
+        .overlay(alignment: .topLeading) {
             if !items.isEmpty {
+                // Zero-height anchor on the composer's top edge: the list grows upward from it.
                 ChatSlashPopover(items: items, selected: min(slashIndex, items.count - 1),
                                  onHover: { slashIndex = $0 }, onPick: accept)
-                    .alignmentGuide(.top) { $0[.bottom] + 8 }
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(height: 0, alignment: .bottom)
+                    .offset(y: -8)
                     .transition(.opacity.combined(with: .offset(y: 2)))
             }
         }
@@ -169,8 +168,8 @@ struct ComposerView: View {
         }
         .onChange(of: text) {
             slashIndex = 0
-            if !text.hasPrefix("/") { slashDismissed = false }
-            if text.hasPrefix("/") { slash.refresh() }
+            if !text.contains("/") { slashDismissed = false }
+            if text.hasPrefix("/") || midSlash != nil { slash.refresh() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .jbPickBackdropPhoto)) { _ in
             DispatchQueue.main.async { pickBackdropPhoto() }
@@ -215,11 +214,14 @@ struct ComposerView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         store.setWallpaper(from: url)
         JBAppearance.shared.backdrop = .photo
-        JBAppearance.shared.palette = .auto
     }
 
     private func accept(_ item: ChatSlashItem) {
-        text = store.runChatSlash(item)
+        if let m = midSlash, item.kind == .skill {
+            text = m.prefix + "using the \(item.name) skill "
+        } else {
+            text = store.runChatSlash(item)
+        }
         slashIndex = 0
         slashDismissed = false
     }
@@ -227,7 +229,6 @@ struct ComposerView: View {
     private func permissionRow(_ mode: String, _ title: String, _ icon: String, _ color: Color) -> some View {
         Button {
             withAnimation(JB.snap) { store.permissionMode = mode }
-            showPermissions = false
         } label: {
             HStack(spacing: 8) {
                 Circle().fill(color).frame(width: 7, height: 7)
@@ -236,22 +237,14 @@ struct ComposerView: View {
                     .foregroundStyle(JB.ink2)
                     .frame(width: 16)
                 Text(title)
-                    .font(.jb(12))
-                    .foregroundStyle(JB.ink)
-                Spacer()
+                Spacer(minLength: 16)
                 if store.permissionMode == mode {
                     Image(systemName: "checkmark")
-                        .font(.jb(10, .bold))
+                        .font(.jb(11, .semibold))
                         .foregroundStyle(JB.accent)
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .frame(width: 160, alignment: .leading)
-            .jbHoverRow(selected: false)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
     }
 
     private var attachmentChips: some View {
@@ -339,14 +332,13 @@ struct SlideSwitch: View {
                 .lineLimit(1)
                 .fixedSize()
                 .font(.jb(11, active ? .medium : .regular))
-                .foregroundStyle(active ? JB.ink : JB.ink3)
+                .foregroundStyle(active ? JB.onAccent : JB.ink3)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 3.5)
                 .background {
                     if active {
                         RoundedRectangle(cornerRadius: JB.rControl - 2, style: .continuous)
-                            .fill(JB.raised)
-                            .overlay(RoundedRectangle(cornerRadius: JB.rControl - 2, style: .continuous).strokeBorder(JB.line, lineWidth: 1))
+                            .fill(JB.accent)
                             .matchedGeometryEffect(id: "thumb", in: ns)
                     }
                 }

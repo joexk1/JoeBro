@@ -197,7 +197,10 @@ class ToolsMixin:
         """Run one phone-toolset tool. Every branch returns text and never raises
         for a missing capability: it says how to enable it."""
         form = form or {}
-        if not self._phone_toolset(form):
+        # A tool this turn was actually offered (find_tools in lazy mode, or one it
+        # loaded, like manage_plan) always runs; others stay phone-chat only.
+        offered = {t["function"]["name"] for t in (getattr(self, "_turn_tools", None) or []) if t.get("function")}
+        if not self._phone_toolset(form) and name not in offered:
             raise ValueError(name + " is only available to the phone agent")
         if getattr(self, "_turn_form", None) is None:
             self._turn_form = form

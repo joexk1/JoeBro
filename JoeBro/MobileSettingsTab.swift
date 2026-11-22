@@ -27,6 +27,7 @@ struct MobileSettingsTab: View {
     @State private var bundleID = ""
     @State private var keyFile: URL?
     @State private var pickingKey = false
+    @State private var editingPush = false
 
     // Phone agent
     @State private var agentName = ""
@@ -41,6 +42,26 @@ struct MobileSettingsTab: View {
 
     var body: some View {
         Form {
+            #if PERSONAL
+            // Personal: the phone talks to the always-on Pi, not to this Mac.
+            Section("Server") {
+                LabeledContent("Phone connects to") {
+                    Text("JoeBro on your Pi").foregroundStyle(JB.ink)
+                }
+                LabeledContent("Address") {
+                    Text(urls.first?.url ?? APIClient.shared.baseURL.absoluteString).font(.jb(12)).foregroundStyle(JB.ink2).textSelection(.enabled)
+                }
+                LabeledContent("Status") {
+                    HStack(spacing: 6) {
+                        JBStatusDot(color: loaded && !token.isEmpty ? JB.live : JB.ink3, size: 6)
+                        Text(loaded ? (token.isEmpty ? "Not reachable" : "Online") : "Checking…").foregroundStyle(JB.ink2)
+                    }
+                }
+                if let message { Text(message).font(.jbCaption).foregroundStyle(JB.danger) }
+            }
+            pairSection
+            devicesSection
+            #else
             Section("Phone access") {
                 Toggle("Let my phone connect", isOn: $enabled)
                 Picker("Reachable over", selection: $bind) {
@@ -51,7 +72,7 @@ struct MobileSettingsTab: View {
                 Text(enabled ? "Listening on \(urls.first?.url ?? "…")" : "Off")
                     .font(.jbCaption).foregroundStyle(JB.ink2)
                 if enabled && bind != "tailscale" {
-                    Text("Anyone on this network who gets the token can read your chats and run what the phone agent is allowed to run.")
+                    Text("Anyone on this network who gets the token can read your chats and run what the personal agent is allowed to run.")
                         .font(.jbCaption).foregroundStyle(JB.warn)
                 }
                 Text("The phone only works while JoeBro is open and this Mac is awake.")
@@ -64,6 +85,7 @@ struct MobileSettingsTab: View {
                 pairSection
                 devicesSection
             }
+            #endif
             pushSection
             agentSection
         }
@@ -153,13 +175,34 @@ struct MobileSettingsTab: View {
     }
 
     private var pushSection: some View {
-        Section("Notifications (push)") {
+        Section("Notifications") {
+            if pushConfigured && !editingPush {
+                LabeledContent("Push") {
+                    HStack(spacing: 6) { JBStatusDot(color: JB.live, size: 6); Text("On").foregroundStyle(JB.ink2) }
+                }
+                HStack {
+                    Button("Send test notification") {
+                        Task {
+                            do { try await APIClient.shared.sendTestNotification(); message = nil }
+                            catch { message = error.localizedDescription }
+                        }
+                    }
+                    Button("Change key…") { editingPush = true }
+                    Spacer()
+                }
+            } else {
+                pushSetup
+            }
+        }
+    }
+
+    @ViewBuilder private var pushSetup: some View {
             Text(pushConfigured ? "Push is set up." : "Push is not set up.")
                 .font(.jb(12, .semibold))
             if !pushBlocker.isEmpty {
                 Text(pushBlocker).font(.jbCaption).foregroundStyle(JB.warn)
             }
-            Text("1. In your Apple developer account, create an APNs Auth Key (.p8) and note its Key ID.\n2. Copy your Team ID from the Membership page.\n3. Enter the bundle ID of the iPhone app you built.\n4. Choose the .p8 file and save. It is stored only on this Mac and used only to talk to Apple's push servers.")
+            Text("1. In your Apple developer account, create an APNs Auth Key (.p8) and note its Key ID.\n2. Copy your Team ID from the Membership page.\n3. Enter the bundle ID of the iPhone app you built.\n4. Choose the .p8 file and save. It is stored only on the JoeBro server and used only to talk to Apple's push servers.")
                 .font(.jbCaption).foregroundStyle(JB.ink2)
             TextField("Team ID", text: $teamID)
             TextField("Key ID", text: $keyID)
@@ -186,14 +229,13 @@ struct MobileSettingsTab: View {
             }
             Text("Push is optional. Without it the phone still works, it just can't buzz you.")
                 .font(.jbCaption).foregroundStyle(JB.ink2)
-        }
     }
 
     private var agentSection: some View {
-        Section("Phone agent") {
+        Section("Personal agent (JoeBro on iPhone)") {
             TextField("Agent name", text: $agentName)
                 .onSubmit { pref("phone_agent_name", agentName) }
-            Toggle("Let the phone agent run commands", isOn: $allowFull)
+            Toggle("Let the personal agent run commands", isOn: $allowFull)
                 .onChange(of: allowFull) { pref("mobile_allow_full", allowFull) }
             Toggle("Show the phone chat in my sidebar", isOn: $showSession)
                 .onChange(of: showSession) { pref("show_phone_session", showSession) }
@@ -214,7 +256,7 @@ struct MobileSettingsTab: View {
                 .onChange(of: pulseOn) { pulse(["enabled": pulseOn]) }
             Stepper("Pulse every \(pulseInterval) min", value: $pulseInterval, in: 15...480, step: 15)
                 .onChange(of: pulseInterval) { pulse(["interval_minutes": pulseInterval]) }
-            Text("Anything the phone agent finds is posted into its chat. Reply there yes or no.")
+            Text("Anything the personal agent finds is posted into its chat. Reply there yes or no.")
                 .font(.jbCaption).foregroundStyle(JB.ink2)
         }
     }

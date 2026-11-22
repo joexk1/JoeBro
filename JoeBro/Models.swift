@@ -643,7 +643,7 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
         case .plugins: return "Plugins"
         case .aiCheck: return "AI Check"
         case .research: return "Deep Research"
-        case .inbox: return "Inbox"
+        case .inbox: return "Notifications"
         }
     }
 

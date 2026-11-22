@@ -615,7 +615,7 @@ struct CalendarPanel: View {
         .jbHoverRow()
         .contentShape(Rectangle())
         .onTapGesture { editing = EventDraft(from: ev) }
-        .contextMenu {
+        .jbContextMenu {
             Button("Edit") { editing = EventDraft(from: ev) }
                     Button("Delete", role: .destructive) {
                         Task {

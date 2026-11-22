@@ -4,12 +4,12 @@ import UniformTypeIdentifiers
 
 struct SidebarView: View {
     @Environment(AppStore.self) private var store
+    @State private var agentsExpanded = true
     @State private var chatsExpanded = true
     @State private var workspaceExpanded = UserDefaults.standard.object(forKey: "workspaceExpanded") == nil
         ? true : UserDefaults.standard.bool(forKey: "workspaceExpanded")
     @State private var renameTarget: ChatSessionInfo?
     @State private var renameText = ""
-    @State private var showGlassTuner = false
     // Collapsed project folders, persisted across launches.
     @State private var collapsedFolders: Set<String> =
         Set(UserDefaults.standard.stringArray(forKey: "collapsedChatFolders") ?? [])
@@ -68,6 +68,11 @@ struct SidebarView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
+                    // Coding agents, as conversations (only when there are any)
+                    if !AgentNav.shared.runs.isEmpty {
+                        sectionHeader("Coding agents", expanded: $agentsExpanded)
+                        if agentsExpanded { SidebarCodingAgents() }
+                    }
                     // Chats
                     sectionHeader("Chats", expanded: $chatsExpanded)
                     if chatsExpanded {
@@ -151,16 +156,14 @@ struct SidebarView: View {
                     .frame(width: 26, height: 26)
                     .help("Local only. Everything stays on this Mac.")
                 Spacer()
-                Button {
-                    showGlassTuner.toggle()
+                JBMenu(closesOnPick: false) {
+                    GlassTunerPopover()
                 } label: {
                     Image(systemName: "circle.lefthalf.filled")
+                        .font(.jb(13)).foregroundStyle(JB.ink2)
+                        .frame(width: 26, height: 26)
                 }
-                .buttonStyle(JBIconButtonStyle(size: 26))
                 .help("Appearance")
-                .popover(isPresented: $showGlassTuner, arrowEdge: .top) {
-                    GlassTunerPopover()
-                }
                 SettingsLink {
                     Image(systemName: "gearshape")
                 }
@@ -169,6 +172,7 @@ struct SidebarView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
+
         }
         .sheet(item: $renameTarget) { session in
             VStack(spacing: 14) {
@@ -378,7 +382,7 @@ struct SidebarView: View {
         }
         .buttonStyle(.plain)
         .jbHoverRow()
-        .contextMenu {
+        .jbContextMenu {
             Button("Rename Folder") {
                 renameFolderText = name
                 renameFolderTarget = FolderRenameTarget(name: name)
@@ -401,11 +405,11 @@ struct SidebarView: View {
                    hasDocAlert: store.docAlertSessions.contains(session.id))
             .padding(.leading, indented ? 14 : 0)
             .transition(.opacity.combined(with: .offset(y: -4)))
-            .onTapGesture { store.select(session.id) }
-            .contextMenu {
+            .onTapGesture { AgentNav.shared.close(); store.select(session.id) }
+            .jbContextMenu {
                 Button(session.isImportant == true ? "Unpin" : "Pin") { store.togglePin(session.id) }
                 Button("Rename") { renameTarget = session }
-                Menu("Add to Project Folder") {
+                JBMenu("Add to Project Folder") {
                     ForEach(store.folderNames, id: \.self) { name in
                         Button(name) { store.setFolder(session.id, folder: name) }
                     }
@@ -671,7 +675,7 @@ private struct FileTreeRow: View {
                 store.openWorkdirFile(sub: path)
             }
         }
-        .contextMenu {
+        .jbContextMenu {
             Button("Rename…") { promptRename() }
             Button("Delete", role: .destructive) {
                 store.deleteWorkdirFile(sub: path)

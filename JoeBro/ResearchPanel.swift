@@ -180,7 +180,7 @@ struct ResearchPanel: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { selection.isEmpty ? open(item) : toggleSelection(item.id, in: &selection) }
-        .contextMenu {
+        .jbContextMenu {
             Button("Copy Report") {
                 Task { await copyReport(item) }
             }

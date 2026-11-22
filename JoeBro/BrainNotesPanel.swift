@@ -113,7 +113,7 @@ struct NotesPanel: View {
             }
             .buttonStyle(.jbIcon).help("Delete")
         }
-        .contextMenu {
+        .jbContextMenu {
             Button(note.pinned == true ? "Unpin" : "Pin") {
                 Task { await APIClient.shared.pinNote(id: note.id); await load() }
             }

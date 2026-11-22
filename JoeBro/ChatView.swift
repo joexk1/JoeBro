@@ -184,7 +184,7 @@ struct ChatView: View {
             .help("Toggle sidebar")
 
             // Title dropdown — Rename / Compact / Copy / PDF / Save to Documents
-            Menu {
+            JBMenu {
                 Button {
                     renameText = currentTitle
                     renaming = true

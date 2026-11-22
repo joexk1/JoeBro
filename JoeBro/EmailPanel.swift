@@ -24,7 +24,7 @@ struct EmailPanel: View {
                 }
             }
 
-            Menu {
+            JBMenu {
                 ForEach(folders, id: \.self) { f in
                     Button(f) { folder = f }
                 }
@@ -267,7 +267,7 @@ struct EmailPanel: View {
                                         else { toggleSelect(mail.uid) }
                                      })
                                 .transition(.opacity)
-                                .contextMenu {
+                                .jbContextMenu {
                                     Button(selection.contains(mail.uid) ? "Deselect" : "Select") {
                                         toggleSelect(mail.uid)
                                     }
@@ -492,7 +492,7 @@ private struct EmailDetailView: View {
                         .help("Reply")
                     Button { onCompose(.forward(detail)) } label: { Image(systemName: "arrowshape.turn.up.right") }
                         .help("Forward")
-                    Menu {
+                    JBMenu {
                         Button("Archive") {
                             Task {
                                 try? await APIClient.shared.emailArchive(uid: detail.uid ?? "", folder: folder)

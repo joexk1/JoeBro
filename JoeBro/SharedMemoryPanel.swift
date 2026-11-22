@@ -1,10 +1,10 @@
 import SwiftUI
 
 /// The one memory surface: what you told JoeBro (You), what every agent learned about a
-/// project (Projects), what applies everywhere (Global), plus the plain-text Files the phone agent reads.
+/// project (Projects), what applies everywhere (Global).
 /// Everything is one store (user, project and global scopes of Shared Memory).
 struct SharedMemoryPanel: View {
-    private enum Scope: String, CaseIterable { case all = "All", you = "You", projects = "Projects", global = "Global", files = "Files" }
+    private enum Scope: String, CaseIterable { case all = "All", you = "You", projects = "Projects", global = "Global" }
     @State private var scope = Scope.all
     @State private var projects: [MemProject] = []
     @State private var project = "__all"
@@ -19,7 +19,7 @@ struct SharedMemoryPanel: View {
     private var shown: [MemFact] {
         facts.filter {
             switch scope {
-            case .all, .files: true
+            case .all: true
             case .you: $0.scope == "user"
             case .global: $0.scope == "global"
             case .projects: $0.scope == "project"
@@ -29,7 +29,7 @@ struct SharedMemoryPanel: View {
 
     var body: some View {
         ExtrasShell(title: "Memory", glyph: .memory) {
-            if scope != .files { PanelSearchField(text: $search, open: $searchOpen, placeholder: "Search memory") }
+            PanelSearchField(text: $search, open: $searchOpen, placeholder: "Search memory")
             ExtrasIconButton(symbol: "plus", help: "Add to memory") { adding = true }
             ExtrasIconButton(symbol: "arrow.clockwise", help: "Refresh") { Task { await load() } }
         } content: {
@@ -40,7 +40,7 @@ struct SharedMemoryPanel: View {
                             .buttonStyle(JBButtonStyle(kind: scope == s ? .secondary : .ghost, compact: true))
                     }
                     Spacer()
-                    if scope != .files {
+                    Group {
                         if projects.count > 2, scope == .all || scope == .projects {
                             Picker("", selection: $project) {
                                 Text("Every project").tag("__all")
@@ -51,9 +51,6 @@ struct SharedMemoryPanel: View {
                     }
                     if let note { Text(note).font(.jb(11)).foregroundStyle(JB.danger).lineLimit(1) }
                 }
-                if scope == .files {
-                    PhoneMemoryView()
-                } else {
                     HStack(spacing: JB.s3) {
                         ScrollView {
                             LazyVStack(spacing: 6) {
@@ -63,10 +60,9 @@ struct SharedMemoryPanel: View {
                             .padding(JB.s2)
                             .animation(JB.smooth, value: shown.map(\.id))
                         }
-                        .frame(width: 430).frame(maxHeight: .infinity).jbSurface(.panel)
-                        detail.frame(maxWidth: .infinity, maxHeight: .infinity).jbSurface(.panel)
+                        .frame(width: 400).frame(maxHeight: .infinity).jbSurface(.panel, radius: JB.rPanel)
+                        detail.frame(maxWidth: .infinity, maxHeight: .infinity).jbSurface(.panel, radius: JB.rPanel)
                     }
-                }
             }
         }
         .task { await load() }
@@ -78,7 +74,7 @@ struct SharedMemoryPanel: View {
 
     private func row(_ f: MemFact) -> some View {
         MemoryRow(fact: f, selected: selectedID == f.id) { selectedID = f.id }
-            .contextMenu {
+            .jbContextMenu {
                 Button(f.isPinned ? "Unpin" : "Pin") { act { try await APIClient.shared.memoryPin(f.id, pinned: !f.isPinned) } }
                 if f.isArchived { Button("Restore") { act { try await APIClient.shared.memoryRestore(f.id) } } }
                 else { Button("Archive", role: .destructive) { act { try await APIClient.shared.memoryArchive(f.id) } } }
@@ -87,7 +83,9 @@ struct SharedMemoryPanel: View {
 
     @ViewBuilder private var detail: some View {
         if let f = facts.first(where: { $0.id == selectedID }) {
-            MemoryDetail(fact: f) { Task { await load() } }.id(f.id)
+            MemoryDetail(fact: f) { newID in
+                Task { await load(); if let newID { selectedID = newID } }
+            }.id(f.id)
         } else {
             JBEmptyState(art: .search, text: "Pick a memory")
         }
@@ -115,19 +113,19 @@ private struct MemoryRow: View {
         Button(action: tap) {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
-                    Text(((fact.topic ?? "").isEmpty ? fact.kindLabel : (fact.topic ?? "")).lowercased()).font(.jb(10.5)).foregroundStyle(JB.ink3)
+                    Text((fact.topic ?? "").isEmpty ? fact.kindLabel.capitalized : (fact.topic ?? "")).font(.jb(12, .medium)).foregroundStyle(JB.ink2)
                     Spacer()
                     if fact.isPinned { Circle().fill(JB.accent).frame(width: 5, height: 5) }
-                    Text(relativeDateISO(fact.updatedAt)).font(.jb(10.5)).foregroundStyle(JB.ink3)
+                    Text(relativeDateISO(fact.updatedAt)).font(.jb(12)).foregroundStyle(JB.ink3)
                 }
-                Text(fact.text).font(.jb(12.5)).foregroundStyle(JB.ink).multilineTextAlignment(.leading).lineLimit(4)
+                Text(fact.text).font(.jb(14)).foregroundStyle(JB.ink).multilineTextAlignment(.leading).lineLimit(4)
                 HStack(spacing: 8) {
                     Capsule().fill(JB.line).frame(width: 36, height: 2)
                         .overlay(alignment: .leading) { Capsule().fill(JB.accent.opacity(0.8)).frame(width: 36 * fact.strengthValue, height: 2) }
-                    if !fact.provenanceLine.isEmpty { Text(fact.provenanceLine).font(.jb(10.5)).foregroundStyle(JB.ink3).lineLimit(1) }
+                    if !fact.provenanceLine.isEmpty { Text(fact.provenanceLine).font(.jb(12)).foregroundStyle(JB.ink3).lineLimit(1) }
                 }
             }
-            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12).padding(.vertical, 11).frame(maxWidth: .infinity, alignment: .leading)
             .jbHoverRow(selected: selected)
             .opacity(fact.isArchived ? 0.5 : 1)
         }.buttonStyle(.plain)
@@ -136,49 +134,124 @@ private struct MemoryRow: View {
 
 private struct MemoryDetail: View {
     let fact: MemFact
-    let changed: () -> Void
+    /// Called after any change; passes the new version's id after an edit.
+    let changed: (String?) -> Void
     @State private var text = ""
     @State private var topic = ""
     @State private var kind = "fact"
     @State private var history: [MemFact] = []
     @State private var error: String?
     @FocusState private var focus: Bool
+    private var dirty: Bool { text != fact.text || topic != (fact.topic ?? "") || kind != (fact.kind ?? "fact") }
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: JB.s3) {
-                TextEditor(text: $text).font(.jb(13)).foregroundStyle(JB.ink).frame(minHeight: 110).scrollContentBackground(.hidden)
-                    .padding(6).jbSurface(.raised, radius: JB.rControl)
-                HStack(spacing: JB.s2) {
-                    TextField("Topic", text: $topic).focused($focus).jbField(focused: focus)
-                    Picker("", selection: $kind) { ForEach(["fact", "decision", "gotcha", "preference", "handoff", "learned"], id: \.self) { Text($0).tag($0) } }
-                        .labelsHidden().frame(width: 130)
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: JB.s5) {
+                    // What it's about
+                    HStack(spacing: 8) {
+                        JBMenu {
+                            ForEach(["fact", "decision", "gotcha", "preference", "handoff", "learned"], id: \.self) { k in
+                                Button(k.capitalized) { kind = k }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(kind.capitalized).font(.jb(12, .semibold))
+                                Image(systemName: "chevron.down").font(.jb(8, .semibold))
+                            }
+                            .foregroundStyle(JB.accent)
+                            .padding(.horizontal, 9).padding(.vertical, 4)
+                            .background(Capsule().fill(JB.accentSoft))
+                        }
+                        .menuStyle(.borderlessButton).fixedSize()
+                        if fact.isPinned { Image(systemName: "pin.fill").font(.jb(11)).foregroundStyle(JB.accent) }
+                        if fact.isArchived { Text("Archived").font(.jb(12)).foregroundStyle(JB.ink3) }
+                        Spacer()
+                    }
+                    TextField("Topic", text: $topic)
+                        .textFieldStyle(.plain)
+                        .font(.jb(20, .semibold)).tracking(-0.3)
+                        .foregroundStyle(JB.ink)
+                        .focused($focus)
+
+                    // The memory itself, as readable text
+                    TextEditor(text: $text)
+                        .font(.jb(15))
+                        .lineSpacing(4)
+                        .foregroundStyle(JB.ink)
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: 140)
+                        .padding(.horizontal, -5)
+
+                    // Facts about the memory
+                    Grid(alignment: .leading, horizontalSpacing: JB.s5, verticalSpacing: JB.s3) {
+                        GridRow {
+                            stat("Saved by", fact.provenanceLine.isEmpty ? "Unknown" : fact.provenanceLine)
+                            stat("Updated", relativeDateISO(fact.updatedAt))
+                        }
+                        GridRow {
+                            stat("Strength", "\(Int(fact.strengthValue * 100))%")
+                            stat("Recalled", "\(fact.recalls ?? 0) times")
+                        }
+                    }
+                    .padding(JB.s4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .jbSurface(.raised, radius: JB.rCard)
+
+                    if history.count > 1 {
+                        VStack(alignment: .leading, spacing: JB.s3) {
+                            Text("Earlier versions").font(.jb(13, .semibold)).foregroundStyle(JB.ink2)
+                            ForEach(history.dropLast()) { h in
+                                HStack(alignment: .top, spacing: 10) {
+                                    Circle().fill(JB.ink3).frame(width: 5, height: 5).padding(.top, 7)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(h.text).font(.jb(13)).foregroundStyle(JB.ink2)
+                                        Text(relativeDateISO(h.updatedAt)).font(.jb(11.5)).foregroundStyle(JB.ink3)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-                VStack(alignment: .leading, spacing: 4) {
-                    meta("by", fact.provenanceLine.isEmpty ? "unknown" : fact.provenanceLine)
-                    meta("strength", "\(Int(fact.strengthValue * 100))%")
-                    meta("recalled", "\(fact.recalls ?? 0)x")
-                    meta("updated", relativeDateISO(fact.updatedAt))
+                .padding(JB.s5)
+                .frame(maxWidth: 720, alignment: .leading)
+            }
+
+            // Actions
+            HStack(spacing: JB.s2) {
+                if let error { Text(error).font(.jb(12)).foregroundStyle(JB.danger).lineLimit(1) }
+                Spacer()
+                if fact.isArchived {
+                    Button("Restore") { run { try await APIClient.shared.memoryRestore(fact.id) } }.buttonStyle(.jbSecondary)
+                } else {
+                    Button("Archive") { run { try await APIClient.shared.memoryArchive(fact.id) } }.buttonStyle(.jbGhost)
                 }
-                HStack(spacing: JB.s2) {
-                    Button("Save") { run { try await APIClient.shared.memoryEdit(fact.id, text: text, topic: topic, kind: kind) } }.buttonStyle(JBButtonStyle(kind: .primary, compact: true))
-                    Button(fact.isPinned ? "Unpin" : "Pin") { run { try await APIClient.shared.memoryPin(fact.id, pinned: !fact.isPinned) } }.buttonStyle(JBButtonStyle(kind: .secondary, compact: true))
-                    if fact.isArchived { Button("Restore") { run { try await APIClient.shared.memoryRestore(fact.id) } }.buttonStyle(JBButtonStyle(kind: .secondary, compact: true)) }
-                    else { Button("Archive") { run { try await APIClient.shared.memoryArchive(fact.id) } }.buttonStyle(JBButtonStyle(kind: .danger, compact: true)) }
+                Button(fact.isPinned ? "Unpin" : "Pin") { run { try await APIClient.shared.memoryPin(fact.id, pinned: !fact.isPinned) } }.buttonStyle(.jbSecondary)
+                Button("Save") {
+                    Task {
+                        do { changed(try await APIClient.shared.memoryEdit(fact.id, text: text, topic: topic, kind: kind)) }
+                        catch { self.error = error.localizedDescription }
+                    }
                 }
-                if let error { Text(error).font(.jb(11)).foregroundStyle(JB.danger) }
-                if history.count > 1 {
-                    JBSectionHeader("Earlier", count: history.count - 1)
-                    ForEach(history.dropLast()) { Text($0.text).font(.jb(11.5)).foregroundStyle(JB.ink3) }
-                }
-            }.padding(JB.s4)
+                    .buttonStyle(.jbPrimary)
+                    .disabled(!dirty)
+                    .keyboardShortcut("s", modifiers: .command)
+            }
+            .padding(.horizontal, JB.s4).padding(.vertical, JB.s3)
+            .overlay(alignment: .top) { Rectangle().fill(JB.line).frame(height: 1) }
         }
         .task { text = fact.text; topic = fact.topic ?? ""; kind = fact.kind ?? "fact"; history = (try? await APIClient.shared.memoryHistory(fact.id)) ?? [] }
     }
-    private func meta(_ k: String, _ v: String) -> some View {
-        HStack(spacing: 8) { Text(k).jbEyebrow().frame(width: 70, alignment: .leading); Text(v).font(.jb(11.5)).foregroundStyle(JB.ink2) }
+
+    private func stat(_ k: String, _ v: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(k).font(.jb(12)).foregroundStyle(JB.ink3)
+            Text(v).font(.jb(14, .medium)).foregroundStyle(JB.ink).lineLimit(2)
+        }
     }
+
     private func run(_ work: @escaping () async throws -> Void) {
-        Task { do { try await work(); changed() } catch { self.error = error.localizedDescription } }
+        Task { do { try await work(); changed(nil) } catch { self.error = error.localizedDescription } }
     }
 }
 

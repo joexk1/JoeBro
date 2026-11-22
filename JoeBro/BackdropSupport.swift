@@ -203,7 +203,7 @@ struct WebBackdropView: NSViewRepresentable {
             let js: String
             if s.fileURL == nil {
                 let name = (try? JSONEncoder().encode(s.sceneName)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
-                js = "window.setScene(\(name), \(s.paused), \(!s.dark))"
+                js = "window.jbScale=2;window.setScene(\(name), \(s.paused), \(!s.dark))"
             } else {
                 js = """
                 (function(){var b=window.jbBackdrop;if(!b)return;

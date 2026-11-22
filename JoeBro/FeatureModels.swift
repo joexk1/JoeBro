@@ -159,8 +159,11 @@ extension APIClient {
         let r: FactsEnv = try await getJSON("api/shared-memory", query: q); return r.facts
     }
     func memoryHistory(_ id: String) async throws -> [MemFact] { let r: HistoryEnv = try await getJSON("api/shared-memory/\(seg(id))"); return r.history ?? [] }
-    func memoryEdit(_ id: String, text: String, topic: String, kind: String) async throws {
-        _ = try await sendJSON("api/shared-memory/\(seg(id))", method: "PUT", body: ["text": text, "topic": topic, "kind": kind])
+    /// Edits save as a new version: returns the new version's id.
+    @discardableResult
+    func memoryEdit(_ id: String, text: String, topic: String, kind: String) async throws -> String? {
+        let r = try await sendJSON("api/shared-memory/\(seg(id))", method: "PUT", body: ["text": text, "topic": topic, "kind": kind])
+        return (r["fact"] as? [String: Any])?["id"] as? String
     }
     func memoryPin(_ id: String, pinned: Bool) async throws { _ = try await sendJSON("api/shared-memory/\(seg(id))/pin", body: ["pinned": pinned]) }
     func memoryArchive(_ id: String) async throws { _ = try await sendJSON("api/shared-memory/\(seg(id))/archive", body: [:]) }

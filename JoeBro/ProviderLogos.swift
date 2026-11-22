@@ -75,12 +75,11 @@ struct ProviderLogoView: View {
                 .scaledToFit()
                 .frame(width: size, height: size)
         } else {
-            let brand = ProviderBrand.from(model: model)
-            Text(brand.initial)
-                .font(.jb(size * 0.58, .heavy))
-                .foregroundStyle(.white)
+            // No logo: the provider's first letter in the accent colour.
+            Text(ProviderBrand.from(model: model).initial)
+                .font(.jb(size * 0.95, .semibold))
+                .foregroundStyle(JB.accent)
                 .frame(width: size, height: size)
-                .background(brand.color.gradient, in: Circle())
         }
     }
 }

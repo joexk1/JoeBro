@@ -158,7 +158,7 @@ struct ToolsPanel: View {
                 .help("Settings")
             } else if plugin.source != "bundled" {
                 Button(role: .destructive) {
-                    store.deletePlugin(id: plugin.id)
+                    if JBConfirm.delete("plugin", plugin.name) { store.deletePlugin(id: plugin.id) }
                 } label: {
                     Image(systemName: "trash")
                 }
@@ -285,7 +285,7 @@ struct ToolsPanel: View {
             .help("Edit")
 
             Button(role: .destructive) {
-                Task { await store.deleteMCPServer(id: server.id) }
+                if JBConfirm.delete("MCP server", server.name) { Task { await store.deleteMCPServer(id: server.id) } }
             } label: {
                 Image(systemName: "trash")
             }
@@ -370,7 +370,7 @@ struct ToolsPanel: View {
             .buttonStyle(.jbIcon)
 
             Button(role: .destructive) {
-                Task { await store.deleteAPITool(id: tool.id) }
+                if JBConfirm.delete("tool", tool.name) { Task { await store.deleteAPITool(id: tool.id) } }
             } label: {
                 Image(systemName: "trash")
             }

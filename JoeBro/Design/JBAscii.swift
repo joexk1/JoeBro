@@ -267,17 +267,43 @@ struct JBEmptyState: View {
     enum Art { case inbox, search, done, sleep, plug, files }
     var art: Art = .inbox
     let text: String
-    var body: some View {
-        VStack(spacing: 14) {
-            Text(Self.drawing(art))
-                .font(.jbMono(12))
-                .foregroundStyle(JB.ink3)
-                .multilineTextAlignment(.leading)
-                .fixedSize()
-            Text(text).font(.jb(13)).foregroundStyle(JB.ink2)
+
+    private var symbol: String {
+        switch art {
+        case .inbox: return "tray"
+        case .search: return "magnifyingglass"
+        case .done: return "checkmark"
+        case .sleep: return "moon"
+        case .plug: return "link"
+        case .files: return "doc.text"
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Just the circled icon, for empty states that lay out their own text.
+    static func icon(_ art: Art) -> some View {
+        Image(systemName: JBEmptyState(art: art, text: "").symbol)
+            .font(.jb(17, .regular))
+            .foregroundStyle(JB.ink3)
+            .frame(width: 44, height: 44)
+            .background(Circle().fill(JB.raised))
+            .overlay(Circle().strokeBorder(JB.line, lineWidth: 1))
+    }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: symbol)
+                .font(.jb(17, .regular))
+                .foregroundStyle(JB.ink3)
+                .frame(width: 44, height: 44)
+                .background(Circle().fill(JB.raised))
+                .overlay(Circle().strokeBorder(JB.line, lineWidth: 1))
+            Text(text)
+                .font(.jb(14))
+                .foregroundStyle(JB.ink2)
+                .multilineTextAlignment(.center)
+        }
         .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     static func drawing(_ art: Art) -> String {

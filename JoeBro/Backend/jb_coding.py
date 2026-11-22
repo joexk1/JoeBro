@@ -438,7 +438,10 @@ class CodingAgentsMixin:
             raise ValueError("text is empty")
         self._coding_inbox_table()
         live = row["status"] in ("running", "waiting")
-        if mode in ("auto", "terminal") and not live:
+        # Claude Code and Codex accept typed input mid-turn (it queues and shows as a normal message),
+        # so a controllable terminal gets it typed in even while the agent works. Approvals still wait.
+        typeable = not live or (row["source"] in ("claude", "codex") and row["status"] == "running")
+        if mode in ("auto", "terminal") and typeable:
             try:
                 term = self._coding_terminal(row)
             except ValueError:          # Agent Control is off or unreachable: queue for the hooks instead
@@ -448,8 +451,7 @@ class CodingAgentsMixin:
             if term:
                 r = self._agent_control("agent_send_input", {"session_id": term["session_id"], "host": row["host"], "text": text, "press_enter": True})
                 if not r.get("error"):
-                    self.coding_event({"source": row["source"], "host": row["host"], "session_id": row["session_id"],
-                                       "event": "prompt", "text": "[from %s] %s" % (sender, text)})
+                    # The agent's own prompt hook reports the typed message: logging it here too duplicated it.
                     return {"ok": True, "delivered": "terminal"}
             if mode == "terminal":
                 raise ValueError("this agent isn't in a controllable Kitty/tmux terminal")
@@ -457,7 +459,7 @@ class CodingAgentsMixin:
         self.store.exec("INSERT INTO coding_inbox(id,agent_id,text,sender,created_at) VALUES(?,?,?,?,?)",
                         (mid, aid, text[:4000], sender, time.time()))
         return {"ok": True, "delivered": "queued", "id": mid,
-                "detail": "Queued: the agent receives it when its current turn ends (or with its next prompt)."}
+                "detail": "Queued: the agent gets it at its next step."}
 
     def coding_inbox_pull(self, q):
         """Called by the reporter hook (Stop / UserPromptSubmit) of that agent."""

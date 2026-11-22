@@ -206,7 +206,10 @@ enum JB {
     /// Ink on the inverse ground (text on an ink-filled control).
     static let inverse = Color(jbLight: 0xFCFBF9, dark: 0x0A0A0B)
     // Status
-    static let live = Color(jbLight: 0x0F8A69, dark: 0x5FD1B0)
+    /// "Alive / running": the accent, so nothing clashes with it. Mono keeps phosphor green.
+    static var live: Color {
+        JBAppearance.shared.palette == .mono ? Color(jbLight: 0x0F8A69, dark: 0x5FD1B0) : JBAppearance.shared.palette.accent
+    }
     static let warn = Color(jbLight: 0xB97A06, dark: 0xF5B83D)
     static let danger = Color(jbLight: 0xD13A2C, dark: 0xFF5A4A)
 
@@ -220,11 +223,8 @@ enum JB {
 
     /// Panel fill at the user's transparency.
     static var panelFill: Color { surface.opacity(JBAppearance.shared.panelOpacity) }
-    /// Fill for things you read or type into (composer, replies): follows the
-    /// slider on the plain ground, but goes near-solid over a photo or scene.
-    static var readFill: Color {
-        JBAppearance.shared.backdrop == .palette ? panelFill : surface.opacity(0.96)
-    }
+    /// Fill for things you read or type into (composer, messages, menus): the opacity slider controls it everywhere.
+    static var readFill: Color { panelFill }
 
     // Radii
     static let rControl: CGFloat = 7
@@ -398,6 +398,7 @@ extension View {
     /// Popovers, menus, palettes: the only surfaces that cast a shadow.
     func jbFloating(radius: CGFloat = JB.rCard) -> some View {
         self.background {
+            // Menus and dropdowns are always opaque (the slider is for panels, inputs and messages).
             RoundedRectangle(cornerRadius: radius, style: .continuous).fill(JB.surface)
                 .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(JB.lineStrong, lineWidth: 1))
                 .shadow(color: .black.opacity(0.28), radius: 24, y: 12)
@@ -775,5 +776,24 @@ struct JBIcon: View {
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
+    }
+}
+
+
+/// The palette swatch: mono is half black/white, "From background" a colour wheel.
+struct JBPaletteSwatch: View {
+    let palette: JBPalette
+    var size: CGFloat = 18
+    var body: some View {
+        Group {
+            switch palette {
+            case .mono: HStack(spacing: 0) { Color.black; Color.white }
+            case .auto: AngularGradient(colors: [.red, .orange, .yellow, .green, .cyan, .blue, .purple, .red], center: .center)
+            default: palette.accent
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay(Circle().strokeBorder(JB.line, lineWidth: 1))
     }
 }

@@ -200,12 +200,7 @@ struct JBPaletteRow: View {
                 Button {
                     withAnimation(JB.snap) { selection = p }
                 } label: {
-                    Circle()
-                        .fill(p == .mono ? JB.ink : p.accent)
-                        .frame(width: 18, height: 18)
-                        .overlay(Circle().strokeBorder(JB.line, lineWidth: 1))
-                        // "From background" reads as a picked-up colour: a dashed ring.
-                        .overlay(p == .auto ? Circle().strokeBorder(JB.ink, style: StrokeStyle(lineWidth: 1, dash: [2, 2])).padding(-1) : nil)
+                    JBPaletteSwatch(palette: p, size: 18)
                         .padding(3)
                         .overlay(Circle().strokeBorder(selection == p ? JB.ink : .clear, lineWidth: 1.5))
                 }

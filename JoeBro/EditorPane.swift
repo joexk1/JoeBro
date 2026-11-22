@@ -212,7 +212,7 @@ struct EditorPane: View {
                     .id("preview-\(url.path)")
             } else {
                 HStack(spacing: 2) {
-                    Menu {
+                    JBMenu {
                         ForEach(Self.docFonts, id: \.self) { name in
                             Button {
                                 richFontName = name

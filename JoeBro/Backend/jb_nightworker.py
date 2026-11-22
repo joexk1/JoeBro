@@ -89,11 +89,20 @@ def agent_argv(agent, prompt, model="", budget=0, commands=None, resume_id=""):
     return argv
 
 
-def session_argv(agent, prompt="", model="", resume_id="", commands=None):
+PERMISSIONS = ("", "ask", "edits", "full")
+# Permission level -> each harness's own flags ("ask" = its default prompts).
+PERMISSION_FLAGS = {
+    "claude": {"edits": ["--permission-mode", "acceptEdits"], "full": ["--dangerously-skip-permissions"]},
+    "codex": {"edits": ["--full-auto"], "full": ["--dangerously-bypass-approvals-and-sandbox"]},
+}
+
+
+def session_argv(agent, prompt="", model="", resume_id="", commands=None, permission=""):
     """An interactive session (for tmux/kitty): native resume when an id is known."""
     argv = list((commands or {}).get(agent + "_session") or INTERACTIVE.get(agent) or [])
     if not argv:
         raise ValueError("unknown agent: %s" % agent)
+    argv += PERMISSION_FLAGS.get(agent, {}).get(permission or "", [])
     if resume_id:
         argv += [a.replace("{id}", resume_id) for a in RESUME[agent]] if agent in RESUME else []
     if model and agent in MODEL_FLAG:

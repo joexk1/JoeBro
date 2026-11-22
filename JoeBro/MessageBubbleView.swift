@@ -105,9 +105,10 @@ struct MessageBubbleView: View, Equatable {
                         .lineSpacing(3)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
-                        .background(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).fill(JB.raised))
+                        .background(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).fill(JB.panelFill)
+                            .overlay(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).fill(JB.raised)))
                         .overlay(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).strokeBorder(JB.line, lineWidth: 1))
-                        .contextMenu {
+                        .jbContextMenu {
                             Button {
                                 NSPasteboard.general.clearContents()
                                 NSPasteboard.general.setString(message.content, forType: .string)
@@ -234,7 +235,7 @@ struct MessageBubbleView: View, Equatable {
         .padding(.vertical, 4)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .contextMenu {
+        .jbContextMenu {
             Button {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(message.content, forType: .string)
@@ -566,7 +567,6 @@ private struct ToolActivityView: View {
                         .font(.jb(7, .bold))
                         .foregroundStyle(JB.ink3)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
-                    Spacer(minLength: 0)
                 }
                 .frame(minHeight: 22, alignment: .leading)
                 .contentShape(Rectangle())
@@ -583,6 +583,7 @@ private struct ToolActivityView: View {
                 .transition(.opacity)
             }
         }
+        .modifier(ToolCard())
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

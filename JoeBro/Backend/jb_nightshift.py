@@ -27,7 +27,7 @@ def data_dir(store=None):
 
 STATUSES = ("queued", "running", "review", "approved", "rejected", "failed", "cancelled", "launched")
 EDITABLE = ("title", "repo", "prompt", "agent", "model", "host", "window_start", "window_end", "run_after",
-            "max_minutes", "budget_usd", "test_command", "on_approve")
+            "max_minutes", "budget_usd", "test_command", "on_approve", "permission")
 DEFAULTS = {"enabled": True, "window_start": "23:00", "window_end": "07:00", "on_approve": "keep", "parallel": 1,
             "default_agent": "claude", "max_minutes": 60, "budget_usd": 5.0, "default_host": ""}
 MAX_MINUTES, MAX_BUDGET = 240, 50.0
@@ -124,7 +124,7 @@ class NightShiftMixin:
             error TEXT NOT NULL DEFAULT '', followups TEXT NOT NULL DEFAULT '[]', result TEXT NOT NULL DEFAULT '{}', decision TEXT NOT NULL DEFAULT '{}')""")
         if not getattr(self.store, "_night_cols", False):     # node-runner columns (a node reports its diff; decisions park for it)
             for col in ("pending_action TEXT NOT NULL DEFAULT ''", "diff_text TEXT NOT NULL DEFAULT ''", "diff_truncated INTEGER NOT NULL DEFAULT 0",
-                        "task_ref TEXT NOT NULL DEFAULT ''"):
+                        "task_ref TEXT NOT NULL DEFAULT ''", "permission TEXT NOT NULL DEFAULT ''"):
                 try:
                     self.store.exec("ALTER TABLE night_tasks ADD COLUMN " + col)
                 except Exception:
@@ -216,6 +216,7 @@ class NightShiftMixin:
         out = {k: r[k] for k in ("id", "kind", "title", "position", "repo", "prompt", "agent", "model", "host", "window_start", "window_end",
                                  "run_after", "max_minutes", "budget_usd", "test_command", "status", "attempts", "runner", "agent_id",
                                  "branch", "base_branch", "base_commit", "head_commit", "worktree", "error", "resume_id")}
+        out["permission"] = r.get("permission") or ""
         out["task_ref"] = r.get("task_ref") or ""
         out.update(repo_name=os.path.basename(r["repo"].rstrip("/")), on_approve=r["on_approve"] or self.night_config()["on_approve"],
                    run_now=bool(r["run_now"]), created_at=_iso(r["created"]), updated_at=_iso(r["updated"]), started_at=_iso(r["started"]),
@@ -236,6 +237,8 @@ class NightShiftMixin:
             f["repo"] = os.path.abspath(os.path.expanduser(str(f["repo"]).strip()))
         if "prompt" in f:
             f["prompt"] = str(f["prompt"]).strip()[:8000]
+        if "permission" in f and f["permission"] not in worker.PERMISSIONS:
+            raise ValueError("permission is ask, edits or full")
         if "agent" in f and f["agent"] not in ("any",) + tuple(worker.COMMANDS):
             raise ValueError("agent is claude, codex, opencode or any")
         for k in ("window_start", "window_end"):
@@ -256,9 +259,10 @@ class NightShiftMixin:
         self._night_table()
         cfg = self.night_config()
         f = self._night_fields(body, cfg)
-        if not f.get("repo") or not f.get("prompt"):
+        if not f.get("repo") or (not f.get("prompt") and kind != "session"):
             raise ValueError("repo and prompt are required")
-        f.setdefault("title", f["prompt"].splitlines()[0][:70])
+        f.setdefault("prompt", "")
+        f.setdefault("title", (f["prompt"].splitlines() or ["Session in " + os.path.basename(f["repo"])])[0][:70])
         f.setdefault("max_minutes", cfg["max_minutes"])
         f.setdefault("budget_usd", cfg["budget_usd"])       # every task has a cap
         if not f.get("host") and cfg.get("default_host"):
@@ -453,7 +457,7 @@ class NightShiftMixin:
         try:
             r = self.night_task(tid)
             agent = self._night_agent(r, self.night_config())
-            argv = worker.session_argv(agent, r["prompt"], r["model"], r["resume_id"], self._night_commands())
+            argv = worker.session_argv(agent, r["prompt"], r["model"], r["resume_id"], self._night_commands(), r.get("permission") or "")
             if self.pref("coding_launch_terminal") == "kitty":
                 out = self.coding_launch(r["host"] or "mac", agent, r["repo"], r["prompt"])
             else:
@@ -695,7 +699,7 @@ class NightShiftMixin:
             return "I don't know where that project lives. Give me the repo path."
         try:
             r = self.night_add({"repo": repo, "prompt": args.get("prompt") or ("Continue where you left off." if resume_id else ""), "agent": agent or "any",
-                                "host": host, "title": (args.get("title") or "Session: " + str(args.get("prompt") or ""))[:60]},
+                                "host": host, "permission": str(args.get("permission") or ""), "title": (args.get("title") or "Session: " + str(args.get("prompt") or ""))[:60]},
                                kind="session", run_now=True, resume_id=resume_id)
             for _, t in self.night_tick():
                 t.join(25)

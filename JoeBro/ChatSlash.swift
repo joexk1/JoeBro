@@ -6,6 +6,7 @@ extension Notification.Name {
     static let chatFillComposer = Notification.Name("JoeBro.chatFillComposer")
     /// Opens the photo picker for the window backdrop.
     static let jbPickBackdropPhoto = Notification.Name("JoeBro.pickBackdropPhoto")
+    static let jbOpenModelPicker = Notification.Name("JoeBro.openModelPicker")
 }
 
 enum ChatKey { case up, down, enter, tab, escape }
@@ -36,6 +37,8 @@ final class ChatSlashSource {
         .init(name: "background", label: "scene, photo or plain", kind: .menu),
         .init(name: "palette", label: "accent colour", kind: .menu),
         .init(name: "panels", label: "panel opacity", kind: .menu),
+        .init(name: "permissions", label: "agent file access", kind: .menu),
+        .init(name: "model", label: "change model"),
         .init(name: "open", label: "go to a panel", kind: .menu),
         .init(name: "settings"),
         .init(name: "compact", label: "shrink context"),
@@ -92,6 +95,11 @@ final class ChatSlashSource {
                 .init(name: "\(v)", label: v == 100 ? "solid" : "\(v)% opaque", kind: .option, parent: menu, value: "\(v)",
                       current: abs(look.solidity * 100 - Double(v)) < 5)
             }
+        case "permissions":
+            let cur = UserDefaults.standard.string(forKey: "jbChatPermissionMode") ?? "sandbox"
+            return [("sandbox", "bound-folder", "Bound folder"), ("readonly", "read-only", "Read-only"), ("full", "full-access", "Full access")].map {
+                .init(name: $0.1, label: $0.2, kind: .option, parent: menu, value: $0.0, current: cur == $0.0)
+            }
         case "open":
             let tabs: [WorkspaceTab] = [.chat, .agents, .tasks, .nightShift, .memory, .calendar, .email, .inbox,
                                         .research, .skills, .tools]
@@ -133,16 +141,20 @@ extension AppStore {
                 } else if item.value == "photo" {
                     NotificationCenter.default.post(name: .jbPickBackdropPhoto, object: nil)
                 } else {
-                    look.sceneID = item.value; look.backdrop = .scene; look.palette = .auto
+                    look.sceneID = item.value; look.backdrop = .scene
                 }
             case "palette": if let p = JBPalette(rawValue: item.value) { look.palette = p }
             case "panels": look.solidity = max(0.35, (Double(item.value) ?? 100) / 100)
             case "open": if let t = WorkspaceTab(rawValue: item.value) { activeTab = t }
+            case "permissions": permissionMode = item.value
             default: break
             }
             return ""
         }
         switch item.name {
+        case "model":
+            // After the composer clears, so the picker anchors to a settled layout.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { NotificationCenter.default.post(name: .jbOpenModelPicker, object: nil) }
         case "settings": NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         case "new": newChat()
         case "compact": compactChat()
@@ -185,13 +197,13 @@ struct ChatSlashPopover: View {
                 .padding(5)
             }
             .scrollIndicators(.never)
-            .frame(maxHeight: 232)
+            .frame(maxHeight: 420)
             .fixedSize(horizontal: false, vertical: true)
             .onChange(of: selected) {
                 if items.indices.contains(selected) { proxy.scrollTo(items[selected].id) }
             }
         }
-        .frame(width: 340)
+        .frame(width: 460)
         .jbFloating()
     }
 
@@ -205,6 +217,10 @@ struct ChatSlashPopover: View {
                 Text("/" + item.name)
                     .font(.jb(12.5, .medium))
                     .foregroundStyle(JB.ink)
+                    .lineLimit(1).truncationMode(.tail)
+                    .frame(maxWidth: 230, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
             }
             if item.kind == .skill && item.label.isEmpty {
                 JBChip(text: "skill")

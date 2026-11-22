@@ -19,10 +19,10 @@ struct TasksPanel: View {
         ExtrasShell(title: "Tasks", glyph: .tasks) {
             HStack(spacing: 2) {
                 Button("Tasks") { phoneScope = false }.buttonStyle(JBButtonStyle(kind: phoneScope ? .ghost : .secondary, compact: true))
-                Button("Phone agent") { phoneScope = true }.buttonStyle(JBButtonStyle(kind: phoneScope ? .secondary : .ghost, compact: true))
+                Button("Personal agent") { phoneScope = true }.buttonStyle(JBButtonStyle(kind: phoneScope ? .secondary : .ghost, compact: true))
             }
             if phoneScope {
-                Menu {
+                JBMenu {
                     Button("Morning briefing") { addStarter("morning") }
                     Button("Evening wrap-up") { addStarter("evening") }
                 } label: { JBIcon(.spark, size: 14) }
@@ -42,7 +42,7 @@ struct TasksPanel: View {
                     case .failed(let e):
                         JBEmptyState(art: .plug, text: e)
                     case .loaded(let list) where list.isEmpty:
-                        JBEmptyState(art: .inbox, text: phoneScope ? "No phone-agent tasks" : "No tasks")
+                        JBEmptyState(art: .inbox, text: phoneScope ? "No personal-agent tasks" : "No tasks")
                     case .loaded(let list):
                         let shown = filtered(list)
                         VStack(spacing: 0) {
@@ -129,7 +129,7 @@ struct TasksPanel: View {
         }
         .opacity(paused ? 0.55 : 1)
         .contentShape(Rectangle())
-        .contextMenu {
+        .jbContextMenu {
             Button("Run now") { run(t) }
             Button("Edit") { editing = t }
             Button(paused ? "Resume" : "Pause") {

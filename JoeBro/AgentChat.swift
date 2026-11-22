@@ -61,6 +61,18 @@ struct AgentChatThread: View {
     @FocusState private var focused: Bool
 
     private var messages: [AgentMessage] { run.messages ?? [] }
+
+    private enum Item { case message(AgentMessage), tools([String]) }
+    /// Consecutive tool lines fold into one row.
+    private var items: [Item] {
+        var out: [Item] = []
+        for m in messages {
+            if !["user", "assistant", "approval"].contains(m.role) {
+                if case .tools(let l) = out.last { out[out.count - 1] = .tools(l + [m.content]) } else { out.append(.tools([m.content])) }
+            } else { out.append(.message(m)) }
+        }
+        return out
+    }
     private var canSend: Bool { run.kind == "coding" && run.status != "ended" }
     private var working: Bool { run.live && run.status != "waiting" }
 
@@ -68,11 +80,16 @@ struct AgentChatThread: View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: JB.s3) {
-                        ForEach(Array(messages.enumerated()), id: \.offset) { i, m in
-                            bubble(m, last: i == messages.count - 1)
+                    VStack(alignment: .leading, spacing: 18) {
+                        ForEach(Array(items.enumerated()), id: \.offset) { i, item in
+                            switch item {
+                            case .message(let m): bubble(m, last: i == items.count - 1)
+                            case .tools(let lines): AgentToolGroup(lines: lines, running: working && i == items.count - 1)
+                            }
                         }
-                        ForEach(Array(echoes.enumerated()), id: \.offset) { _, e in userCard(e.text, tag: e.via) }
+                        // Local echo only until the agent's own feed shows the message (no duplicates).
+                        ForEach(Array(echoes.enumerated()).filter { e in !messages.contains { $0.content.contains(e.element.text) } },
+                                id: \.offset) { _, e in userCard(e.text, tag: e.via) }
                         if working {
                             HStack(spacing: 6) { JBSpinner(); JBStreamCursor() }
                         }
@@ -82,8 +99,9 @@ struct AgentChatThread: View {
                         if showScreen { screenView }
                         Color.clear.frame(height: 1).id("end")
                     }
-                    .padding(JB.s4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24).padding(.vertical, 16)
+                    .frame(maxWidth: 860, alignment: .leading)   // same column as a JoeBro chat
+                    .frame(maxWidth: .infinity)
                 }
                 .onChange(of: messages.count + echoes.count) { _, _ in
                     withAnimation(JB.smooth) { proxy.scrollTo("end", anchor: .bottom) }
@@ -105,8 +123,10 @@ struct AgentChatThread: View {
         switch m.role {
         case "user": userCard(m.content.replacingOccurrences(of: "[from app] ", with: ""), tag: nil)
         case "assistant":
+            // Same as a JoeBro reply: plain text, a readable card over photos/scenes.
             MarkdownText(text: m.content).textSelection(.enabled).foregroundStyle(JB.ink)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .modifier(AgentReplyCard())
         case "approval": approvalCard(m.content, active: last && run.status == "waiting")
         default:
             HStack(spacing: 6) {
@@ -116,14 +136,21 @@ struct AgentChatThread: View {
         }
     }
 
+    /// Same bubble as your messages in a JoeBro chat (right-aligned), with "Queued" under it until delivered.
     private func userCard(_ text: String, tag: String?) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(text).font(.jbBody).foregroundStyle(JB.ink).textSelection(.enabled)
-            if let tag { Text(tag).jbEyebrow() }
+        HStack {
+            Spacer(minLength: 80)
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(text)
+                    .font(.jb(14)).foregroundStyle(JB.ink).lineSpacing(3)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .background(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).fill(JB.panelFill)
+                        .overlay(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).fill(JB.raised)))
+                    .overlay(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).strokeBorder(JB.line, lineWidth: 1))
+                if let tag { Text(tag.capitalized).font(.jb(11)).foregroundStyle(JB.ink3) }
+            }
         }
-        .padding(JB.s3)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .jbSurface(.raised, radius: JB.rCard)
     }
 
     private func approvalCard(_ text: String, active: Bool = true) -> some View {
@@ -145,38 +172,108 @@ struct AgentChatThread: View {
             .padding(JB.s3).jbSurface(.raised, radius: JB.rCard)
     }
 
+    /// Same look as the JoeBro composer.
     private var composer: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .bottom, spacing: JB.s2) {
+        VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 TextField("Message \(run.title.isEmpty ? "agent" : run.title)", text: $draft, axis: .vertical)
-                    .textFieldStyle(.plain).font(.jbBody).lineLimit(1...6)
+                    .textFieldStyle(.plain).font(.jb(14)).lineLimit(1...8)
                     .focused($focused)
-                    .padding(.horizontal, JB.s3).padding(.vertical, 8)
-                    .jbField(focused: focused)
                     .onSubmit { Task { await send() } }
-                Button { showScreen.toggle() } label: { JBSymbol(name: "terminal", size: 15) }
-                    .buttonStyle(JBIconButtonStyle(size: 30, active: showScreen)).help("Terminal")
-                Button { Task { await send() } } label: { Image(systemName: "arrow.up") }
-                    .buttonStyle(JBIconButtonStyle(size: 30, active: !draft.isEmpty))
-                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || sending)
-                    .keyboardShortcut(.return, modifiers: .command)
+                HStack {
+                    Spacer()
+                    Button { Task { await send() } } label: { Image(systemName: "arrow.up") }
+                        .buttonStyle(JBIconButtonStyle(size: 30, active: !draft.isEmpty))
+                        .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || sending)
+                        .keyboardShortcut(.return, modifiers: .command)
+                }
             }
-            if let error { Text(error).font(.jb(10.5)).foregroundStyle(JB.danger) }
+            .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 8)
+            .background {
+                RoundedRectangle(cornerRadius: JB.rPanel, style: .continuous).fill(JB.readFill)
+                    .overlay(RoundedRectangle(cornerRadius: JB.rPanel, style: .continuous)
+                        .strokeBorder(focused ? JB.accent.opacity(0.7) : JB.line, lineWidth: 1))
+            }
+            .animation(JB.fade, value: focused)
+            if let error { Text(error).font(.jb(11)).foregroundStyle(JB.danger) }
         }
-        .padding(JB.s3)
-        .overlay(alignment: .top) { Rectangle().fill(JB.line).frame(height: 1) }
+        .frame(maxWidth: 860)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 24).padding(.bottom, 12)
     }
 
     private func send() async {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !sending else { return }
         sending = true
+        draft = ""          // clear at once: no selected-text flash, no double send
         defer { sending = false }
         do {
             let how = try await APIClient.shared.codingSend(id: run.id, text: text)
-            echoes.append((text, how == "terminal" ? "sent" : "queued for its next turn"))
-            draft = ""; error = nil
+            echoes.append((text, how == "terminal" ? "sent" : "queued"))
+            error = nil
             await onChanged()
-        } catch { self.error = error.localizedDescription }
+        } catch { draft = text; self.error = error.localizedDescription }
+    }
+}
+
+
+/// A JoeBro reply's readable card over a photo or animated scene (none on the plain palette).
+struct AgentReplyCard: ViewModifier {
+    @State private var look = JBAppearance.shared
+    func body(content: Content) -> some View {
+        if look.backdrop == .palette {
+            content
+        } else {
+            content
+                .padding(.horizontal, 14).padding(.vertical, 10)
+                .background(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).fill(JB.readFill))
+                .overlay(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).strokeBorder(JB.line, lineWidth: 1))
+        }
+    }
+}
+
+
+/// Tool calls sit on a small readable card (panel fill + hairline) so they stay legible over any background.
+struct ToolCard: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: JB.rControl + 1, style: .continuous).fill(JB.readFill))
+            .overlay(RoundedRectangle(cornerRadius: JB.rControl + 1, style: .continuous).strokeBorder(JB.line, lineWidth: 1))
+    }
+}
+
+/// A run of a coding agent's tool calls, collapsed to one line (the latest), like JoeBro's tool rows.
+struct AgentToolGroup: View {
+    let lines: [String]
+    var running = false
+    @State private var expanded = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button { withAnimation(JB.snap) { expanded.toggle() } } label: {
+                HStack(spacing: 8) {
+                    JBStatusDot(color: running ? JB.live : JB.ink3, live: running, size: 6)
+                    Text(lines.last ?? "").font(.jb(12)).foregroundStyle(JB.ink2).lineLimit(1).truncationMode(.tail)
+                    if lines.count > 1 { Text("\(lines.count)").font(.jb(11)).foregroundStyle(JB.ink3) }
+                    Image(systemName: "chevron.right").font(.jb(7, .bold)).foregroundStyle(JB.ink3)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .frame(minHeight: 22)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if expanded {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(Array(lines.enumerated()), id: \.offset) { _, l in
+                        Text(l).font(.jbMono(11)).foregroundStyle(JB.ink2).lineLimit(3).textSelection(.enabled)
+                    }
+                }
+                .padding(.leading, 14)
+                .transition(.opacity)
+            }
+        }
+        .modifier(ToolCard())
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

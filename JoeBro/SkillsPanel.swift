@@ -26,7 +26,7 @@ struct SkillsPanel: View {
                 Image(systemName: "arrow.clockwise")
             }
             .buttonStyle(.jbIcon)
-            Menu {
+            JBMenu {
                 Button {
                     showNew = true
                 } label: {
@@ -208,6 +208,7 @@ struct SkillsPanel: View {
             Button { toggle(id: id, currentlyActive: active) } label: { Image(systemName: "power") }
                 .buttonStyle(JBIconButtonStyle(size: 26, active: active)).help(active ? "Disable" : "Activate")
             Button {
+                guard JBConfirm.delete("skill", s["name"]?.stringValue ?? "") else { return }
                 Task {
                     _ = try? await APIClient.shared.sendJSON("api/skills/\(id)", method: "DELETE")
                     await load()
@@ -215,10 +216,11 @@ struct SkillsPanel: View {
             } label: { Image(systemName: "trash") }
                 .buttonStyle(.jbIcon).help("Delete")
         }
-        .contextMenu {
+        .jbContextMenu {
             Button("Edit…") { editing = SkillDraft(from: s) }
             Button(active ? "Disable" : "Activate") { toggle(id: id, currentlyActive: active) }
             Button("Delete", role: .destructive) {
+                guard JBConfirm.delete("skill", s["name"]?.stringValue ?? "") else { return }
                 Task {
                     _ = try? await APIClient.shared.sendJSON("api/skills/\(id)", method: "DELETE")
                     await load()

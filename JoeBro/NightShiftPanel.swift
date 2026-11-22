@@ -29,7 +29,7 @@ struct NightShiftPanel: View {
             Toggle("Overnight", isOn: Binding(get: { enabled }, set: { v in enabled = v; Task { try? await APIClient.shared.nightConfig(enabled: v) } }))
                 .toggleStyle(JBSwitchStyle()).controlSize(.small).font(.jb(11)).foregroundStyle(JB.ink2)
             if multiHost {
-                Menu {
+                JBMenu {
                     ForEach(hosts) { h in
                         Button {
                             runOn = h.id
@@ -158,7 +158,7 @@ struct NightShiftPanel: View {
                 ExtrasIconButton(symbol: "xmark", help: "Cancel") { Task { await act { try await APIClient.shared.nightCancel(t.id) } } }
             }
         }
-        .contextMenu {
+        .jbContextMenu {
             if t.state == "queued" { Button("Run now") { Task { await act { try await APIClient.shared.nightRun(t.id) } } } }
             Button("Cancel", role: .destructive) { Task { await act { try await APIClient.shared.nightCancel(t.id) } } }
         }

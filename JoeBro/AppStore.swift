@@ -179,7 +179,9 @@ final class AppStore {
     var useWeb = true          // web search on by default; the composer toggle gates it
     var thinkingOn = true          // Think vs Fast
     var allowBash = false          // >_ terminal toggle
-    var permissionMode = "sandbox" // lock menu: bound folder / readonly / full
+    var permissionMode = "sandbox" { // lock menu: bound folder / readonly / full
+        didSet { UserDefaults.standard.set(permissionMode, forKey: "jbChatPermissionMode") } // for /permissions' checkmark
+    }
     var askBeforeCommands: Bool = UserDefaults.standard.bool(forKey: "askBeforeCommands") {
         didSet { UserDefaults.standard.set(askBeforeCommands, forKey: "askBeforeCommands") }
     }

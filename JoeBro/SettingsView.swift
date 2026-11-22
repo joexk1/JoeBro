@@ -311,7 +311,7 @@ struct SettingsView: View {
                 }
             }
             Section("Backdrop") {
-                Picker("Backdrop", selection: Binding(get: { look.backdrop }, set: { look.backdrop = $0; if $0 != .palette { look.palette = .auto } })) {
+                Picker("Backdrop", selection: $look.backdrop) {
                     Text("Palette").tag(JBBackdropKind.palette)
                     Text("Photo").tag(JBBackdropKind.photo)
                     Text("Animated").tag(JBBackdropKind.scene)
@@ -381,7 +381,7 @@ struct SettingsView: View {
                 let scoped = url.startAccessingSecurityScopedResource()
                 store.setWallpaper(from: url)
                 if scoped { url.stopAccessingSecurityScopedResource() }
-                JBAppearance.shared.backdrop = .photo; JBAppearance.shared.palette = .auto
+                JBAppearance.shared.backdrop = .photo
             }
         }
         .fileImporter(isPresented: $showVideoImporter,

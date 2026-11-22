@@ -113,6 +113,12 @@ struct AgentsPanel: View {
     private func row(_ run: AgentRun, all: [AgentRun]) -> some View {
         let isSelected = selectedID == run.id
         return Button {
+            if run.kind == "coding" {
+                // Coding agents are conversations: open it in the chat area (no second chat pane here).
+                AgentNav.shared.open(run.id)
+                store.activeTab = .chat
+                return
+            }
             selectedID = run.id
             Task { await loadDetail(run.id) }
         } label: {

@@ -10,7 +10,7 @@ struct InboxPanel: View {
     @State private var undoText: String?
 
     var body: some View {
-        PanelChrome(title: "Inbox", icon: "tray") {
+        PanelChrome(title: "Notifications", icon: "bell") {
             Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }
                 .buttonStyle(.jbIcon)
             if case .loaded(let list) = items, !list.isEmpty {

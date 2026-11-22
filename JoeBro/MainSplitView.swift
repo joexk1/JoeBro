@@ -4,19 +4,27 @@ import SwiftUI
 struct MainSplitView: View {
     @Environment(AppStore.self) private var store
     @State private var sidebarVisible = true
+    @State private var nav = AgentNav.shared
     @State private var showPalette = false
     @State private var isFullscreen =
         NSApp.windows.contains { $0.styleMask.contains(.fullScreen) }
 
     var body: some View {
         ZStack(alignment: .top) {
-            HStack(spacing: 10) {
-                if sidebarVisible {
-                    SidebarView()
-                        .frame(width: 260)
-                        .jbSurface(.panel, radius: JB.rPanel)
-                        .transition(.move(edge: .leading).combined(with: .opacity))
-                }
+            HStack(spacing: 0) {
+                // Width animates (no insert/remove), so the chat panel and its
+                // header slide in one smooth motion instead of jumping.
+                SidebarView()
+                    .frame(width: 260)
+                    .jbSurface(.panel, radius: JB.rPanel)
+                    .frame(width: sidebarVisible ? 260 : 0, alignment: .trailing)
+                    // Clips only while hiding, so the appearance panel can float past the edge.
+                    .clipShape(Rectangle().inset(by: sidebarVisible ? -600 : 0))
+                    .opacity(sidebarVisible ? 1 : 0)
+                    .padding(.trailing, sidebarVisible ? 10 : 0)
+                    .allowsHitTesting(sidebarVisible)
+                    .accessibilityHidden(!sidebarVisible)
+                    .zIndex(1)
                 detail
                     .id(store.activeTab)
                     .transition(.opacity.combined(with: .offset(y: 6)))
@@ -42,6 +50,8 @@ struct MainSplitView: View {
         .animation(JB.snap, value: showPalette)
         .onReceive(NotificationCenter.default.publisher(for: .jbOpenPalette)) { _ in showPalette.toggle() }
         .onReceive(NotificationCenter.default.publisher(for: .jbToggleSidebar)) { _ in sidebarVisible.toggle() }
+        .onChange(of: store.selectedSessionID) { nav.close() }   // picking a chat leaves the agent
+        .task { nav.startPolling() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { note in
             if (note.object as? NSWindow)?.isMainWindow == true { isFullscreen = true }
         }
@@ -54,7 +64,11 @@ struct MainSplitView: View {
     private var detail: some View {
         switch store.activeTab {
         case .chat:
-            ChatView(sidebarVisible: $sidebarVisible)
+            if let id = nav.openID {
+                CodingAgentConversation(agentID: id, sidebarVisible: $sidebarVisible)
+            } else {
+                ChatView(sidebarVisible: $sidebarVisible)
+            }
         case .email:
             EmailPanel()
         case .calendar:

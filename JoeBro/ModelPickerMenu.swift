@@ -29,23 +29,37 @@ struct ModelMenuItems: View {
     }
 
     var body: some View {
-        ForEach(grouped, id: \.endpoint) { group in
-            Section(group.endpoint) {
-                ForEach(group.models) { model in
-                    Button {
-                        onPick(model)
-                    } label: {
-                        if selectedID == model.id {
-                            Label(model.displayWithTag, systemImage: "checkmark")
-                        } else {
-                            Text(model.displayWithTag)
+        if grouped.isEmpty {
+            Text("Add a local endpoint in Settings").font(.jb(13)).foregroundStyle(JB.ink2).padding(8)
+        } else {
+            // Scrolls past ~16 rows; grouped by provider/endpoint with a header each.
+            let rows = grouped.reduce(0) { $0 + $1.models.count + 1 }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 1) {
+                        ForEach(Array(grouped.enumerated()), id: \.element.endpoint) { i, group in
+                            Text(group.endpoint)
+                                .font(.jb(11, .semibold)).foregroundStyle(JB.ink3)
+                                .padding(.horizontal, 8).padding(.top, i == 0 ? 4 : 10).padding(.bottom, 3)
+                            ForEach(group.models) { model in
+                                Button { onPick(model) } label: {
+                                    HStack(spacing: 8) {
+                                        ProviderLogoView(model: model.modelID, size: 12).frame(width: 16)
+                                        Text(model.displayWithTag).font(.jb(13)).foregroundStyle(JB.ink)
+                                        Spacer(minLength: 16)
+                                        if selectedID == model.id {
+                                            Image(systemName: "checkmark").font(.jb(11, .semibold)).foregroundStyle(JB.accent)
+                                        }
+                                    }
+                                }
+                                .id(model.id)
+                            }
                         }
                     }
                 }
+                .frame(width: 300, height: min(CGFloat(rows) * 27 + 8, 460))
+                .onAppear { if let selectedID { proxy.scrollTo(selectedID, anchor: .center) } }
             }
-        }
-        if grouped.isEmpty {
-            Text("Add a local endpoint in Settings")
         }
     }
 }
@@ -60,7 +74,8 @@ struct ModelPickerMenu: View {
     private var current: ModelChoice? { selection ?? store.selectedModel }
 
     var body: some View {
-        Menu {
+        // Only the composer's picker answers /model (Deep Research passes its own selection).
+        JBMenu(openOn: selection == nil ? .jbOpenModelPicker : nil) {
             ModelMenuItems(models: store.models,
                            selectedID: current?.id,
                            onPick: { m in if let onPick { onPick(m) } else { store.pick(m) } })
