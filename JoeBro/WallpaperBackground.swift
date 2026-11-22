@@ -6,8 +6,11 @@ struct WallpaperBackground: View {
     @Environment(AppStore.self) private var store
     @Environment(GlassSettings.self) private var glass
     @Environment(\.colorScheme) private var scheme
+    private let look = JBAppearance.shared
     @State private var cachedImage: NSImage?
     @State private var cachedPath: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var windowActive = true
 
     private func image(for url: URL) -> NSImage? {
         // Decode once, not on every body evaluation — re-reading a 4K JPEG
@@ -24,7 +27,12 @@ struct WallpaperBackground: View {
     var body: some View {
         GeometryReader { geo in
             Group {
-                if let url = store.wallpaperURL, let img = image(for: url) {
+                if look.backdrop == .scene {
+                    SceneBackdrop(sceneID: look.sceneID,
+                                  paused: reduceMotion || !windowActive,
+                                  dark: scheme == .dark)
+                } else if look.backdrop == .photo || (look.backdrop == .palette && UserDefaults.standard.object(forKey: "jbBackdrop") == nil),
+                          let url = store.wallpaperURL, let img = image(for: url) {
                     Image(nsImage: img)
                         .resizable()
                         .scaledToFill()
@@ -36,6 +44,7 @@ struct WallpaperBackground: View {
                 }
             }
         }
+        .background(JBWindowActivityProbe { windowActive = $0 })
         .ignoresSafeArea()
     }
 }

@@ -1,5 +1,6 @@
 import EventKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @Environment(AppStore.self) private var store
@@ -9,6 +10,9 @@ struct SettingsView: View {
     @AppStorage("emailLoadCount") private var emailLoadCount = 0
     @State private var backendToken = BackendToken.load() ?? ""
     @State private var showWallpaperImporter = false
+    @State private var showVideoImporter = false
+    @State private var userBackdrops: [URL] = []
+    @State private var backdropNote: String?
     @State private var showEmailSheet = false
     @State private var showCalDAVSheet = false
     @State private var emailStatus: IntegrationStatus?
@@ -21,112 +25,69 @@ struct SettingsView: View {
         TabView {
             generalTab
                 .tabItem { Label("General", systemImage: "gearshape") }
-            ModelsSettingsTab()
-                .tabItem { Label("Models", systemImage: "cpu") }
             appearanceTab
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
-            MessageBotTab()
-                .tabItem { Label("Message Bot", systemImage: "paperplane") }
+            ModelsSettingsTab()
+                .tabItem { Label("Models & Keys", systemImage: "key") }
+            agentsTab
+                .tabItem { Label("Agents", systemImage: "bolt") }
             MobileSettingsTab()
                 .tabItem { Label("Mobile", systemImage: "iphone") }
+            integrationsTab
+                .tabItem { Label("Integrations", systemImage: "link") }
+            MessageBotTab()
+                .tabItem { Label("Message Bot", systemImage: "paperplane") }
+            advancedTab
+                .tabItem { Label("Advanced", systemImage: "slider.horizontal.3") }
         }
-        .frame(width: 620, height: 560)
+        .frame(width: 700, height: 580)
     }
 
+    // MARK: General
+
     private var generalTab: some View {
-        @Bindable var store = store
-        return Form {
+        Form {
             Section("Privacy") {
-                Toggle("Cloak Mode", isOn: $cloakMode)
+                Toggle("Cloak mode", isOn: $cloakMode)
                     .onChange(of: cloakMode) { _, v in
                         Task { await APIClient.shared.setPref("cloak_mode", value: v) }
                     }
-                Text("Scrubs secrets and personal data — API keys, passwords, emails, card, passport and account numbers — from everything sent to a model or search engine, swapping them for placeholders like [API KEY] before the request leaves the backend. Applies to every endpoint, local ones included.")
+                Text("Scrubs secrets and personal data before anything reaches a model or search engine.")
                     .font(.jbCaption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JB.ink3)
             }
-            Section("Email") {
-                if let sources = emailStatus?.sources, !sources.isEmpty {
-                    ForEach(sources) { source in
-                        HStack {
-                            Image(systemName: "envelope")
-                                .foregroundStyle(.secondary)
-                            Text(source.display ?? "Mailbox")
-                            Spacer()
-                            Button("Remove", role: .destructive) {
-                                Task {
-                                    try? await APIClient.shared.removeEmailSource(id: source.id)
-                                    await loadIntegrationStatus()
-                                }
-                            }
-                            .controlSize(.small)
-                        }
-                    }
-                } else {
-                    LabeledContent("Status", value: "Not connected")
-                }
-                Button("Add Email Account…") { showEmailSheet = true }
-                Picker("Emails to load", selection: $emailLoadCount) {
-                    Text("All").tag(0)
-                    Text("50").tag(50)
-                    Text("100").tag(100)
-                    Text("200").tag(200)
-                    Text("500").tag(500)
-                }
-                .pickerStyle(.menu)
-                Text("Mail stays local on this Mac. Connect any mailbox with its IMAP/SMTP settings (use an app-specific password for Gmail/iCloud).")
-                    .font(.jbCaption)
-                    .foregroundStyle(.secondary)
-            }
-            Section("Calendar") {
-                LabeledContent("Status", value: calendarStatusLabel)
+            Section("Updates") {
+                Toggle("Check automatically", isOn: Binding(
+                    get: { autoUpdate },
+                    set: { autoUpdate = $0; updater.automaticallyChecksForUpdates = $0 }
+                ))
                 HStack {
-                    Button("Connect CalDAV…") { showCalDAVSheet = true }
-                    Button {
-                        connectMacOSCalendar()
-                    } label: {
-                        if requestingCalendar { ProgressView().controlSize(.small) }
-                        else { Text("Connect macOS Calendar") }
-                    }
-                    .disabled(requestingCalendar)
-                    if calendarStatus?.configured == true {
-                        Button("Disconnect", role: .destructive) {
-                            Task { await disconnectCalendar() }
-                        }
-                    }
-                }
-                Text("macOS Calendar asks for full calendar permission so JoeBro can read, create, edit, and delete events locally.")
-                    .font(.jbCaption)
-                    .foregroundStyle(.secondary)
-            }
-            if let integrationError {
-                Section {
-                    Text(integrationError)
-                        .font(.jbCaption)
-                        .foregroundStyle(.red)
+                    Button("Check for updates…") { updater.checkForUpdates() }
+                        .disabled(!updater.canCheckForUpdates)
+                    Spacer()
+                    Text(appVersionString)
+                        .font(.jbMono(11))
+                        .foregroundStyle(JB.ink3)
                 }
             }
-            Section("Server") {
-                TextField("Server URL", text: $serverURL)
-                    .font(.jbMono(13))
-                SecureField("Backend bearer token (only for a remote backend)", text: $backendToken)
-                    .font(.jbMono(13))
-                    .onChange(of: backendToken) { _, v in BackendToken.save(v) }
-                Text("JoeBro runs a private local backend on this Mac. Model endpoints can still point at local or Tailscale devices.")
-                    .font(.jbCaption)
-                    .foregroundStyle(.secondary)
+        }
+        .formStyle(.grouped)
+        .task {
+            if let p = try? await APIClient.shared.getPrefs() {
+                cloakMode = p["cloak_mode"]?.boolValue ?? true
             }
-            Section("Phone access") {
-                Text("Pair an iPhone, set up push and tune the phone agent in the Mobile tab.")
-                    .font(.jbCaption)
-                    .foregroundStyle(.secondary)
-            }
+        }
+    }
+
+    // MARK: Agents
+
+    private var agentsTab: some View {
+        @Bindable var store = store
+        return Form {
             Section("Documents") {
                 Toggle("Require approval for AI edits", isOn: $store.requireDocApproval)
-                Text("When on, the AI's changes to an open document wait for your Apply/Reject — review them in the editor. When off, the AI edits the open document directly, whether you're editing it or just viewing it.")
-                    .font(.jbCaption)
-                    .foregroundStyle(.secondary)
-
+            }
+            Section("Tools") {
                 Toggle("Unlimited tool use", isOn: Binding(
                     get: { store.maxToolCalls == 0 },
                     set: { store.maxToolCalls = $0 ? 0 : 10 }
@@ -141,44 +102,78 @@ struct SettingsView: View {
                         ), format: .number)
                         .labelsHidden()
                         .multilineTextAlignment(.trailing)
-                        .textFieldStyle(.roundedBorder)
+                        .font(.jbMono(12))
                         .frame(width: 64)
                     }
                 }
-                Text("Caps how many tools the agent may call in a single turn before it must answer.")
-                    .font(.jbCaption)
-                    .foregroundStyle(.secondary)
-
                 Toggle("Ask before running commands", isOn: $store.askBeforeCommands)
-                Text("In Full Access mode, the AI must get your approval (Allow / Always allow this session / Deny) before each terminal command.")
-                    .font(.jbCaption)
-                    .foregroundStyle(.secondary)
-            }
-            Section("Updates") {
-                Toggle("Check for updates automatically", isOn: Binding(
-                    get: { autoUpdate },
-                    set: { autoUpdate = $0; updater.automaticallyChecksForUpdates = $0 }
-                ))
-                HStack {
-                    Button("Check for Updates…") { updater.checkForUpdates() }
-                        .disabled(!updater.canCheckForUpdates)
-                    Spacer()
-                    Text("Version \(appVersionString)")
-                        .font(.jbCaption)
-                        .foregroundStyle(.secondary)
-                }
-                Text("JoeBro checks GitHub for new releases and installs them in place. The first launch of an update may need the same right-click → Open as the original install.")
-                    .font(.jbCaption)
-                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
-        .task {
-            await loadIntegrationStatus()
-            if let p = try? await APIClient.shared.getPrefs() {
-                cloakMode = p["cloak_mode"]?.boolValue ?? true
+    }
+
+    // MARK: Integrations
+
+    private var integrationsTab: some View {
+        Form {
+            Section("Email") {
+                if let sources = emailStatus?.sources, !sources.isEmpty {
+                    ForEach(sources) { source in
+                        HStack {
+                            Image(systemName: "envelope")
+                                .foregroundStyle(JB.ink2)
+                            Text(source.display ?? "Mailbox")
+                            Spacer()
+                            Button("Remove", role: .destructive) {
+                                Task {
+                                    try? await APIClient.shared.removeEmailSource(id: source.id)
+                                    await loadIntegrationStatus()
+                                }
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                } else {
+                    LabeledContent("Status", value: "Not connected")
+                }
+                Button("Add email account…") { showEmailSheet = true }
+                Picker("Emails to load", selection: $emailLoadCount) {
+                    Text("All").tag(0)
+                    Text("50").tag(50)
+                    Text("100").tag(100)
+                    Text("200").tag(200)
+                    Text("500").tag(500)
+                }
+                .pickerStyle(.menu)
+            }
+            Section("Calendar") {
+                LabeledContent("Status", value: calendarStatusLabel)
+                HStack {
+                    Button("Connect CalDAV…") { showCalDAVSheet = true }
+                    Button {
+                        connectMacOSCalendar()
+                    } label: {
+                        if requestingCalendar { JBSpinner() }
+                        else { Text("Connect macOS Calendar") }
+                    }
+                    .disabled(requestingCalendar)
+                    if calendarStatus?.configured == true {
+                        Button("Disconnect", role: .destructive) {
+                            Task { await disconnectCalendar() }
+                        }
+                    }
+                }
+            }
+            if let integrationError {
+                Section {
+                    Text(integrationError)
+                        .font(.jbCaption)
+                        .foregroundStyle(JB.danger)
+                }
             }
         }
+        .formStyle(.grouped)
+        .task { await loadIntegrationStatus() }
         .sheet(isPresented: $showEmailSheet) {
             EmailConnectionSheet {
                 await loadIntegrationStatus()
@@ -191,6 +186,22 @@ struct SettingsView: View {
             }
         }
     }
+
+    // MARK: Advanced
+
+    private var advancedTab: some View {
+        Form {
+            Section("Server") {
+                TextField("Server URL", text: $serverURL)
+                    .font(.jbMono(12))
+                SecureField("Bearer token (remote backend only)", text: $backendToken)
+                    .font(.jbMono(12))
+                    .onChange(of: backendToken) { _, v in BackendToken.save(v) }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
 
     private var appVersionString: String {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
@@ -243,75 +254,119 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: Appearance
+
     private var appearanceTab: some View {
-        @Bindable var glass = GlassSettings.shared
+        @Bindable var look = JBAppearance.shared
         return Form {
-            let _ = glass.backgroundPreset   // observe preset changes
-            Section("Glass") {
-                Text("Glass opacity is tuned from the main window — the ◐ button next to the gear in the sidebar. (macOS renders glass differently while this Settings window has focus, so a slider here would lie to you.)")
-                    .font(.jbCaption)
-                    .foregroundStyle(.secondary)
-                Text("Swaps live Liquid Glass for a lighter frosted look. Smoother when switching Spaces or on older Macs, since the system won't re-render the glass every time the window gains or loses focus. (Also on automatically if macOS \u{201C}Reduce transparency\u{201D} is enabled.)")
-                    .font(.jbCaption)
-                    .foregroundStyle(.secondary)
+            Section("Palette") {
+                JBPaletteRow(selection: $look.palette)
             }
-            Section("Background") {
-                HStack(spacing: 12) {
-                    ForEach(BackgroundPreset.allCases) { preset in
-                        Button {
-                            withAnimation(.spring(duration: 0.25)) { glass.backgroundPreset = preset.rawValue }
-                        } label: {
-                            VStack(spacing: 5) {
-                                Circle()
-                                    .fill(LinearGradient(colors: preset.colors(dark: true),
-                                                         startPoint: .topLeading, endPoint: .bottomTrailing))
-                                    .frame(width: 34, height: 34)
-                                    .overlay(Circle().strokeBorder(
-                                        glass.backgroundPreset == preset.rawValue ? JB.accent : .clear,
-                                        lineWidth: 2.5))
-                                Text(preset.label)
-                                    .font(.jb(10))
-                                    .foregroundStyle(.secondary)
+            Section("Panels") {
+                HStack {
+                    Text("Opacity")
+                    Slider(value: $look.solidity, in: 0.35...1)
+                        .tint(JB.accent)
+                    Text("\(Int(look.solidity * 100))%")
+                        .font(.jbMono(11))
+                        .foregroundStyle(JB.ink3)
+                        .frame(width: 36, alignment: .trailing)
+                }
+            }
+            Section("Backdrop") {
+                Picker("Backdrop", selection: $look.backdrop) {
+                    Text("Palette").tag(JBBackdropKind.palette)
+                    Text("Photo").tag(JBBackdropKind.photo)
+                    Text("Animated").tag(JBBackdropKind.scene)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+
+                if look.backdrop == .photo {
+                    if let url = store.wallpaperURL, let img = NSImage(contentsOf: url) {
+                        Image(nsImage: img)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(height: 110)
+                            .clipShape(RoundedRectangle(cornerRadius: JB.rCard))
+                    }
+                    HStack {
+                        Button(store.wallpaperURL == nil ? "Choose image…" : "Change image…") {
+                            showWallpaperImporter = true
+                        }
+                        if store.wallpaperURL != nil {
+                            Button("Remove", role: .destructive) {
+                                store.clearWallpaper()
                             }
                         }
-                        .buttonStyle(.borderless)
                     }
                 }
-                Text("Used when no wallpaper is set — the glass panels refract whichever backdrop you pick.")
-                    .font(.jbCaption)
-                    .foregroundStyle(.secondary)
-            }
-            Section("Wallpaper") {
-                if let url = store.wallpaperURL, let img = NSImage(contentsOf: url) {
-                    Image(nsImage: img)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(height: 110)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                }
-                HStack {
-                    Button(store.wallpaperURL == nil ? "Choose Image…" : "Change Image…") {
-                        showWallpaperImporter = true
+                if look.backdrop == .scene {
+                    Picker("Scene", selection: $look.sceneID) {
+                        Text("None").tag("")
+                        if !userBackdrops.isEmpty {
+                            Section("Yours") {
+                                ForEach(userBackdrops, id: \.self) { u in
+                                    Text(u.deletingPathExtension().lastPathComponent).tag(u.absoluteString)
+                                }
+                            }
+                        }
+                        Section("ASCII scenes") {
+                            ForEach(JBBackdropLibrary.bundledScenes, id: \.self) { n in
+                                Text(JBBackdropLibrary.displayName(n).capitalized).tag(n)
+                            }
+                        }
                     }
-                    if store.wallpaperURL != nil {
-                        Button("Remove", role: .destructive) {
-                            store.clearWallpaper()
+                    HStack {
+                        Button("Add video…") { showVideoImporter = true }
+                        Button("Open backdrops folder") {
+                            NSWorkspace.shared.open(JBBackdropLibrary.folder)
+                        }
+                        Button("Rescan") { userBackdrops = JBBackdropLibrary.userBackdrops() }
+                    }
+                    HStack {
+                        Button("Install backdrop skill for agents") { installBackdropSkill() }
+                        if let backdropNote {
+                            Text(backdropNote)
+                                .font(.jbMono(11))
+                                .foregroundStyle(JB.ink3)
+                                .lineLimit(2)
                         }
                     }
                 }
-                Text("Panels render with liquid glass over the wallpaper.")
-                    .font(.jbCaption)
-                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
+        .onAppear { userBackdrops = JBBackdropLibrary.userBackdrops() }
         .fileImporter(isPresented: $showWallpaperImporter,
                       allowedContentTypes: [.image]) { result in
             if case .success(let url) = result {
                 let scoped = url.startAccessingSecurityScopedResource()
                 store.setWallpaper(from: url)
                 if scoped { url.stopAccessingSecurityScopedResource() }
+                JBAppearance.shared.backdrop = .photo
             }
+        }
+        .fileImporter(isPresented: $showVideoImporter,
+                      allowedContentTypes: [.mpeg4Movie, .quickTimeMovie]) { result in
+            if case .success(let url) = result {
+                do {
+                    let id = try JBBackdropLibrary.importVideo(url)
+                    userBackdrops = JBBackdropLibrary.userBackdrops()
+                    JBAppearance.shared.sceneID = id
+                } catch {
+                    backdropNote = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func installBackdropSkill() {
+        do {
+            let dests = try JBBackdropLibrary.installSkill()
+            backdropNote = "Installed to " + dests.joined(separator: ", ")
+        } catch {
+            backdropNote = error.localizedDescription
         }
     }
 }
@@ -352,7 +407,7 @@ struct ModelsSettingsTab: View {
                 }
                 Text("Used for compaction, calendar quick-add and other background AI jobs.")
                     .font(.jbCaption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JB.ink2)
             } header: {
                 Text("Defaults")
             }
@@ -364,7 +419,7 @@ struct ModelsSettingsTab: View {
                 case .loading:
                     ProgressView()
                 case .failed(let e):
-                    Text(e).foregroundStyle(.red).font(.jbCaption)
+                    Text(e).foregroundStyle(JB.danger).font(.jbCaption)
                 case .loaded(let list):
                     appleRow
                     ForEach(list) { ep in
@@ -377,7 +432,7 @@ struct ModelsSettingsTab: View {
                     Label("Add Endpoint…", systemImage: "plus")
                 }
                 if let error {
-                    Text(error).font(.jbCaption).foregroundStyle(.red)
+                    Text(error).font(.jbCaption).foregroundStyle(JB.danger)
                 }
             } header: {
                 Text("Endpoints & API Keys")
@@ -417,7 +472,7 @@ struct ModelsSettingsTab: View {
             ))
             Text("Subagents are helpers the main agent spawns for side tasks. When the switch is on, the agent picks a model for each one and the fixed model above is not used.")
                 .font(.jbCaption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(JB.ink2)
         } header: {
             Text("Subagents")
         }
@@ -499,7 +554,7 @@ struct ModelsSettingsTab: View {
         )) {
             if let models = epModels[ep.id] {
                 if models.isEmpty {
-                    Text("No models discovered").font(.jbCaption).foregroundStyle(.secondary)
+                    Text("No models discovered").font(.jbCaption).foregroundStyle(JB.ink2)
                 } else {
                     HStack {
                         Button("Select all") { setAll(epID: ep.id, visible: true) }
@@ -618,7 +673,7 @@ struct AddEndpointSheet: View {
                     .font(.jbMono(12))
                 SecureField("API key (optional for local)", text: $apiKey)
                 if let error {
-                    Text(error).font(.jbCaption).foregroundStyle(.red)
+                    Text(error).font(.jbCaption).foregroundStyle(JB.danger)
                 }
             }
             .formStyle(.grouped)
@@ -683,9 +738,9 @@ struct EmailConnectionSheet: View {
             }
             Text("Uses SSL by default (IMAP 993 / SMTP 465). For Gmail/iCloud, create an app-specific password. Mail stays local on this Mac.")
                 .font(.jbCaption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(JB.ink2)
             if let error {
-                Text(error).font(.jbCaption).foregroundStyle(.red)
+                Text(error).font(.jbCaption).foregroundStyle(JB.danger)
             }
         }
     }
@@ -732,8 +787,8 @@ struct CalDAVConnectionSheet: View {
             SecureField("Password", text: $password)
             Text("Calendar data remains local to this Mac; this stores the CalDAV source for the local backend.")
                 .font(.jbCaption)
-                .foregroundStyle(.secondary)
-            if let error { Text(error).font(.jbCaption).foregroundStyle(.red) }
+                .foregroundStyle(JB.ink2)
+            if let error { Text(error).font(.jbCaption).foregroundStyle(JB.danger) }
         }
     }
 

@@ -125,6 +125,21 @@ struct JoeBroApp: App {
                 Button("New Chat") { store.newChat() }
                     .keyboardShortcut("n", modifiers: .command)
             }
+            CommandMenu("Go") {
+                Button("Command Palette") {
+                    NotificationCenter.default.post(name: .jbOpenPalette, object: nil)
+                }
+                .keyboardShortcut("k", modifiers: .command)
+                Button("Toggle Sidebar") {
+                    NotificationCenter.default.post(name: .jbToggleSidebar, object: nil)
+                }
+                .keyboardShortcut("\\", modifiers: .command)
+                Divider()
+                ForEach(Array(JBPanelOrder.jumpTabs.enumerated()), id: \.element) { idx, tab in
+                    Button(tab.title) { store.activeTab = tab }
+                        .keyboardShortcut(KeyEquivalent(Character("\(idx + 1)")), modifiers: .command)
+                }
+            }
         }
 
         Settings {

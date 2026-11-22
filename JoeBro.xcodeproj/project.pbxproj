@@ -8,11 +8,15 @@
 
 /* Begin PBXBuildFile section */
 		AA00001000000000000000B0 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = AA00001100000000000000B1 /* Sparkle */; };
+		AA00002000000000000000C1 /* AsciiScenes in Resources */ = {isa = PBXBuildFile; fileRef = AA00002100000000000000C2 /* AsciiScenes */; };
+		AA00002200000000000000C3 /* BackdropSkill in Resources */ = {isa = PBXBuildFile; fileRef = AA00002300000000000000C4 /* BackdropSkill */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		AA00000400000000000000A4 /* JoeBro.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = JoeBro.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA00001900000000000000B9 /* Personal.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Personal.xcconfig; sourceTree = "<group>"; };
+		AA00002100000000000000C2 /* AsciiScenes */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources/AsciiScenes; sourceTree = "<group>"; };
+		AA00002300000000000000C4 /* BackdropSkill */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources/BackdropSkill; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -40,6 +44,8 @@
 			children = (
 				AA00000100000000000000A1 /* JoeBro */,
 				AA00001900000000000000B9 /* Personal.xcconfig */,
+				AA00002100000000000000C2 /* AsciiScenes */,
+				AA00002300000000000000C4 /* BackdropSkill */,
 				AA00000300000000000000A3 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -120,6 +126,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AA00002000000000000000C1 /* AsciiScenes in Resources */,
+				AA00002200000000000000C3 /* BackdropSkill in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

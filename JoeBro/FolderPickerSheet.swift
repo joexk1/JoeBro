@@ -21,7 +21,7 @@ struct FolderPickerSheet: View {
                 Button {
                     bind()
                 } label: {
-                    if binding { ProgressView().controlSize(.small) }
+                    if binding { JBSpinner() }
                     else { Text("Bind Folder") }
                 }
                 .buttonStyle(.jbPrimary)
@@ -37,7 +37,7 @@ struct FolderPickerSheet: View {
                     .foregroundStyle(JB.accent)
                 Text(selectedURL?.path ?? "Choose a local project folder")
                     .font(selectedURL == nil ? .jb(12) : .jbMono(12))
-                    .foregroundStyle(selectedURL == nil ? .secondary : .primary)
+                    .foregroundStyle(selectedURL == nil ? JB.ink2 : JB.ink)
                     .multilineTextAlignment(.center)
                     .lineLimit(4)
                     .frame(maxWidth: .infinity)
@@ -50,13 +50,13 @@ struct FolderPickerSheet: View {
                 .tint(JB.accent)
                 Text("JoeBro reads and writes this folder directly with the access you just granted — nothing leaves your Mac.")
                     .font(.jbCaption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JB.ink2)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 360)
                 if let error {
                     Text(error)
                         .font(.jbCaption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(JB.danger)
                 }
             }
             .padding(28)

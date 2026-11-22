@@ -1,35 +1,61 @@
 import SwiftUI
 import WebKit
 
-/// Shared chrome for workspace panels: glass header capsule + content area.
+/// Renders an SF symbol name, swapping Apple-identifiable ones for JoeBro glyphs.
+struct JBSymbol: View {
+    let name: String
+    var size: CGFloat = 14
+    private static let glyphs: [String: JBGlyph] = [
+        "sparkles": .spark, "wand.and.stars": .spark, "sparkle": .spark,
+        "brain": .memory, "brain.head.profile": .memory,
+        "moon.zzz": .nightShift, "moon.stars": .nightShift,
+        "graduationcap": .skills, "hammer": .tools, "wrench.and.screwdriver": .tools,
+        "terminal": .coding, "puzzlepiece": .plugin, "puzzlepiece.extension": .plugin,
+        "checklist": .tasks, "clock.badge.checkmark": .tasks,
+        "person.3.sequence": .agent, "person.crop.circle": .agent,
+        "antenna.radiowaves.left.and.right": .research, "sparkle.magnifyingglass": .research,
+    ]
+    var body: some View {
+        if let g = Self.glyphs[name] {
+            JBIcon(g, size: size)
+        } else {
+            Image(systemName: name).font(.jb(size - 1))
+        }
+    }
+}
+
+/// Shared chrome for workspace panels: flat header (icon, title, actions), a hairline, then content.
 struct PanelChrome<Actions: View, Content: View>: View {
     let title: String
     let icon: String
     @ViewBuilder var actions: Actions
     @ViewBuilder var content: Content
-    // Rebuild the header (icon + glass) when the system flips light/dark, so the
-    // top-bar SF icon and glass don't keep the appearance they launched in.
-    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .foregroundStyle(JB.accent)
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                JBSymbol(name: icon, size: 15)
+                    .foregroundStyle(JB.ink2)
                 Text(title)
-                    .font(.jb(14, .semibold))
-                Spacer()
-                actions
+                    .font(.jb(15, .semibold))
+                    .tracking(-0.2)
+                    .foregroundStyle(JB.ink)
+                Spacer(minLength: 8)
+                actions.tint(JB.ink2)
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .joeGlassCapsule()
-            .id(colorScheme)
-
+            .frame(height: 44)
+            Rectangle().fill(JB.line).frame(height: 1)
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .jbSurface(.panel, radius: JB.rPanel)
     }
+}
+
+private func jbHex(_ c: Color) -> String {
+    let n = NSColor(c).usingColorSpace(.sRGB) ?? .gray
+    return String(format: "#%02X%02X%02X", Int(n.redComponent * 255), Int(n.greenComponent * 255), Int(n.blueComponent * 255))
 }
 
 /// Renders an HTML email body using the system web engine.
@@ -47,10 +73,14 @@ struct HTMLView: NSViewRepresentable {
         let wrapped = """
         <html><head><meta charset="utf-8">
         <style>
-          :root { color-scheme: light dark; }
-          body { font-family: -apple-system, sans-serif; font-size: 14px;
-                 margin: 12px; word-wrap: break-word; }
+          :root { color-scheme: light dark; --ink:#151515; --ink2:#66655F; --line:#E3E1DC; }
+          @media (prefers-color-scheme: dark) { :root { --ink:#EDEDEC; --ink2:#9A9A9F; --line:#252528; } }
+          body { font-family: -apple-system, "Helvetica Neue", sans-serif; font-size: 14px; line-height: 1.5;
+                 color: var(--ink); margin: 12px; word-wrap: break-word; }
+          a { color: \(jbHex(JB.accent)); }
+          blockquote { border-left: 2px solid var(--line); margin-left: 0; padding-left: 12px; color: var(--ink2); }
           img { max-width: 100%; height: auto; }
+          pre, code { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
           pre { white-space: pre-wrap; }
         </style></head><body>\(html)</body></html>
         """
@@ -183,9 +213,8 @@ struct JBPaletteRow: View {
     }
 }
 
-/// A "describe a new X…" input capsule that owns its OWN text state, so typing
-/// re-renders only this little bar — not the parent panel and its (glassy) list,
-/// which was causing keystroke lag in Tasks / Skills / Calendar / Brain.
+/// A "describe a new X…" input that owns its OWN text state, so typing
+/// re-renders only this bar and not the parent panel's list.
 struct QuickAddBar: View {
     let placeholder: String
     var actionIcon = "sparkles"
@@ -193,29 +222,38 @@ struct QuickAddBar: View {
     var errorText: String? = nil
     let onSubmit: (String) -> Void
     @State private var text = ""
+    @FocusState private var focused: Bool
+
+    private var ready: Bool { !text.trimmingCharacters(in: .whitespaces).isEmpty }
 
     var body: some View {
         HStack(spacing: 8) {
             TextField(placeholder, text: $text)
                 .textFieldStyle(.plain)
                 .font(.jb(13))
+                .focused($focused)
                 .onSubmit(fire)
                 .disabled(busy)
             if busy {
-                ProgressView().controlSize(.small)
+                JBSpinner()
             } else if let errorText {
-                Text(errorText).font(.jbCaption).foregroundStyle(.red).lineLimit(1)
+                Text(errorText).font(.jbCaption).foregroundStyle(JB.danger).lineLimit(1)
             } else {
+                if focused && ready { JBKbd("↩") }
                 Button(action: fire) {
-                    Image(systemName: actionIcon).foregroundStyle(JB.accent)
+                    JBSymbol(name: actionIcon, size: 14)
                 }
-                .buttonStyle(.borderless)
-                .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+                .buttonStyle(JBIconButtonStyle(size: 24, active: ready))
+                .disabled(!ready)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .joeGlassCapsuleInteractive()
+        .padding(.leading, 12)
+        .padding(.trailing, 6)
+        .padding(.vertical, 5)
+        .background(RoundedRectangle(cornerRadius: JB.rControl, style: .continuous).fill(JB.raised))
+        .overlay(RoundedRectangle(cornerRadius: JB.rControl, style: .continuous)
+            .strokeBorder(focused ? JB.accent.opacity(0.7) : JB.line, lineWidth: 1))
+        .animation(JB.fade, value: focused)
     }
 
     private func fire() {
@@ -226,9 +264,8 @@ struct QuickAddBar: View {
     }
 }
 
-/// Panel-header search: a magnifying-glass button that expands into an inline
-/// search field in place, and collapses + clears on the x. Shared by Skills,
-/// Brain, and Tasks so the affordance is identical everywhere.
+/// Panel-header search: a magnifier button that expands into an inline field
+/// in place, and collapses + clears on the x.
 struct PanelSearchField: View {
     @Binding var text: String
     @Binding var open: Bool
@@ -240,40 +277,41 @@ struct PanelSearchField: View {
             if open {
                 Image(systemName: "magnifyingglass")
                     .font(.jb(11))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JB.ink3)
                 TextField(placeholder, text: $text)
                     .textFieldStyle(.plain)
                     .font(.jb(12))
                     .frame(width: 150)
                     .focused($focused)
+                    .onExitCommand { withAnimation(JB.snap) { text = ""; open = false } }
                 Button {
-                    withAnimation(.spring(duration: 0.25)) { text = ""; open = false }
+                    withAnimation(JB.snap) { text = ""; open = false }
                 } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.jb(11))
-                        .foregroundStyle(.secondary)
+                    Image(systemName: "xmark")
+                        .font(.jb(10, .medium))
+                        .foregroundStyle(JB.ink3)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
             } else {
                 Button {
-                    withAnimation(.spring(duration: 0.25)) { open = true }
+                    withAnimation(JB.snap) { open = true }
                 } label: {
                     Image(systemName: "magnifyingglass")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(JBIconButtonStyle())
                 .help("Search")
             }
         }
         .padding(.horizontal, open ? 10 : 0)
         .padding(.vertical, open ? 5 : 0)
-        .background(open ? AnyShapeStyle(.quaternary.opacity(0.5)) : AnyShapeStyle(.clear), in: Capsule())
+        .background(open ? AnyShapeStyle(JB.raised) : AnyShapeStyle(.clear), in: RoundedRectangle(cornerRadius: JB.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: JB.rControl, style: .continuous)
+            .strokeBorder(open ? (focused ? JB.accent.opacity(0.7) : JB.line) : .clear, lineWidth: 1))
         .onChange(of: open) { _, isOpen in if isOpen { focused = true } }
     }
 }
 
-
-/// The "N selected · All/None · 🗑 · ✕" strip every list panel shows once you
-/// tick a row. Was copy-pasted into four panels; only `onDelete` ever differed.
+/// The "N selected · All/None · delete · close" strip every list panel shows once you tick a row.
 struct SelectionBar: View {
     let total: Int
     let allIDs: [String]
@@ -283,43 +321,43 @@ struct SelectionBar: View {
     var body: some View {
         HStack(spacing: 10) {
             Text("\(selection.count) selected")
-                .font(.jb(11, .semibold))
+                .font(.jbMono(11, .medium))
+                .foregroundStyle(JB.ink)
             Button(selection.count == total ? "None" : "All") {
-                withAnimation(.spring(duration: 0.25)) {
+                withAnimation(JB.snap) {
                     selection = selection.count == total ? [] : Set(allIDs)
                 }
             }
-            .buttonStyle(.borderless)
-            .font(.jb(11))
+            .buttonStyle(.jbGhost)
             Spacer()
             Button {
                 let ids = selection
                 selection = []          // clear first: the rows are about to go
                 onDelete(Array(ids))
             } label: {
-                Image(systemName: "trash").font(.jb(12))
+                Image(systemName: "trash")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(JBIconButtonStyle())
             .help("Delete selected")
             Button {
-                withAnimation(.spring(duration: 0.25)) { selection = [] }
+                withAnimation(JB.snap) { selection = [] }
             } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.jb(12))
-                    .foregroundStyle(.secondary)
+                Image(systemName: "xmark")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(JBIconButtonStyle())
+            .help("Clear selection")
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(JB.accent.opacity(0.10))
+        .padding(.vertical, 5)
+        .background(JB.accentSoft)
+        .overlay(alignment: .bottom) { Rectangle().fill(JB.line).frame(height: 1) }
         .transition(.move(edge: .top).combined(with: .opacity))
     }
 }
 
 /// Tick/untick one row in a panel's selection set.
 func toggleSelection(_ id: String, in selection: inout Set<String>) {
-    withAnimation(.spring(duration: 0.2)) {
+    withAnimation(JB.snap) {
         if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
     }
 }
