@@ -265,9 +265,20 @@ class CodingAgentsMixin:
         node = next(n for n in self.coding_nodes() if n["id"] == aid)
         rec["result"] = "\n".join(node["detail"])
         rec["child_agents"] = [r for r in self.coding_agent_records() if r["parent_id"] == aid]
-        rec["messages"] = [{"role": "user" if line.startswith("›") else "assistant", "content": line,
-                            "created_at": node["last_activity"]} for line in node["detail"]]
+        rec["messages"] = [self._detail_message(line, node["last_activity"]) for line in node["detail"]]
+        rec["waiting"] = bool(node["waiting"])
+        rec["can_send"] = node["status"] != "ended"
+        pending = next((d[2:] for d in reversed(node["detail"]) if d.startswith("⏸")), "") if node["waiting"] else ""
+        rec["pending_approval"] = pending or ("needs your approval" if node["waiting"] else "")
         return rec
+
+    @staticmethod
+    def _detail_message(line, when):
+        """One hook-reported line as a chat message: user prompt, assistant reply, approval request or tool call."""
+        mark = line[:1]
+        role = {"›": "user", "✓": "assistant", "⏸": "approval"}.get(mark, "tool")
+        content = line[2:] if role != "tool" else line
+        return {"role": role, "content": content, "created_at": when}
 
     def coding_agents_tool(self, body):
         args = self.parse_tool_args(body) if isinstance(body, str) else (body or {})
