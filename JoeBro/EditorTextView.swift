@@ -9,6 +9,27 @@ final class EditorCommands {
     func italic() { textView?.toggleWrap("*") }
     func bullet() { textView?.prefixLines("- ") }
     func numbered() { textView?.prefixLines(numbered: true) }
+
+    /// Called with the UTF-16 offset of the first visible character as the editor scrolls.
+    var onTopOffset: ((Int) -> Void)?
+
+    /// Scrolls so the line at `offset` sits at the top, and parks the caret there.
+    func scroll(toOffset offset: Int) {
+        guard let tv = textView, let lm = tv.layoutManager, let tc = tv.textContainer,
+              let clip = tv.enclosingScrollView?.contentView else { return }
+        let len = (tv.string as NSString).length
+        let loc = min(max(0, offset), len)
+        let glyph = lm.glyphIndexForCharacter(at: min(loc, max(len - 1, 0)))
+        let rect = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        _ = tc
+        let y = max(0, rect.minY + tv.textContainerInset.height - 12)
+        tv.setSelectedRange(NSRange(location: loc, length: 0))
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.25
+            clip.animator().setBoundsOrigin(NSPoint(x: 0, y: y))
+        }
+        tv.enclosingScrollView?.reflectScrolledClipView(clip)
+    }
 }
 
 /// NSTextView-backed editor: native find bar (⌘F), line-number gutter,
@@ -44,9 +65,10 @@ struct EditorTextView: NSViewRepresentable {
         tv.isIncrementalSearchingEnabled = true
         tv.drawsBackground = false
         scroll.drawsBackground = false
-        tv.textColor = .textColor
-        tv.insertionPointColor = .textColor
-        tv.textContainerInset = NSSize(width: 8, height: 10)
+        tv.textColor = NSColor(JB.ink)
+        tv.insertionPointColor = NSColor(JB.accent)
+        tv.selectedTextAttributes = [.backgroundColor: NSColor(JB.accent).withAlphaComponent(0.22)]
+        tv.textContainerInset = monospaced ? NSSize(width: 8, height: 10) : NSSize(width: 18, height: 14)
         tv.isAutomaticQuoteSubstitutionEnabled = false
         tv.isAutomaticDashSubstitutionEnabled = false
         tv.isAutomaticTextReplacementEnabled = false
@@ -65,6 +87,8 @@ struct EditorTextView: NSViewRepresentable {
         applyFont(tv)
         tv.string = text
         commands?.textView = tv
+        scroll.contentView.postsBoundsChangedNotifications = true
+        context.coordinator.observe(scroll, tv)
         return scroll
     }
 
@@ -76,6 +100,7 @@ struct EditorTextView: NSViewRepresentable {
         // ruled lines from a code tab used to persist onto markdown docs.
         if tv.ruledLines != monospaced || (monospaced && tv.gutterWidth == 0) {
             tv.ruledLines = monospaced
+            tv.textContainerInset = monospaced ? NSSize(width: 8, height: 10) : NSSize(width: 18, height: 14)
             tv.gutterWidth = monospaced ? 46 : 0
             tv.textContainer?.exclusionPaths = monospaced
                 ? [NSBezierPath(rect: NSRect(x: 0, y: 0, width: 46, height: 50_000_000))]
@@ -94,16 +119,41 @@ struct EditorTextView: NSViewRepresentable {
     }
 
     private func applyFont(_ tv: NSTextView) {
-        tv.font = monospaced
-            ? NSFont.monospacedSystemFont(ofSize: 12.5, weight: .regular)
-            : NSFont.systemFont(ofSize: 13)
+        let font = monospaced ? JBFonts.nsFont(12.5, mono: true) : JBFonts.nsFont(14)
+        if tv.font != font { tv.font = font }
+        if !monospaced {
+            let p = NSMutableParagraphStyle()
+            p.lineSpacing = 4
+            p.paragraphSpacing = 3
+            tv.defaultParagraphStyle = p
+            tv.typingAttributes[.paragraphStyle] = p
+            if let st = tv.textStorage, st.length > 0, st.attribute(.paragraphStyle, at: 0, effectiveRange: nil) == nil {
+                st.addAttribute(.paragraphStyle, value: p, range: NSRange(location: 0, length: st.length))
+            }
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: EditorTextView
+        private var token: NSObjectProtocol?
         init(_ parent: EditorTextView) { self.parent = parent }
+        deinit { if let token { NotificationCenter.default.removeObserver(token) } }
+
+        func observe(_ scroll: NSScrollView, _ tv: JBTextView) {
+            token = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main
+            ) { [weak self, weak tv] _ in
+                guard let self, let tv, let cb = self.parent.commands?.onTopOffset else { return }
+                let top = tv.visibleRect.minY + 24
+                cb(tv.characterIndexForInsertion(at: NSPoint(x: tv.textContainerInset.width + 20, y: top)))
+            }
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            (notification.object as? NSTextView)?.needsDisplay = true
+        }
 
         func textDidChange(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
@@ -657,33 +707,40 @@ final class JBTextView: NSTextView {
         return nil
     }
 
-    /// In-view gutter: line numbers, full-height margin line, and
-    /// ruled-paper hairlines — all in plain view drawing, no NSRulerView.
+    /// In-view gutter: line numbers, margin hairline and a quiet current-line
+    /// highlight, all in plain view drawing (no NSRulerView).
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
-        guard gutterWidth > 0 || ruledLines,
-              let layout = layoutManager, let container = textContainer else { return }
+        guard let layout = layoutManager, let container = textContainer else { return }
         let drawRect = rect.intersection(visibleRect)
         guard !drawRect.isEmpty else { return }
-
-        // Margin line — full visible height
-        if gutterWidth > 0 {
-            NSColor.separatorColor.withAlphaComponent(0.35).setStroke()
-            let margin = NSBezierPath()
-            margin.move(to: NSPoint(x: gutterWidth - 0.5, y: drawRect.minY))
-            margin.line(to: NSPoint(x: gutterWidth - 0.5, y: drawRect.maxY))
-            margin.lineWidth = 1
-            margin.stroke()
-        }
-
-        let glyphs = layout.glyphRange(forBoundingRect: drawRect, in: container)
         let chars = string as NSString
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular),
-            .foregroundColor: NSColor.secondaryLabelColor,
-        ]
+        let caret = selectedRange()
 
-        // Line number of the first visible glyph
+        // Current line
+        if caret.length == 0, window?.firstResponder === self {
+            let loc = min(caret.location, max(chars.length - 1, 0))
+            if chars.length > 0 {
+                let g = layout.glyphIndexForCharacter(at: loc)
+                var r = layout.lineFragmentRect(forGlyphAt: g, effectiveRange: nil)
+                if caret.location == chars.length, string.hasSuffix("\n") { r = layout.extraLineFragmentRect }
+                r.origin.y += textContainerInset.height
+                r.origin.x = gutterWidth
+                r.size.width = bounds.width - gutterWidth
+                NSColor(JB.ink).withAlphaComponent(0.035).setFill()
+                r.fill()
+            }
+        }
+        guard gutterWidth > 0 else { return }
+
+        NSColor(JB.line).setFill()
+        NSRect(x: gutterWidth - 1, y: drawRect.minY, width: 1, height: drawRect.height).fill()
+
+        let font = JBFonts.nsFont(10, mono: true)
+        let dim: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor(JB.ink3)]
+        let hot: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor(JB.accent)]
+        let glyphs = layout.glyphRange(forBoundingRect: drawRect, in: container)
+
         var lineNumber = 1
         var idx = 0
         let firstChar = layout.characterIndexForGlyph(at: glyphs.location)
@@ -691,6 +748,7 @@ final class JBTextView: NSTextView {
             idx = NSMaxRange(chars.lineRange(for: NSRange(location: idx, length: 0)))
             lineNumber += 1
         }
+        let caretLine = chars.lineRange(for: NSRange(location: min(caret.location, chars.length), length: 0))
 
         var glyphIdx = glyphs.location
         while glyphIdx < NSMaxRange(glyphs) {
@@ -699,21 +757,10 @@ final class JBTextView: NSTextView {
             let lineGlyphRange = layout.glyphRange(forCharacterRange: lineRange, actualCharacterRange: nil)
             let lineRect = layout.boundingRect(forGlyphRange: lineGlyphRange, in: container)
             let topY = lineRect.minY + textContainerInset.height
-
-            if gutterWidth > 0 {
-                let label = "\(lineNumber)" as NSString
-                let size = label.size(withAttributes: attrs)
-                label.draw(at: NSPoint(x: gutterWidth - size.width - 10, y: topY + 1), withAttributes: attrs)
-            }
-            if ruledLines {
-                NSColor.separatorColor.withAlphaComponent(0.16).setStroke()
-                let y = (lineRect.maxY + textContainerInset.height - 0.5).rounded() + 0.5
-                let line = NSBezierPath()
-                line.move(to: NSPoint(x: max(drawRect.minX, gutterWidth), y: y))
-                line.line(to: NSPoint(x: drawRect.maxX, y: y))
-                line.lineWidth = 0.5
-                line.stroke()
-            }
+            let label = "\(lineNumber)" as NSString
+            let attrs = lineRange.location == caretLine.location ? hot : dim
+            let size = label.size(withAttributes: attrs)
+            label.draw(at: NSPoint(x: gutterWidth - size.width - 10, y: topY + 1.5), withAttributes: attrs)
             glyphIdx = NSMaxRange(lineGlyphRange)
             lineNumber += 1
         }
