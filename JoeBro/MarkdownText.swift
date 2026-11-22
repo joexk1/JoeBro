@@ -121,15 +121,58 @@ func inlineMarkdown(_ s: String) -> AttributedString {
     var opts = AttributedString.MarkdownParsingOptions()
     opts.interpretedSyntax = .inlineOnlyPreservingWhitespace
     var attr = (try? AttributedString(markdown: s, options: opts)) ?? AttributedString(s)
-    // Style inline code spans
-    for run in attr.runs where run.inlinePresentationIntent == .code {
-        attr[run.range].font = .system(.body, design: .monospaced)
-        attr[run.range].backgroundColor = Color.primary.opacity(0.08)
+    let accent = JB.accent
+    for run in attr.runs {
+        if run.inlinePresentationIntent?.contains(.code) == true {
+            attr[run.range].font = .jbMono(12.5)
+            attr[run.range].backgroundColor = JB.raised
+        }
+        if run.link != nil {
+            attr[run.range].foregroundColor = accent
+        }
     }
     return attr
 }
 
 private func inline(_ s: String) -> AttributedString { inlineMarkdown(s) }
+
+// MARK: - Outline
+
+struct MDHeading: Identifiable, Equatable {
+    let id: Int          // ordinal among headings
+    let level: Int
+    let title: String
+    let offset: Int      // UTF-16 offset of the heading line in the source
+}
+
+/// Headings of a markdown source, skipping fenced code. Matches `parseBlocks`.
+func markdownOutline(_ source: String) -> [MDHeading] {
+    var out: [MDHeading] = []
+    var inFence = false
+    var offset = 0
+    source.enumerateLines { line, _ in
+        defer { offset += line.utf16.count + 1 }
+        let t = line.trimmingCharacters(in: .whitespaces)
+        if t.hasPrefix("```") { inFence.toggle(); return }
+        guard !inFence, t.hasPrefix("#") else { return }
+        let level = t.prefix(while: { $0 == "#" }).count
+        guard level <= 6, t.count > level,
+              t[t.index(t.startIndex, offsetBy: level)] == " " else { return }
+        let title = String(t.dropFirst(level + 1)).trimmingCharacters(in: .whitespaces)
+        out.append(MDHeading(id: out.count, level: level, title: title, offset: offset))
+    }
+    return out
+}
+
+/// Words and a reading-time estimate, in one quiet mono line.
+func markdownStats(_ source: String) -> String {
+    var words = 0
+    source.enumerateSubstrings(in: source.startIndex..., options: [.byWords, .substringNotRequired]) { _, _, _, _ in words += 1 }
+    let mins = max(1, Int((Double(words) / 220).rounded()))
+    return "\(words) words · \(mins) min"
+}
+
+func markdownHeadingID(_ n: Int) -> String { "mdh-\(n)" }
 
 // MARK: - View
 
@@ -138,19 +181,35 @@ struct MarkdownText: View {
     // with positional ids — a fresh-UUID-per-access id here previously
     // forced SwiftUI to tear down every block on every stream tick.
     private let blocks: [MDBlock]
+    private let headingOrdinal: [Int: Int]
+    private let document: Bool
 
-    init(text: String) {
-        self.blocks = parseBlocks(text)
+    /// `document` switches to the larger long-form type scale (editor preview).
+    init(text: String, document: Bool = false) {
+        let b = parseBlocks(text)
+        self.blocks = b
+        self.document = document
+        var map: [Int: Int] = [:]
+        for (i, blk) in b.enumerated() { if case .heading = blk { map[i] = map.count } }
+        self.headingOrdinal = map
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                blockView(block)
+        VStack(alignment: .leading, spacing: document ? 14 : 10) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { i, block in
+                if let n = headingOrdinal[i] {
+                    blockView(block).id(markdownHeadingID(n))
+                } else {
+                    blockView(block)
+                }
             }
         }
+        .font(document ? .jb(15) : nil)
+        .tint(JB.accent)
         .textSelection(.enabled)
     }
+
+    private var lineGap: CGFloat { document ? 5 : 3 }
 
     @ViewBuilder
     private func blockView(_ block: MDBlock) -> some View {
@@ -158,44 +217,39 @@ struct MarkdownText: View {
         case .heading(let level, let s):
             Text(inline(s))
                 .font(headingFont(level))
-                .padding(.top, level <= 2 ? 6 : 2)
+                .tracking(level <= 2 ? -0.4 : (level == 3 ? -0.2 : 0))
+                .foregroundStyle(JB.ink)
+                .padding(.top, level <= 2 ? (document ? 12 : 6) : 3)
         case .paragraph(let s):
             Text(inline(s))
-                .lineSpacing(3)
+                .lineSpacing(lineGap)
         case .code(let lang, let body):
             CodeBlockView(language: lang, code: body)
         case .listItem(let indent, let marker, let s):
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(marker.hasSuffix(".") ? marker : "•")
-                    .foregroundStyle(.secondary)
-                    .frame(minWidth: 14, alignment: .trailing)
-                Text(inline(s)).lineSpacing(3)
-            }
-            .padding(.leading, CGFloat(indent) * 18)
+            listRow(indent: indent, marker: marker, text: s)
         case .quote(let s):
-            HStack(spacing: 10) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(JB.accent.opacity(0.6))
-                    .frame(width: 3)
+            HStack(spacing: 12) {
+                Rectangle().fill(JB.accent).frame(width: 2)
                 Text(inline(s))
-                    .foregroundStyle(.secondary)
+                    .lineSpacing(lineGap)
+                    .foregroundStyle(JB.ink2)
             }
             .fixedSize(horizontal: false, vertical: true)
         case .rule:
-            Divider()
+            Rectangle().fill(JB.line).frame(height: 1).padding(.vertical, 4)
         case .image(let url):
             AsyncImage(url: URL(string: url)) { phase in
                 switch phase {
                 case .success(let img):
                     img.resizable().scaledToFit()
                         .frame(maxWidth: .infinity, maxHeight: 300, alignment: .center)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .clipShape(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous))
                 case .failure:
                     EmptyView()   // best-effort: a dead image link just disappears
                 case .empty:
-                    RoundedRectangle(cornerRadius: 12).fill(.quaternary.opacity(0.3))
+                    RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).fill(JB.raised)
                         .frame(height: 160)
-                        .overlay(ProgressView().controlSize(.small))
+                        .overlay(JBSpinner())
                 @unknown default:
                     EmptyView()
                 }
@@ -206,33 +260,83 @@ struct MarkdownText: View {
         }
     }
 
-    private func headingFont(_ level: Int) -> Font {
-        switch level {
-        case 1: return .system(.title, design: .rounded, weight: .bold)
-        case 2: return .system(.title2, design: .rounded, weight: .bold)
-        case 3: return .system(.title3, design: .rounded, weight: .semibold)
-        default: return .system(.headline, weight: .semibold)
+    @ViewBuilder
+    private func listRow(indent: Int, marker: String, text: String) -> some View {
+        let (task, body) = Self.splitTask(text)
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            if let done = task {
+                RoundedRectangle(cornerRadius: 3.5, style: .continuous)
+                    .fill(done ? JB.accent : .clear)
+                    .overlay(RoundedRectangle(cornerRadius: 3.5, style: .continuous)
+                        .strokeBorder(done ? JB.accent : JB.lineStrong, lineWidth: 1))
+                    .overlay {
+                        if done {
+                            Image(systemName: "checkmark").font(.system(size: 8, weight: .bold)).foregroundStyle(JB.onAccent)
+                        }
+                    }
+                    .frame(width: 14, height: 14)
+                    .offset(y: 2)
+                Text(inline(body)).lineSpacing(lineGap)
+                    .foregroundStyle(done ? JB.ink3 : JB.ink)
+                    .strikethrough(done, color: JB.ink3)
+            } else {
+                Text(marker.hasSuffix(".") ? marker : "•")
+                    .font(marker.hasSuffix(".") ? .jbMono(12) : nil)
+                    .foregroundStyle(JB.ink3)
+                    .frame(minWidth: 14, alignment: .trailing)
+                Text(inline(body)).lineSpacing(lineGap)
+            }
         }
+        .padding(.leading, CGFloat(indent) * 18)
+    }
+
+    private static func splitTask(_ t: String) -> (Bool?, String) {
+        if t.hasPrefix("[ ] ") { return (false, String(t.dropFirst(4))) }
+        if t.hasPrefix("[x] ") || t.hasPrefix("[X] ") { return (true, String(t.dropFirst(4))) }
+        return (nil, t)
+    }
+
+    private func headingFont(_ level: Int) -> Font {
+        let sizes: [CGFloat] = document ? [28, 22, 18, 15.5] : [21, 17.5, 15.5, 14.5]
+        let size = sizes[min(level, 4) - 1]
+        return .jb(size, level <= 3 ? .semibold : .medium)
+    }
+
+    private static func isNumeric(_ s: String) -> Bool {
+        let t = s.trimmingCharacters(in: CharacterSet(charactersIn: " $€£%+-−,"))
+        return !t.isEmpty && t.allSatisfy { $0.isNumber || $0 == "." }
     }
 
     private func tableView(header: [String], rows: [[String]]) -> some View {
-        Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 6) {
-            GridRow {
-                ForEach(Array(header.enumerated()), id: \.offset) { _, h in
-                    Text(inline(h)).fontWeight(.semibold)
-                }
-            }
-            Divider()
-            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+        let numeric: [Bool] = header.indices.map { c in
+            !rows.isEmpty && rows.allSatisfy { c < $0.count && Self.isNumeric($0[c]) }
+        }
+        func align(_ c: Int) -> Alignment { c < numeric.count && numeric[c] ? .trailing : .leading }
+        return ScrollView(.horizontal, showsIndicators: false) {
+            Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
                 GridRow {
-                    ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
-                        Text(inline(cell))
+                    ForEach(Array(header.enumerated()), id: \.offset) { c, h in
+                        Text(inline(h)).font(.jb(12.5, .semibold)).foregroundStyle(JB.ink2)
+                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .frame(maxWidth: .infinity, alignment: align(c))
+                    }
+                }
+                .background(JB.raised)
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    Rectangle().fill(JB.line).frame(height: 1).gridCellColumns(max(header.count, 1))
+                    GridRow {
+                        ForEach(Array(row.enumerated()), id: \.offset) { c, cell in
+                            Text(inline(cell))
+                                .font(numeric.indices.contains(c) && numeric[c] ? .jbMono(12.5) : nil)
+                                .padding(.horizontal, 12).padding(.vertical, 6)
+                                .frame(maxWidth: .infinity, alignment: align(c))
+                        }
                     }
                 }
             }
         }
-        .padding(12)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: JB.rControl, style: .continuous).strokeBorder(JB.line, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: JB.rControl, style: .continuous))
     }
 }
 
@@ -247,35 +351,38 @@ struct CodeBlockView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text(language.isEmpty ? "code" : language)
-                    .font(.jbCaption.weight(.medium))
-                    .foregroundStyle(.secondary)
+                Text(language.isEmpty ? "code" : language).jbEyebrow()
                 Spacer()
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(code, forType: .string)
-                    copied = true
-                    Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
+                    withAnimation(JB.fade) { copied = true }
+                    Task { try? await Task.sleep(for: .seconds(1.2)); withAnimation(JB.fade) { copied = false } }
                 } label: {
-                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-                        .font(.jbCaption)
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .font(.jb(11, .medium))
+                        .foregroundStyle(copied ? JB.live : JB.ink3)
+                        .frame(width: 22, height: 18)
+                        .contentTransition(.symbolEffect(.replace))
                 }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
+                .buttonStyle(.plain)
+                .help("Copy")
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            Divider().opacity(0.5)
+            .padding(.vertical, 6)
+            Rectangle().fill(JB.line).frame(height: 1)
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(highlighted ?? AttributedString(code))
                     .font(.jbMono(12.5))
+                    .foregroundStyle(JB.ink)
                     .lineSpacing(2)
+                    .fixedSize(horizontal: true, vertical: false)
                     .padding(12)
                     .textSelection(.enabled)
             }
         }
-        .background(Color(nsColor: .textBackgroundColor).opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator.opacity(0.5), lineWidth: 1))
+        .background(JB.raised, in: RoundedRectangle(cornerRadius: JB.rCard, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).strokeBorder(JB.line, lineWidth: 1))
         .onAppear { highlighted = highlight(code, language: language) }
         .onChange(of: code) { highlighted = highlight(code, language: language) }
     }
@@ -329,14 +436,14 @@ private func highlightLine(_ line: String) -> AttributedString {
     }
 
     // order matters: later passes overwrite earlier ones
-    color(mdNumberRegex, .cyan)
+    color(mdNumberRegex, JB.warn)
     for word in line.split(whereSeparator: { !$0.isLetter && $0 != "_" }) {
         if mdKeywords.contains(String(word)),
            let r = attr.range(of: String(word)) {
-            attr[r].foregroundColor = .pink
+            attr[r].foregroundColor = JB.accent
         }
     }
-    color(mdStringRegex, .orange)
-    color(mdCommentRegex, Color.secondary)
+    color(mdStringRegex, JB.live)
+    color(mdCommentRegex, JB.ink3)
     return attr
 }
