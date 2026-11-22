@@ -68,7 +68,8 @@ extension APIClient {
                              title: v["title"]?.stringValue ?? "",
                              body: v["body"]?.stringValue ?? "",
                              read: (v["read"]?.boolValue ?? false) || (v["read"]?.intValue ?? 0) != 0,
-                             createdAt: v["created_at"]?.stringValue)
+                             createdAt: v["created_at"]?.stringValue,
+                             source: v["source"]?.stringValue ?? "")
         }
     }
 
@@ -127,6 +128,7 @@ struct InboxItem: Identifiable, Hashable {
     var body: String
     var read: Bool
     var createdAt: String?
+    var source: String = ""
 
     var icon: String {
         switch kind {

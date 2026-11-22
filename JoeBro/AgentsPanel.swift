@@ -19,6 +19,8 @@ struct AgentsPanel: View {
 
     private let kinds = [("", "All"), ("research", "Research"), ("chat", "Chats"), ("task", "Tasks"), ("subagent", "Subagents"), ("coding", "Coding")]
 
+    private var liveCount: Int { if case .loaded(let l) = runs { return l.filter(\.live).count } else { return 0 } }
+
     var body: some View {
         PanelChrome(title: "Agents", icon: "person.3.sequence") {
             PanelSearchField(text: $search, open: $searchOpen, placeholder: "Search agents")
@@ -27,30 +29,39 @@ struct AgentsPanel: View {
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(JBIconButtonStyle())
             .help("Refresh")
         } content: {
-            VStack(spacing: 10) {
-                Picker("", selection: $kind) {
-                    ForEach(kinds, id: \.0) { Text($0.1).tag($0.0) }
+            VStack(spacing: JB.s3) {
+                HStack(spacing: JB.s3) {
+                    HStack(spacing: 6) {
+                        ForEach(kinds, id: \.0) { k in
+                            Button { kind = k.0 } label: {
+                                Text(k.1).font(.jbMono(11, .medium))
+                                    .foregroundStyle(kind == k.0 ? JB.ink : JB.ink2)
+                                    .padding(.horizontal, 9).padding(.vertical, 5)
+                                    .background(RoundedRectangle(cornerRadius: JB.rControl, style: .continuous)
+                                        .fill(kind == k.0 ? JB.accentSoft : .clear))
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                    Spacer()
+                    HStack(spacing: 8) {
+                        JBDotNumber(value: "\(liveCount)", dot: 2, tint: liveCount > 0 ? JB.live : JB.ink3)
+                        Text("live").jbEyebrow()
+                    }
+                    Toggle("Active only", isOn: $activeOnly)
+                        .toggleStyle(JBSwitchStyle()).font(.jbMono(11)).controlSize(.small)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(maxWidth: 420)
 
-                Toggle("Active only", isOn: $activeOnly)
-                    .toggleStyle(.switch).tint(.green)
-                    .controlSize(.small)
-                    .help("Show only agents working right now")
-
-                HStack(spacing: 12) {
+                HStack(spacing: JB.s3) {
                     list
                         .frame(width: 330)
                         .frame(maxHeight: .infinity)
-                        .joeGlassRect(16)
+                        .joeGlassRect(JB.rPanel)
                     detailPane
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .joeGlassRect(16)
+                        .joeGlassRect(JB.rPanel)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -65,23 +76,31 @@ struct AgentsPanel: View {
     private var list: some View {
         switch runs {
         case .loading:
-            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .failed(let e):
-            ContentUnavailableView("Couldn't load agents", systemImage: "person.3.sequence",
-                                   description: Text(e))
+            JBSpinner(size: 14).frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .failed:
+            JBEmptyState(art: .plug, text: "Couldn't load agents").frame(maxWidth: .infinity, maxHeight: .infinity)
         case .loaded(let all) where filtered(all).isEmpty:
-            ContentUnavailableView("Nothing running", systemImage: "person.3.sequence",
-                                   description: Text("Research, background agents and scheduled tasks appear here."))
+            JBEmptyState(art: .sleep, text: "Nothing running").frame(maxWidth: .infinity, maxHeight: .infinity)
         case .loaded(let all):
             ScrollView {
-                LazyVStack(spacing: 8) {
+                LazyVStack(spacing: 2) {
                     ForEach(nested(filtered(all)), id: \.run.id) { item in
                         row(item.run, all: all)
                             .padding(.leading, item.depth > 0 ? 18 : 0)
                     }
                 }
-                .padding(12)
+                .padding(JB.s2)
             }
+        }
+    }
+
+    @ViewBuilder private func kindGlyph(_ run: AgentRun) -> some View {
+        switch run.kind {
+        case "coding": JBIcon(.coding, size: 13)
+        case "research": JBIcon(.research, size: 13)
+        case "task": JBIcon(.tasks, size: 13)
+        case "chat", "": JBIcon(.agent, size: 13)
+        default: Image(systemName: run.kindIcon).font(.jb(11))
         }
     }
 
@@ -92,65 +111,49 @@ struct AgentsPanel: View {
             Task { await loadDetail(run.id) }
         } label: {
             HStack(alignment: .top, spacing: 9) {
-                statusDot(run)
-                    .padding(.top, 4)
+                statusDot(run).padding(.top, 5)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(run.title.isEmpty ? run.kindLabel : run.title)
                         .font(.jb(12.5, isSelected ? .semibold : .regular))
+                        .foregroundStyle(JB.ink)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
                     HStack(spacing: 5) {
-                        Image(systemName: run.kindIcon).font(.jb(9))
-                        Text(run.kindLabel)
-                        Text("·")
+                        kindGlyph(run)
                         Text(run.live && !run.progress.isEmpty ? run.progress : run.status)
                             .lineLimit(1)
                     }
-                    .font(.jb(10.5))
-                    .foregroundStyle(.secondary)
+                    .font(.jbMono(10.5))
+                    .foregroundStyle(run.status == "waiting" ? JB.warn : JB.ink2)
                     if run.parentID.isEmpty, case let kids = all.filter({ $0.parentID == run.id }), !kids.isEmpty {
-                        Label("\(kids.count) subagent\(kids.count == 1 ? "" : "s") · \(kids.filter(\.live).count) running", systemImage: "arrow.triangle.branch")
-                            .font(.jb(10)).foregroundStyle(.secondary)
-                    }
-                    if !run.parentID.isEmpty {
-                        Text("spawned by \(parentName(run, in: all))")
-                            .font(.jb(10))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                        Text("\(kids.count) sub · \(kids.filter(\.live).count) live")
+                            .font(.jbMono(10)).foregroundStyle(JB.ink3)
                     }
                     Text(relativeDate(run.finishedAt.isEmpty ? run.createdAt : run.finishedAt))
-                        .font(.jb(10))
-                        .foregroundStyle(.tertiary)
+                        .font(.jbMono(10)).foregroundStyle(JB.ink3)
                 }
                 Spacer(minLength: 0)
-                if run.live {
-                    ProgressView().controlSize(.small)
-                }
             }
             .padding(.vertical, 7)
             .padding(.horizontal, 9)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isSelected ? AnyShapeStyle(.quaternary.opacity(0.5)) : AnyShapeStyle(.clear),
-                        in: RoundedRectangle(cornerRadius: 9))
+            .jbHoverRow(selected: isSelected)
         }
         .buttonStyle(.plain)
     }
 
     private func statusDot(_ run: AgentRun) -> some View {
-        Circle()
-            .fill(colour(run.status))
-            .frame(width: 7, height: 7)
+        JBStatusDot(color: colour(run.status), live: run.live && run.status != "waiting", size: 7)
             .help(run.status)
     }
 
     private func colour(_ status: String) -> Color {
         switch status {
-        case "running": return .yellow
-        case "waiting": return .orange        // a coding agent waiting for approval
-        case "done": return .green
-        case "failed": return .red
-        case "cancelled": return .secondary
-        default: return .secondary.opacity(0.6)       // queued
+        case "running": return JB.live
+        case "waiting": return JB.warn        // a coding agent waiting for approval
+        case "done": return JB.ink2
+        case "failed": return JB.danger
+        default: return JB.ink3
         }
     }
 
@@ -159,115 +162,82 @@ struct AgentsPanel: View {
     @ViewBuilder
     private var detailPane: some View {
         if let run = detail {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    header(run)
-                    if !run.error.isEmpty {
-                        Label(run.error, systemImage: "exclamationmark.triangle")
-                            .font(.jb(11.5))
-                            .foregroundStyle(run.status == "failed" ? .red : .secondary)
-                    }
-                    if let note = cancelNote {
-                        Label(note, systemImage: "stop.circle")
-                            .font(.jb(11.5))
-                            .foregroundStyle(.secondary)
-                    }
-                    if run.result.isEmpty {
-                        Text(run.live ? "No output yet — still working."
-                                      : "This run produced no output.")
-                            .font(.jb(12))
-                            .foregroundStyle(.secondary)
-                    } else {
-                        MarkdownText(text: run.result)
-                    }
-                    if let msgs = run.messages, !msgs.isEmpty {
-                        Divider().padding(.vertical, 2)
-                        Text("Transcript — \(msgs.count) message\(msgs.count == 1 ? "" : "s")")
-                            .font(.jb(11, .semibold))
-                            .foregroundStyle(.secondary)
-                        ForEach(msgs.prefix(12)) { m in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(m.role.capitalized)
-                                    .font(.jb(10, .semibold))
-                                    .foregroundStyle(.tertiary)
-                                Text(m.content.prefix(600))
-                                    .font(.jb(11.5))
-                                    .textSelection(.enabled)
+            VStack(spacing: 0) {
+                header(run).padding(JB.s4)
+                Rectangle().fill(JB.line).frame(height: 1)
+                if run.kind == "coding" {
+                    AgentChatThread(run: run) { await load(); await loadDetail(run.id, quiet: true) }
+                        .id(run.id)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: JB.s3) {
+                            if !run.error.isEmpty {
+                                Text(run.error).font(.jbMono(11.5))
+                                    .foregroundStyle(run.status == "failed" ? JB.danger : JB.ink2)
+                            }
+                            if let note = cancelNote { Text(note).font(.jbMono(11)).foregroundStyle(JB.ink2) }
+                            if run.result.isEmpty {
+                                if run.live { HStack(spacing: 6) { JBSpinner(); JBStreamCursor() } }
+                                else { Text("No output").font(.jbMono(11)).foregroundStyle(JB.ink3) }
+                            } else {
+                                MarkdownText(text: run.result).textSelection(.enabled)
+                            }
+                            if let msgs = run.messages, !msgs.isEmpty {
+                                Text("Transcript").jbEyebrow().padding(.top, JB.s2)
+                                ForEach(Array(msgs.prefix(12).enumerated()), id: \.offset) { _, m in
+                                    if m.role == "user" {
+                                        Text(m.content.prefix(600)).font(.jbBody).foregroundStyle(JB.ink)
+                                            .textSelection(.enabled).jbCard(padding: JB.s3)
+                                    } else {
+                                        Text(m.content.prefix(600)).font(.jbBody).foregroundStyle(JB.ink)
+                                            .textSelection(.enabled)
+                                    }
+                                }
                             }
                         }
-                    } else if !run.sessionID.isEmpty {
-                        Text("No stored transcript for this run — its chat has been deleted.")
-                            .font(.jb(11))
-                            .foregroundStyle(.tertiary)
+                        .padding(JB.s4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .overlay(alignment: .topTrailing) {
-                if detailLoading { ProgressView().controlSize(.small).padding(10) }
+                if detailLoading { JBSpinner().padding(10) }
             }
         } else {
-            ContentUnavailableView("Select an agent", systemImage: "sidebar.right",
-                                   description: Text("Its full output and transcript show here."))
+            JBEmptyState(art: .inbox, text: "Select an agent").frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
     private func header(_ run: AgentRun) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: run.kindIcon).foregroundStyle(.secondary)
+                kindGlyph(run).foregroundStyle(JB.ink2)
                 Text(run.title.isEmpty ? run.kindLabel : run.title)
-                    .font(.jb(15, .semibold))
+                    .font(.jb(15, .semibold)).tracking(-0.2)
+                    .foregroundStyle(JB.ink)
                 Spacer(minLength: 8)
                 if run.kind == "coding" && run.status == "waiting" {
-                    Button {
-                        Task { await decide(run, approve: true) }
-                    } label: {
-                        Label("Approve", systemImage: "checkmark.circle")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Approve the permission prompt in that terminal")
-                    Button {
-                        Task { await decide(run, approve: false) }
-                    } label: {
-                        Label("Deny", systemImage: "xmark.circle")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Deny it (Esc in that terminal)")
+                    AgentApprovalButtons(agentID: run.id) { await load(); await loadDetail(run.id, quiet: true) }
                 }
                 if run.live {
-                    Button {
-                        Task { await cancel(run) }
-                    } label: {
-                        Label("Stop", systemImage: "stop.fill")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Ask this agent to stop")
+                    Button { Task { await cancel(run) } } label: { Text("Stop") }
+                        .buttonStyle(.jbSecondary).help("Ask this agent to stop")
                 }
                 if !run.sessionID.isEmpty {
-                    Button {
-                        store.select(run.sessionID)
-                    } label: {
-                        Label("Open chat", systemImage: "bubble.left.and.bubble.right")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Open this agent's chat")
+                    Button { store.select(run.sessionID) } label: { Text("Open chat") }
+                        .buttonStyle(.jbSecondary).help("Open this agent's chat")
                 }
             }
             HStack(spacing: 6) {
                 statusDot(run)
-                Text(run.live && !run.progress.isEmpty ? "\(run.status) — \(run.progress)" : run.status)
-                if !run.model.isEmpty {
-                    Text("·"); Text(run.model)
-                }
-                if run.resultChars > 0 {
-                    Text("·"); Text("\(run.resultChars) chars")
-                }
+                Text(run.live && !run.progress.isEmpty ? "\(run.status) · \(run.progress)" : run.status)
+                    .lineLimit(1)
+                if !run.model.isEmpty { Text("·"); Text(run.model) }
+                if run.resultChars > 0 { Text("·"); Text("\(run.resultChars) chars") }
                 Text("·"); Text(relativeDate(run.finishedAt.isEmpty ? run.createdAt : run.finishedAt))
             }
-            .font(.jb(11))
-            .foregroundStyle(.secondary)
+            .font(.jbMono(11))
+            .foregroundStyle(JB.ink2)
         }
     }
 
@@ -334,7 +304,7 @@ struct AgentsPanel: View {
         }
     }
 
-    /// Poll only while something is live — an idle panel makes no requests.
+    /// Poll only while something is live; an idle panel makes no requests.
     private func poll() async {
         await load()
         while !Task.isCancelled {
@@ -343,20 +313,6 @@ struct AgentsPanel: View {
             try? await Task.sleep(for: .seconds(live ? 3 : 20))
             if Task.isCancelled { return }
             await load()
-        }
-    }
-
-    private func decide(_ run: AgentRun, approve: Bool) async {
-        do {
-            let out = try await APIClient.shared.decideCoding(id: run.id, approve: approve)
-            if (out["applied"] as? Bool) == true {
-                cancelNote = approve ? "Approved." : "Denied."
-            } else {
-                cancelNote = (out["detail"] as? String) ?? "Sent — it will apply as soon as the prompt is on screen."
-            }
-            await load()
-        } catch {
-            cancelNote = error.localizedDescription
         }
     }
 

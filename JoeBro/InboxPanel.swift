@@ -80,6 +80,12 @@ struct InboxPanel: View {
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
+                if n.kind == "coding_approval", !n.source.isEmpty {
+                    AgentApprovalButtons(agentID: n.source) {
+                        await APIClient.shared.markInboxRead(n.id); await load()
+                    }
+                    .padding(.top, 2)
+                }
                 Text(relativeDate(n.createdAt))
                     .font(.jb(10))
                     .foregroundStyle(.tertiary)
