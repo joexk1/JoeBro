@@ -251,7 +251,6 @@ struct SettingsView: View {
                 Text("Glass opacity is tuned from the main window — the ◐ button next to the gear in the sidebar. (macOS renders glass differently while this Settings window has focus, so a slider here would lie to you.)")
                     .font(.jbCaption)
                     .foregroundStyle(.secondary)
-                Toggle("Reduce glass effects", isOn: $glass.reduceGlass)
                 Text("Swaps live Liquid Glass for a lighter frosted look. Smoother when switching Spaces or on older Macs, since the system won't re-render the glass every time the window gains or loses focus. (Also on automatically if macOS \u{201C}Reduce transparency\u{201D} is enabled.)")
                     .font(.jbCaption)
                     .foregroundStyle(.secondary)
