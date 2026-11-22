@@ -125,7 +125,7 @@ struct ToolsPanel: View {
                 }
                 if !plugin.summary.isEmpty {
                     Text(plugin.summary)
-                        .font(.jbMono(10.5))
+                        .font(.jb(10.5))
                         .foregroundStyle(JB.ink3)
                 }
                 if let e = plugin.error, !e.isEmpty {
@@ -256,7 +256,7 @@ struct ToolsPanel: View {
                 Text(server.name)
                     .font(.jb(13, .medium))
                 Text("\(server.command) \(server.args)")
-                    .font(.jbMono(11))
+                    .font(.jb(11))
                     .foregroundStyle(JB.ink2)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -267,11 +267,11 @@ struct ToolsPanel: View {
                         .lineLimit(2)
                 } else if server.tools.isEmpty {
                     Text("No tools")
-                        .font(.jbMono(11))
+                        .font(.jb(11))
                         .foregroundStyle(JB.ink3)
                 } else {
                     Text(server.tools.joined(separator: ", "))
-                        .font(.jbMono(11))
+                        .font(.jb(11))
                         .foregroundStyle(JB.ink2)
                 }
             }
@@ -353,7 +353,7 @@ struct ToolsPanel: View {
                 }
                 if let url = tool.baseURL, !url.isEmpty {
                     Text(url)
-                        .font(.jbMono(11))
+                        .font(.jb(11))
                         .foregroundStyle(JB.ink2)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -426,7 +426,7 @@ struct APIToolSheet: View {
             Form {
                 TextField("Name (e.g. LinkedIn Search)", text: $name)
                 TextField("Base URL (https://api.example.com/v2/search)", text: $baseURL)
-                    .font(.jbMono(12))
+                    .font(.jb(12))
                 Text("{query} in the URL marks where the input goes")
                     .font(.jbCaption2)
                     .foregroundStyle(JB.ink2)
@@ -515,13 +515,13 @@ struct MCPServerSheet: View {
             Form {
                 TextField("Name (e.g. Filesystem)", text: $name)
                 TextField("Command (e.g. npx)", text: $command)
-                    .font(.jbMono(12))
+                    .font(.jb(12))
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Arguments")
                         .font(.jbCaption)
                         .foregroundStyle(JB.ink2)
                     TextEditor(text: $args)
-                        .font(.jbMono(12))
+                        .font(.jb(12))
                         .frame(minHeight: 60)
                     Text("e.g. -y @modelcontextprotocol/server-filesystem /Users/me/Documents")
                         .font(.jbCaption2)
@@ -599,7 +599,7 @@ struct PluginEditSheet: View {
                 }
                 if let repo = plugin.repoPath, !repo.isEmpty {
                     Text(repo)
-                        .font(.jbMono(11))
+                        .font(.jb(11))
                         .foregroundStyle(JB.ink2)
                         .lineLimit(1).truncationMode(.middle)
                 }
@@ -661,7 +661,7 @@ struct ComputerUseSettingsSheet: View {
                         Text("Blocked apps")
                             .font(.jb(12, .semibold))
                         TextEditor(text: $blocked)
-                            .font(.jbMono(13))
+                            .font(.jb(13))
                             .frame(minHeight: 120)
                             .padding(6)
                             .scrollContentBackground(.hidden)

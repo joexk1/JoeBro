@@ -182,7 +182,7 @@ struct GlassTunerPopover: View {
             JBPaletteRow(selection: $look.palette)
             Text("Opacity").jbEyebrow()
             Slider(value: $look.solidity, in: 0.35...1)
-                .frame(width: 208)
+                .frame(width: JBPaletteRow.width)
                 .tint(JB.accent)
         }
         .padding(14)
@@ -191,6 +191,8 @@ struct GlassTunerPopover: View {
 
 /// Swatch row for the shared palette list.
 struct JBPaletteRow: View {
+    /// 24pt per swatch (18 + padding) with 8pt gaps: other controls match it.
+    static let width = CGFloat(JBPalette.allCases.count) * 24 + CGFloat(JBPalette.allCases.count - 1) * 8
     @Binding var selection: JBPalette
     var body: some View {
         HStack(spacing: 8) {
@@ -202,6 +204,8 @@ struct JBPaletteRow: View {
                         .fill(p == .mono ? JB.ink : p.accent)
                         .frame(width: 18, height: 18)
                         .overlay(Circle().strokeBorder(JB.line, lineWidth: 1))
+                        // "From background" reads as a picked-up colour: a dashed ring.
+                        .overlay(p == .auto ? Circle().strokeBorder(JB.ink, style: StrokeStyle(lineWidth: 1, dash: [2, 2])).padding(-1) : nil)
                         .padding(3)
                         .overlay(Circle().strokeBorder(selection == p ? JB.ink : .clear, lineWidth: 1.5))
                 }
@@ -321,7 +325,7 @@ struct SelectionBar: View {
     var body: some View {
         HStack(spacing: 10) {
             Text("\(selection.count) selected")
-                .font(.jbMono(11, .medium))
+                .font(.jb(11, .medium))
                 .foregroundStyle(JB.ink)
             Button(selection.count == total ? "None" : "All") {
                 withAnimation(JB.snap) {
@@ -359,5 +363,17 @@ struct SelectionBar: View {
 func toggleSelection(_ id: String, in selection: inout Set<String>) {
     withAnimation(JB.snap) {
         if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
+    }
+}
+
+/// JoeBro's own mark (the app icon), for places that mean "JoeBro".
+struct JoeBroMark: View {
+    var size: CGFloat = 18
+    var body: some View {
+        Image(nsImage: NSApp.applicationIconImage)
+            .resizable()
+            .interpolation(.high)
+            .frame(width: size, height: size)
+            .accessibilityLabel("JoeBro")
     }
 }

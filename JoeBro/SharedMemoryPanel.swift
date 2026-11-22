@@ -49,7 +49,7 @@ struct SharedMemoryPanel: View {
                         }
                         Button("Archived") { showArchived.toggle() }.buttonStyle(JBButtonStyle(kind: showArchived ? .secondary : .ghost, compact: true))
                     }
-                    if let note { Text(note).font(.jbMono(11)).foregroundStyle(JB.danger).lineLimit(1) }
+                    if let note { Text(note).font(.jb(11)).foregroundStyle(JB.danger).lineLimit(1) }
                 }
                 if scope == .files {
                     PhoneMemoryView()
@@ -115,16 +115,16 @@ private struct MemoryRow: View {
         Button(action: tap) {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
-                    Text(((fact.topic ?? "").isEmpty ? fact.kindLabel : (fact.topic ?? "")).lowercased()).font(.jbMono(10.5)).foregroundStyle(JB.ink3)
+                    Text(((fact.topic ?? "").isEmpty ? fact.kindLabel : (fact.topic ?? "")).lowercased()).font(.jb(10.5)).foregroundStyle(JB.ink3)
                     Spacer()
                     if fact.isPinned { Circle().fill(JB.accent).frame(width: 5, height: 5) }
-                    Text(relativeDateISO(fact.updatedAt)).font(.jbMono(10.5)).foregroundStyle(JB.ink3)
+                    Text(relativeDateISO(fact.updatedAt)).font(.jb(10.5)).foregroundStyle(JB.ink3)
                 }
                 Text(fact.text).font(.jb(12.5)).foregroundStyle(JB.ink).multilineTextAlignment(.leading).lineLimit(4)
                 HStack(spacing: 8) {
                     Capsule().fill(JB.line).frame(width: 36, height: 2)
                         .overlay(alignment: .leading) { Capsule().fill(JB.accent.opacity(0.8)).frame(width: 36 * fact.strengthValue, height: 2) }
-                    if !fact.provenanceLine.isEmpty { Text(fact.provenanceLine).font(.jbMono(10.5)).foregroundStyle(JB.ink3).lineLimit(1) }
+                    if !fact.provenanceLine.isEmpty { Text(fact.provenanceLine).font(.jb(10.5)).foregroundStyle(JB.ink3).lineLimit(1) }
                 }
             }
             .padding(10).frame(maxWidth: .infinity, alignment: .leading)
@@ -165,7 +165,7 @@ private struct MemoryDetail: View {
                     if fact.isArchived { Button("Restore") { run { try await APIClient.shared.memoryRestore(fact.id) } }.buttonStyle(JBButtonStyle(kind: .secondary, compact: true)) }
                     else { Button("Archive") { run { try await APIClient.shared.memoryArchive(fact.id) } }.buttonStyle(JBButtonStyle(kind: .danger, compact: true)) }
                 }
-                if let error { Text(error).font(.jbMono(11)).foregroundStyle(JB.danger) }
+                if let error { Text(error).font(.jb(11)).foregroundStyle(JB.danger) }
                 if history.count > 1 {
                     JBSectionHeader("Earlier", count: history.count - 1)
                     ForEach(history.dropLast()) { Text($0.text).font(.jb(11.5)).foregroundStyle(JB.ink3) }
@@ -175,7 +175,7 @@ private struct MemoryDetail: View {
         .task { text = fact.text; topic = fact.topic ?? ""; kind = fact.kind ?? "fact"; history = (try? await APIClient.shared.memoryHistory(fact.id)) ?? [] }
     }
     private func meta(_ k: String, _ v: String) -> some View {
-        HStack(spacing: 8) { Text(k).jbEyebrow().frame(width: 70, alignment: .leading); Text(v).font(.jbMono(11.5)).foregroundStyle(JB.ink2) }
+        HStack(spacing: 8) { Text(k).jbEyebrow().frame(width: 70, alignment: .leading); Text(v).font(.jb(11.5)).foregroundStyle(JB.ink2) }
     }
     private func run(_ work: @escaping () async throws -> Void) {
         Task { do { try await work(); changed() } catch { self.error = error.localizedDescription } }
@@ -213,7 +213,7 @@ private struct MemoryAddSheet: View {
                         Picker("", selection: $kind) { ForEach(["fact", "decision", "gotcha", "preference"], id: \.self) { Text($0).tag($0) } }.labelsHidden()
                     }
                 }
-                if let error { Text(error).font(.jbMono(11)).foregroundStyle(JB.danger) }
+                if let error { Text(error).font(.jb(11)).foregroundStyle(JB.danger) }
             }.padding(JB.s4)
         }.frame(width: 480).background(JB.surface).onAppear { focus = true; if current != "__all" { target = current } }
     }

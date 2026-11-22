@@ -43,7 +43,7 @@ struct AICheckPanel: View {
                         }
                     HStack {
                         Text("\(text.split(separator: " ").count) words")
-                            .font(.jbMono(11))
+                            .font(.jb(11))
                             .foregroundStyle(JB.ink3)
                         Spacer()
                         Button {
@@ -83,7 +83,7 @@ struct AICheckPanel: View {
                             }
                         } else {
                             Text("No sentences flagged")
-                                .font(.jbMono(11))
+                                .font(.jb(11))
                                 .foregroundStyle(JB.ink3)
                         }
                         Spacer()
@@ -109,14 +109,14 @@ struct AICheckPanel: View {
                     .rotationEffect(.degrees(-90))
                 VStack(spacing: 0) {
                     Text("\(Int(r.aiPercent))%")
-                        .font(.jbMono(26, .medium))
+                        .font(.jb(26, .medium))
                     Text("AI").jbEyebrow()
                 }
             }
             .frame(width: 110, height: 110)
             if let words = r.totalWords, let ai = r.aiWords {
                 Text("\(ai) of \(words) words read as AI")
-                    .font(.jbMono(11))
+                    .font(.jb(11))
                     .foregroundStyle(JB.ink2)
             }
         }

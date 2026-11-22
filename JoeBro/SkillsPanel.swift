@@ -194,7 +194,7 @@ struct SkillsPanel: View {
                     if let conf = s["confidence"]?.doubleValue { Text("\(Int(conf))%") }
                     if let src = s["source"]?.stringValue { Text(src) }
                 }
-                .font(.jbMono(10.5))
+                .font(.jb(10.5))
                 .foregroundStyle(JB.ink3)
             }
             Spacer()
@@ -296,7 +296,7 @@ struct SkillEditorSheet: View {
                     // Fixed-height TextEditor so a long procedure scrolls inside
                     // the field instead of stretching the whole sheet.
                     TextEditor(text: $draft.procedure)
-                        .font(.jbMono(12))
+                        .font(.jb(12))
                         .frame(height: 240)
                         .scrollContentBackground(.hidden)
                         .padding(6)
@@ -536,7 +536,7 @@ struct LearnSkillsSheet: View {
                 if running {
                     HStack(spacing: 8) {
                         JBSpinner()
-                        Text(detail.isEmpty ? "Working" : detail).font(.jbMono(11)).foregroundStyle(JB.ink2)
+                        Text(detail.isEmpty ? "Working" : detail).font(.jb(11)).foregroundStyle(JB.ink2)
                     }
                 }
                 if !made.isEmpty {

@@ -91,8 +91,12 @@ class CodingAgentsMixin:
         detail = json.loads(row["detail_json"]) if row else []
         status = row["status"] if row else "idle"
         tool_calls = row["tool_calls"] if row else 0
-        text = _clip(ev.get("text"), 300)
+        # Replies are the conversation: keep them whole enough to read (prompts/replies 4k, tool lines short).
+        text = _clip(ev.get("text"), 4000 if kind in ("stop", "prompt", "subagent_stop", "end") else 300)
         tool = _clip(ev.get("tool"), 60)
+        said = _clip(ev.get("said"), 4000)          # text the agent wrote before this tool call
+        if said and ("✓ " + said) not in detail[-3:]:
+            detail.append("✓ " + said)
         if is_sub:
             if kind in ("subagent_stop", "stop", "end"):
                 status = "done"
@@ -122,13 +126,17 @@ class CodingAgentsMixin:
             detail.append("⏸ " + (text or "needs your approval"))
         elif kind == "stop":
             status = "idle"
-            if text:
+            if text and ("✓ " + text) not in detail[-3:]:
                 detail.append("✓ " + text)
         elif kind == "end":
             status = "ended"
         elif kind in ("subagent_start", "subagent_stop"):
             pass
-        detail = detail[-14:]
+        # Keep the conversation: replies and prompts survive; tool lines are trimmed first.
+        talk = [i for i, d in enumerate(detail) if d[:1] in ("›", "✓", "⏸")]
+        if len(detail) > 60:
+            keep = set(talk[-30:]) | set(range(len(detail) - 20, len(detail)))
+            detail = [d for i, d in enumerate(detail) if i in keep][-60:]
         cwd = str(ev.get("cwd") or (row or {}).get("cwd") or "")[:300]
         name = _clip(ev.get("name"), 80) or (row or {}).get("name") or (os.path.basename(cwd.rstrip("/")) or SOURCES[source])
         model = _clip(ev.get("model"), 60) or (row or {}).get("model") or ""

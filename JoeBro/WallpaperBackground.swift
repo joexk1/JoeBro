@@ -17,6 +17,9 @@ struct WallpaperBackground: View {
         // from disk per render was a constant CPU tax.
         if cachedPath == url.path, let cachedImage { return cachedImage }
         let img = NSImage(contentsOf: url)
+        if let cg = img?.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            JBAppearance.shared.adoptAccent(from: cg)
+        }
         Task { @MainActor in
             cachedImage = img
             cachedPath = url.path
@@ -38,7 +41,8 @@ struct WallpaperBackground: View {
                         .scaledToFill()
                         .frame(width: geo.size.width, height: geo.size.height)
                         .clipped()
-                        .overlay(Color.black.opacity(scheme == .dark ? 0.18 : 0.04))
+                        // Tone the photo toward the app ground (dark: down, light: up) so ink always reads on it.
+                        .overlay(JB.bg.opacity(scheme == .dark ? 0.38 : 0.30))
                 } else {
                     JBDitherBackdrop(palette: JBAppearance.shared.palette)
                 }

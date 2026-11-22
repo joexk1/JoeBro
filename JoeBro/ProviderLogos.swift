@@ -45,6 +45,17 @@ func providerLogoImage(for model: String) -> NSImage? {
 }
 
 /// Provider logo with monogram fallback, sized for inline use.
+private func tinted(_ img: NSImage, _ color: NSColor) -> NSImage {
+    let out = NSImage(size: img.size, flipped: false) { rect in
+        img.draw(in: rect)
+        color.set()
+        rect.fill(using: .sourceAtop)
+        return true
+    }
+    out.isTemplate = false
+    return out
+}
+
 struct ProviderLogoView: View {
     let model: String
     var size: CGFloat = 14
@@ -53,10 +64,13 @@ struct ProviderLogoView: View {
         if model.lowercased().contains("apple") {
             Image(systemName: "apple.logo")
                 .font(.jb(size * 0.9, .medium))
+                .foregroundStyle(JB.accent)
                 .frame(width: size, height: size)
         } else if let img = providerLogoImage(for: model) {
-            Image(nsImage: img)
-                .renderingMode(.template)
+            // A pre-tinted, non-template bitmap: menu labels re-template
+            // images and drop foregroundStyle, so bake the accent in.
+            Image(nsImage: tinted(img, NSColor(JB.accent)))
+                .renderingMode(.original)
                 .resizable()
                 .scaledToFit()
                 .frame(width: size, height: size)

@@ -71,17 +71,8 @@ struct ResearchPanel: View {
                 .textFieldStyle(.plain)
                 .font(.jb(13))
                 .onSubmit(start)
-            Picker("", selection: Binding(
-                get: { (researchModel ?? store.selectedModel)?.id ?? "" },
-                set: { id in researchModel = store.models.first { $0.id == id } }
-            )) {
-                if researchModel == nil && store.selectedModel == nil {
-                    Text("Model").tag("")
-                }
-                ModelPickerItems(models: store.models)
-            }
-            .labelsHidden()
-            .frame(width: 190)
+            ModelPickerMenu(selection: .some(researchModel ?? store.selectedModel),
+                            onPick: { researchModel = $0 })
             Button("Research", action: start)
             .buttonStyle(JBButtonStyle(kind: .primary, compact: true))
             .disabled(query.trimmingCharacters(in: .whitespaces).isEmpty || store.researchRun != nil)
@@ -176,7 +167,7 @@ struct ResearchPanel: View {
                         Text(Date(timeIntervalSince1970: done).formatted(date: .abbreviated, time: .omitted))
                     }
                 }
-                .font(.jbMono(10.5))
+                .font(.jb(10.5))
                 .foregroundStyle(JB.ink3)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -278,7 +269,7 @@ struct ResearchPanel: View {
                             ?? detail["result"]?.stringValue
                             ?? ""
                         if report.isEmpty {
-                            Text("Empty report").font(.jbMono(12)).foregroundStyle(JB.ink3)
+                            Text("Empty report").font(.jb(12)).foregroundStyle(JB.ink3)
                         } else {
                             MarkdownText(text: report)
                         }
@@ -290,7 +281,7 @@ struct ResearchPanel: View {
                                     Link(destination: URL(string: url) ?? URL(string: "about:blank")!) {
                                         HStack(spacing: 6) {
                                             Text("\(i + 1).")
-                                                .font(.jbMono(10.5))
+                                                .font(.jb(10.5))
                                                 .foregroundStyle(JB.ink3)
                                             Text(s["title"]?.stringValue ?? url)
                                                 .font(.jb(12))
@@ -328,7 +319,7 @@ struct ResearchProgressView: View {
                 Text(run.phase).jbEyebrow()
                 if !run.message.isEmpty {
                     Text(run.message)
-                        .font(.jbMono(11))
+                        .font(.jb(11))
                         .foregroundStyle(JB.ink3)
                         .lineLimit(1)
                 }
@@ -353,7 +344,7 @@ struct ResearchProgressView: View {
                 Button("Cancel") { onFinished() }
                     .buttonStyle(JBButtonStyle(kind: .ghost, compact: true))
             }
-            .font(.jbMono(10.5))
+            .font(.jb(10.5))
             .foregroundStyle(JB.ink3)
         }
         .padding(.horizontal, 16)

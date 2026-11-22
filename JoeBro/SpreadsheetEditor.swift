@@ -95,7 +95,7 @@ struct SpreadsheetEditor: View {
             if let f = focus {
                 Text("\(Self.colName(f.c))\(f.r + 1)").font(.jbMono(11)).foregroundStyle(JB.ink2)
             }
-            Text("\(rows.count) × \(columnCount)").font(.jbMono(11)).foregroundStyle(JB.ink3)
+            Text("\(rows.count) × \(columnCount)").font(.jb(11)).foregroundStyle(JB.ink3)
         }
         .buttonStyle(.jbGhost)
         .controlSize(.small)

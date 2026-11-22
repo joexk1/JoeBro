@@ -100,17 +100,17 @@ struct MobileSettingsTab: View {
             }
             LabeledContent("URL") {
                 Text(urls.first?.url ?? "—")
-                    .font(.jbMono(12)).textSelection(.enabled)
+                    .font(.jb(12)).textSelection(.enabled)
             }
             ForEach(urls.dropFirst(), id: \.url) { u in
                 LabeledContent(u.label) {
-                    Text(u.url).font(.jbMono(12)).textSelection(.enabled)
+                    Text(u.url).font(.jb(12)).textSelection(.enabled)
                 }
             }
             LabeledContent("Token") {
                 HStack {
                     Text(showToken ? token : String(repeating: "•", count: 16))
-                        .font(.jbMono(12)).textSelection(.enabled)
+                        .font(.jb(12)).textSelection(.enabled)
                     Button(showToken ? "Hide" : "Show") { showToken.toggle() }
                     Button("Copy") { copy(token) }
                 }

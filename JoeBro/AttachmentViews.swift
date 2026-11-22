@@ -44,7 +44,7 @@ struct AttachmentChipsView: View {
                                 .foregroundStyle(JB.ink3)
                         }
                         Text(att.name)
-                            .font(.jbMono(11))
+                            .font(.jb(11))
                             .foregroundStyle(JB.ink2)
                             .lineLimit(1)
                     }
@@ -93,7 +93,7 @@ struct QuickLookSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Text(url.lastPathComponent)
-                    .font(.jbMono(12))
+                    .font(.jb(12))
                     .foregroundStyle(JB.ink)
                     .lineLimit(1)
                 Spacer()
@@ -147,7 +147,7 @@ private struct AuthedUploadImage: View {
             if let image {
                 Image(nsImage: image).resizable().scaledToFit()
             } else if failed {
-                Label(att.name, systemImage: "photo").font(.jbMono(11)).foregroundStyle(JB.ink3)
+                Label(att.name, systemImage: "photo").font(.jb(11)).foregroundStyle(JB.ink3)
             } else {
                 JBSpinner()
             }

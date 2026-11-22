@@ -36,7 +36,7 @@ struct FolderPickerSheet: View {
                     .font(.jb(44, .light))
                     .foregroundStyle(JB.accent)
                 Text(selectedURL?.path ?? "Choose a local project folder")
-                    .font(selectedURL == nil ? .jb(12) : .jbMono(12))
+                    .font(selectedURL == nil ? .jb(12) : .jb(12))
                     .foregroundStyle(selectedURL == nil ? JB.ink2 : JB.ink)
                     .multilineTextAlignment(.center)
                     .lineLimit(4)

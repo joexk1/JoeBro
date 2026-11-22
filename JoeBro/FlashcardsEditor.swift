@@ -218,12 +218,12 @@ struct FlashcardsEditor: View {
         return VStack(spacing: 10) {
             HStack(spacing: 10) {
                 JBDotNumber(value: "\(queue.count)", dot: 2, tint: JB.accent)
-                Text("/ \(total)").font(.jbMono(11)).foregroundStyle(JB.ink3)
+                Text("/ \(total)").font(.jb(11)).foregroundStyle(JB.ink3)
                 if sessionLearned > 0 {
-                    Text("+\(sessionLearned)").font(.jbMono(11)).foregroundStyle(JB.live)
+                    Text("+\(sessionLearned)").font(.jb(11)).foregroundStyle(JB.live)
                 }
                 if sessionAgain > 0 {
-                    Text("↺\(sessionAgain)").font(.jbMono(11)).foregroundStyle(JB.warn)
+                    Text("↺\(sessionAgain)").font(.jb(11)).foregroundStyle(JB.warn)
                 }
                 Spacer()
                 Button {
@@ -320,7 +320,7 @@ struct FlashcardsEditor: View {
                 Text("\(sessionLearned) learned this round" +
                      (sessionAgain > 0 ? " · \(sessionAgain) retries" : "") +
                      (stillToLearn > 0 ? " · \(stillToLearn) still to learn" : ""))
-                    .font(.jbMono(11.5))
+                    .font(.jb(11.5))
                     .foregroundStyle(JB.ink3)
             } else {
                 Text("All \(cards.count) learned")
@@ -369,7 +369,7 @@ struct FlashcardsEditor: View {
                 }
                 Spacer()
                 Text("\(cards.count - stillToLearn)/\(cards.count)")
-                    .font(.jbMono(11))
+                    .font(.jb(11))
                     .foregroundStyle(JB.ink3)
                     .help("Learned")
             }
@@ -397,7 +397,7 @@ struct FlashcardsEditor: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text("\(i + 1)")
-                    .font(.jbMono(10, .medium))
+                    .font(.jb(10, .medium))
                     .foregroundStyle(JB.ink3)
                 Spacer()
                 Button {

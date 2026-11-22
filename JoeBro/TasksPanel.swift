@@ -34,7 +34,7 @@ struct TasksPanel: View {
         } content: {
             VStack(spacing: JB.s3) {
                 if !phoneScope { QuickAddBar(placeholder: "Describe a new task", actionIcon: "arrow.up", busy: generating) { generateTask($0) } }
-                if let m = genError ?? note { Text(m).font(.jbMono(11)).foregroundStyle(JB.danger) }
+                if let m = genError ?? note { Text(m).font(.jb(11)).foregroundStyle(JB.danger) }
                 ZStack {
                     switch tasks {
                     case .loading:
@@ -120,7 +120,7 @@ struct TasksPanel: View {
                     if let next = t.nextRun, let d = parseISO(next) { Text("next \(d.formatted(.relative(presentation: .named)))") }
                     if t.isCoding { Text([t.codingAgent == "any" ? "any agent" : t.codingAgent, hostLabel(t)].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")) }
                 }
-                .font(.jbMono(11)).foregroundStyle(JB.ink3)
+                .font(.jb(11)).foregroundStyle(JB.ink3)
                 if let p = t.prompt, !p.isEmpty { Text(p).font(.jb(11.5)).foregroundStyle(JB.ink2).lineLimit(2) }
             }
             Spacer()
@@ -244,7 +244,7 @@ struct TaskFields: View {
                 if schedule == "weekly" {
                     ExtrasField(label: "On") { Picker("", selection: $repeatDay) { ForEach(0..<7, id: \.self) { Text(Self.days[$0]).tag($0) } }.labelsHidden() }
                 }
-                ExtrasField(label: "Time") { TextField("09:00", text: $time).font(.jbMono(13)).focused($focus, equals: 2).jbField(focused: focus == 2).frame(width: 80) }
+                ExtrasField(label: "Time") { TextField("09:00", text: $time).font(.jb(13)).focused($focus, equals: 2).jbField(focused: focus == 2).frame(width: 80) }
             }
             if coding {
                 CodingTargetFields(agent: $agent, model: $model, host: $host, repo: $repo, hosts: hosts)
@@ -292,7 +292,7 @@ struct NewTaskSheet: View {
             }
             VStack(alignment: .leading, spacing: JB.s3) {
                 f
-                if let error { Text(error).font(.jbMono(11)).foregroundStyle(JB.danger) }
+                if let error { Text(error).font(.jb(11)).foregroundStyle(JB.danger) }
             }.padding(JB.s4)
         }
         .frame(width: 500).background(JB.surface)
@@ -344,7 +344,7 @@ struct EditTaskSheet: View {
             }
             VStack(alignment: .leading, spacing: JB.s3) {
                 f
-                if let error { Text(error).font(.jbMono(11)).foregroundStyle(JB.danger) }
+                if let error { Text(error).font(.jb(11)).foregroundStyle(JB.danger) }
             }.padding(JB.s4)
         }
         .frame(width: 500).background(JB.surface)

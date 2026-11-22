@@ -71,7 +71,7 @@ struct PersonalFolderPicker: View {
             Image(systemName: "laptopcomputer").font(.jb(40, .light))
                 .foregroundStyle(JB.accent)
             Text(macURL?.path ?? "Choose a folder on this Mac")
-                .font(macURL == nil ? .jb(12) : .jbMono(12))
+                .font(macURL == nil ? .jb(12) : .jb(12))
                 .foregroundStyle(macURL == nil ? JB.ink2 : JB.ink)
                 .multilineTextAlignment(.center).lineLimit(4)
             Button { chooseMacFolder() } label: { Label("Choose Folder…", systemImage: "folder") }
@@ -90,7 +90,7 @@ struct PersonalFolderPicker: View {
                 Button { Task { await loadPi(parentOf(piPath)) } } label: { Image(systemName: "chevron.up") }
                     .buttonStyle(.borderless).disabled(piPath.isEmpty || piPath == "/")
                 Text(piPath.isEmpty ? "~" : piPath)
-                    .font(.jbMono(11)).foregroundStyle(JB.ink2).lineLimit(1)
+                    .font(.jb(11)).foregroundStyle(JB.ink2).lineLimit(1)
                 Spacer()
                 if loading { JBSpinner() }
             }

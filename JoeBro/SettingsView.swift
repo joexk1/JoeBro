@@ -21,26 +21,63 @@ struct SettingsView: View {
     @State private var requestingCalendar = false
     @State private var cloakMode = true
 
+    @State private var section: SettingsSection = .general
+
     var body: some View {
-        TabView {
-            generalTab
-                .tabItem { Label("General", systemImage: "gearshape") }
-            appearanceTab
-                .tabItem { Label("Appearance", systemImage: "paintbrush") }
-            ModelsSettingsTab()
-                .tabItem { Label("Models & Keys", systemImage: "key") }
-            agentsTab
-                .tabItem { Label("Agents", systemImage: "bolt") }
-            MobileSettingsTab()
-                .tabItem { Label("Mobile", systemImage: "iphone") }
-            integrationsTab
-                .tabItem { Label("Integrations", systemImage: "link") }
-            MessageBotTab()
-                .tabItem { Label("Message Bot", systemImage: "paperplane") }
-            advancedTab
-                .tabItem { Label("Advanced", systemImage: "slider.horizontal.3") }
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(SettingsSection.allCases) { item in
+                    Button {
+                        withAnimation(JB.snap) { section = item }
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: item.icon)
+                                .font(.system(size: 13, weight: .regular))
+                                .frame(width: 18)
+                                .foregroundStyle(section == item ? JB.ink : JB.ink3)
+                            Text(item.title)
+                                .font(.jb(13, section == item ? .medium : .regular))
+                                .foregroundStyle(section == item ? JB.ink : JB.ink2)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 30)
+                        .contentShape(Rectangle())
+                        .jbHoverRow(selected: section == item)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 14)
+            .frame(width: 196)
+            .background(JB.surface)
+
+            Rectangle().fill(JB.line).frame(width: 1)
+
+            Group {
+                switch section {
+                case .general: generalTab
+                case .appearance: appearanceTab
+                case .models: ModelsSettingsTab()
+                case .agents: agentsTab
+                case .mobile: MobileSettingsTab()
+                case .integrations: integrationsTab
+                case .messageBot: MessageBotTab()
+                case .advanced: advancedTab
+                }
+            }
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(JB.bg)
+            .id(section)
+            .transition(.opacity)
         }
-        .frame(width: 700, height: 580)
+        .frame(width: 780, height: 600)
+        .background(JB.bg)
+        .navigationTitle(section.title)
     }
 
     // MARK: General
@@ -66,7 +103,7 @@ struct SettingsView: View {
                         .disabled(!updater.canCheckForUpdates)
                     Spacer()
                     Text(appVersionString)
-                        .font(.jbMono(11))
+                        .font(.jb(11))
                         .foregroundStyle(JB.ink3)
                 }
             }
@@ -102,7 +139,7 @@ struct SettingsView: View {
                         ), format: .number)
                         .labelsHidden()
                         .multilineTextAlignment(.trailing)
-                        .font(.jbMono(12))
+                        .font(.jb(12))
                         .frame(width: 64)
                     }
                 }
@@ -193,9 +230,9 @@ struct SettingsView: View {
         Form {
             Section("Server") {
                 TextField("Server URL", text: $serverURL)
-                    .font(.jbMono(12))
+                    .font(.jb(12))
                 SecureField("Bearer token (remote backend only)", text: $backendToken)
-                    .font(.jbMono(12))
+                    .font(.jb(12))
                     .onChange(of: backendToken) { _, v in BackendToken.save(v) }
             }
         }
@@ -268,13 +305,13 @@ struct SettingsView: View {
                     Slider(value: $look.solidity, in: 0.35...1)
                         .tint(JB.accent)
                     Text("\(Int(look.solidity * 100))%")
-                        .font(.jbMono(11))
+                        .font(.jb(11))
                         .foregroundStyle(JB.ink3)
                         .frame(width: 36, alignment: .trailing)
                 }
             }
             Section("Backdrop") {
-                Picker("Backdrop", selection: $look.backdrop) {
+                Picker("Backdrop", selection: Binding(get: { look.backdrop }, set: { look.backdrop = $0; if $0 != .palette { look.palette = .auto } })) {
                     Text("Palette").tag(JBBackdropKind.palette)
                     Text("Photo").tag(JBBackdropKind.photo)
                     Text("Animated").tag(JBBackdropKind.scene)
@@ -328,7 +365,7 @@ struct SettingsView: View {
                         Button("Install backdrop skill for agents") { installBackdropSkill() }
                         if let backdropNote {
                             Text(backdropNote)
-                                .font(.jbMono(11))
+                                .font(.jb(11))
                                 .foregroundStyle(JB.ink3)
                                 .lineLimit(2)
                         }
@@ -344,7 +381,7 @@ struct SettingsView: View {
                 let scoped = url.startAccessingSecurityScopedResource()
                 store.setWallpaper(from: url)
                 if scoped { url.stopAccessingSecurityScopedResource() }
-                JBAppearance.shared.backdrop = .photo
+                JBAppearance.shared.backdrop = .photo; JBAppearance.shared.palette = .auto
             }
         }
         .fileImporter(isPresented: $showVideoImporter,
@@ -667,7 +704,7 @@ struct AddEndpointSheet: View {
             Form {
                 TextField("Name (e.g. Groq, OpenRouter)", text: $name)
                 TextField("Base URL (https://api.../v1)", text: $baseURL)
-                    .font(.jbMono(12))
+                    .font(.jb(12))
                 SecureField("API key (optional for local)", text: $apiKey)
                 if let error {
                     Text(error).font(.jbCaption).foregroundStyle(JB.danger)
@@ -722,13 +759,13 @@ struct EmailConnectionSheet: View {
             Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 8) {
                 GridRow {
                     TextField("IMAP host", text: $imapHost)
-                        .font(.jbMono(12))
+                        .font(.jb(12))
                     TextField("Port", text: $imapPort)
                         .frame(width: 70)
                 }
                 GridRow {
                     TextField("SMTP host", text: $smtpHost)
-                        .font(.jbMono(12))
+                        .font(.jb(12))
                     TextField("Port", text: $smtpPort)
                         .frame(width: 70)
                 }
@@ -779,7 +816,7 @@ struct CalDAVConnectionSheet: View {
                               canSave: !url.isEmpty && !principal.isEmpty,
                               onCancel: { dismiss() }, onSave: save) {
             TextField("CalDAV URL", text: $url)
-                .font(.jbMono(12))
+                .font(.jb(12))
             TextField("Principal", text: $principal)
             SecureField("Password", text: $password)
             Text("Calendar data remains local to this Mac; this stores the CalDAV source for the local backend.")
@@ -870,5 +907,35 @@ final class MacCalendarBridge {
             return status == .fullAccess
         }
         return status.rawValue == 3
+    }
+}
+
+
+enum SettingsSection: String, CaseIterable, Identifiable {
+    case general, appearance, models, agents, mobile, integrations, messageBot, advanced
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .general: return "General"
+        case .appearance: return "Appearance"
+        case .models: return "Models & Keys"
+        case .agents: return "Agents"
+        case .mobile: return "Mobile"
+        case .integrations: return "Integrations"
+        case .messageBot: return "Message Bot"
+        case .advanced: return "Advanced"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .general: return "switch.2"
+        case .appearance: return "circle.lefthalf.filled"
+        case .models: return "key"
+        case .agents: return "terminal"
+        case .mobile: return "iphone"
+        case .integrations: return "link"
+        case .messageBot: return "paperplane"
+        case .advanced: return "wrench.adjustable"
+        }
     }
 }

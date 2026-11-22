@@ -22,7 +22,7 @@ struct PanelFailure: View {
         VStack(spacing: 6) {
             JBEmptyState(art: .plug, text: title)
             if let detail, !detail.isEmpty {
-                Text(detail).font(.jbMono(11)).foregroundStyle(JB.ink3).lineLimit(3)
+                Text(detail).font(.jb(11)).foregroundStyle(JB.ink3).lineLimit(3)
                     .padding(.horizontal, 24).padding(.bottom, 16)
             }
         }

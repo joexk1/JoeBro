@@ -39,6 +39,16 @@ extension JBNativeColor {
 }
 
 extension Color {
+    /// Ink at an alpha (black in light mode, white in dark): composites over
+    /// any ground — solid, photo or scene — without reading as a grey box.
+    init(jbInkAlpha light: CGFloat, dark: CGFloat) {
+        #if os(macOS)
+        self.init(nsColor: .jbDynamic(light: NSColor(white: 0, alpha: light), dark: NSColor(white: 1, alpha: dark)))
+        #else
+        self.init(uiColor: .jbDynamic(light: UIColor(white: 0, alpha: light), dark: UIColor(white: 1, alpha: dark)))
+        #endif
+    }
+
     init(jbLight light: UInt32, dark: UInt32) {
         #if os(macOS)
         self.init(nsColor: .jbDynamic(light: .init(jbHex: light), dark: .init(jbHex: dark)))
@@ -51,10 +61,10 @@ extension Color {
 /// The palette list shared by both apps. `mono` is the plain mode-aware
 /// black/white; every other entry tints the accent and the backdrop glow.
 enum JBPalette: String, CaseIterable, Identifiable, Codable {
-    case mono, ember, phosphor, cobalt, violet, rose, moss, sand
+    case auto, mono, ember, phosphor, cobalt, violet, rose, moss, sand
 
     var id: String { rawValue }
-    var label: String { self == .mono ? "Mono" : rawValue.capitalized }
+    var label: String { self == .mono ? "Mono" : self == .auto ? "From background" : rawValue.capitalized }
 
     /// Old preset names from 1.5 and earlier (mac `bgPreset`, iOS `wallpaperName`).
     init(legacy name: String?) {
@@ -71,6 +81,7 @@ enum JBPalette: String, CaseIterable, Identifiable, Codable {
     /// (light-mode, dark-mode) accent. Light values are darkened for contrast on paper.
     var hex: (light: UInt32, dark: UInt32) {
         switch self {
+        case .auto: return JBAppearance.shared.autoHex
         case .mono: return (0x151515, 0xEDEDEC)
         case .ember: return (0xD9501A, 0xFF6A2B)
         case .phosphor: return (0x0F8A69, 0x5FD1B0)
@@ -112,7 +123,51 @@ final class JBAppearance: @unchecked Sendable {
         didSet { UserDefaults.standard.set(sceneID, forKey: Keys.scene) }
     }
 
+    /// Accent taken from the current background (photo, scene, video) for `.auto`.
+    var autoHex: (light: UInt32, dark: UInt32) {
+        didSet {
+            UserDefaults.standard.set(Int(autoHex.light), forKey: Keys.autoLight)
+            UserDefaults.standard.set(Int(autoHex.dark), forKey: Keys.autoDark)
+        }
+    }
+
+    /// Derive the `.auto` accent from a picture of the background: the dominant
+    /// vivid hue, re-lit for light and dark mode so it always reads as an accent.
+    func adoptAccent(from image: CGImage) {
+        let n = 32
+        var px = [UInt8](repeating: 0, count: n * n * 4)
+        guard let ctx = CGContext(data: &px, width: n, height: n, bitsPerComponent: 8, bytesPerRow: n * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+        ctx.interpolationQuality = .medium
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: n, height: n))
+        var x = 0.0, y = 0.0, sat = 0.0, wsum = 0.0
+        for i in stride(from: 0, to: px.count, by: 4) {
+            let r = Double(px[i]) / 255, g = Double(px[i + 1]) / 255, b = Double(px[i + 2]) / 255
+            let mx = max(r, g, b), mn = min(r, g, b), d = mx - mn
+            guard mx > 0.12, d > 0.06 else { continue }
+            let s = d / mx
+            var h: Double
+            if mx == r { h = (g - b) / d } else if mx == g { h = (b - r) / d + 2 } else { h = (r - g) / d + 4 }
+            h = (h / 6).truncatingRemainder(dividingBy: 1); if h < 0 { h += 1 }
+            let w = s * s * (1 - abs(mx - 0.65))
+            x += cos(h * 2 * .pi) * w; y += sin(h * 2 * .pi) * w; sat += s * w; wsum += w
+        }
+        guard wsum > 0.4 else { return }   // a grey picture keeps the previous accent
+        var hue = atan2(y, x) / (2 * .pi); if hue < 0 { hue += 1 }
+        let s = min(0.78, max(0.42, sat / wsum))
+        func hex(_ h: Double, _ s: Double, _ v: Double) -> UInt32 {
+            let i = Int(h * 6) % 6, f = h * 6 - Double(Int(h * 6))
+            let p = v * (1 - s), q = v * (1 - f * s), t = v * (1 - (1 - f) * s)
+            let (r, g, b): (Double, Double, Double) = [(v, t, p), (q, v, p), (p, v, t), (p, q, v), (t, p, v), (v, p, q)][i]
+            return UInt32(r * 255) << 16 | UInt32(g * 255) << 8 | UInt32(b * 255)
+        }
+        let next = (light: hex(hue, min(0.85, s + 0.1), 0.62), dark: hex(hue, s, 0.95))
+        DispatchQueue.main.async { self.autoHex = next }
+    }
+
     private enum Keys {
+        static let autoLight = "jbAutoLight", autoDark = "jbAutoDark"
         static let palette = "jbPalette", solidity = "jbSolidity"
         static let backdrop = "jbBackdrop", scene = "jbScene"
     }
@@ -124,6 +179,8 @@ final class JBAppearance: @unchecked Sendable {
         solidity = d.object(forKey: Keys.solidity) == nil ? 0.88 : d.double(forKey: Keys.solidity)
         backdrop = d.string(forKey: Keys.backdrop).flatMap(JBBackdropKind.init(rawValue:)) ?? .palette
         sceneID = d.string(forKey: Keys.scene) ?? ""
+        autoHex = d.object(forKey: Keys.autoDark) == nil ? (0xD9501A, 0xFF6A2B)
+            : (UInt32(d.integer(forKey: Keys.autoLight)), UInt32(d.integer(forKey: Keys.autoDark)))
     }
 
     var panelOpacity: Double { min(1, max(0.35, solidity)) }
@@ -134,13 +191,13 @@ enum JB {
     // Ground and surfaces
     static let bg = Color(jbLight: 0xF5F4F1, dark: 0x0A0A0B)
     static let surface = Color(jbLight: 0xFCFBF9, dark: 0x131314)
-    static let raised = Color(jbLight: 0xF0EEEA, dark: 0x1A1A1C)
-    static let hover = Color(jbLight: 0xE9E7E2, dark: 0x222225)
-    static let pressed = Color(jbLight: 0xE1DED8, dark: 0x2A2A2E)
+    static let raised = Color(jbInkAlpha: 0.035, dark: 0.045)
+    static let hover = Color(jbInkAlpha: 0.06, dark: 0.07)
+    static let pressed = Color(jbInkAlpha: 0.09, dark: 0.10)
 
-    // Lines
-    static let line = Color(jbLight: 0xE3E1DC, dark: 0x252528)
-    static let lineStrong = Color(jbLight: 0xCFCCC6, dark: 0x36363A)
+    // Lines (translucent: the same hairline on paper, photo or scene)
+    static let line = Color(jbInkAlpha: 0.08, dark: 0.075)
+    static let lineStrong = Color(jbInkAlpha: 0.15, dark: 0.13)
 
     // Ink
     static let ink = Color(jbLight: 0x151515, dark: 0xEDEDEC)
@@ -148,7 +205,6 @@ enum JB {
     static let ink3 = Color(jbLight: 0xA09E98, dark: 0x5E5E63)
     /// Ink on the inverse ground (text on an ink-filled control).
     static let inverse = Color(jbLight: 0xFCFBF9, dark: 0x0A0A0B)
-
     // Status
     static let live = Color(jbLight: 0x0F8A69, dark: 0x5FD1B0)
     static let warn = Color(jbLight: 0xB97A06, dark: 0xF5B83D)
@@ -164,6 +220,11 @@ enum JB {
 
     /// Panel fill at the user's transparency.
     static var panelFill: Color { surface.opacity(JBAppearance.shared.panelOpacity) }
+    /// Fill for things you read or type into (composer, replies): follows the
+    /// slider on the plain ground, but goes near-solid over a photo or scene.
+    static var readFill: Color {
+        JBAppearance.shared.backdrop == .palette ? panelFill : surface.opacity(0.96)
+    }
 
     // Radii
     static let rControl: CGFloat = 7
@@ -344,7 +405,7 @@ extension View {
     }
     /// Uppercase mono eyebrow used for section headers and meta labels.
     func jbEyebrow() -> some View {
-        self.font(.jbMono(10.5, .medium)).textCase(.uppercase).tracking(0.9).foregroundStyle(JB.ink3)
+        self.font(.jb(12, .semibold)).foregroundStyle(JB.ink2)
     }
 }
 
@@ -499,7 +560,7 @@ struct JBChip: View {
     var tint: Color? = nil
     var body: some View {
         Text(text)
-            .font(.jbMono(11, .medium))
+            .font(.jb(12, .medium))
             .foregroundStyle(tint ?? JB.ink2)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
@@ -514,7 +575,7 @@ struct JBKbd: View {
     init(_ keys: String) { self.keys = keys }
     var body: some View {
         Text(keys)
-            .font(.jbMono(10.5, .medium))
+            .font(.jb(10.5, .medium))
             .foregroundStyle(JB.ink3)
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
@@ -530,7 +591,7 @@ struct JBSectionHeader<Trailing: View>: View {
     var body: some View {
         HStack(spacing: 6) {
             Text(title).jbEyebrow()
-            if let count { Text("\(count)").font(.jbMono(10.5)).foregroundStyle(JB.ink3.opacity(0.7)) }
+            if let count { Text("\(count)").font(.jb(12)).foregroundStyle(JB.ink3) }
             Spacer(minLength: 0)
             trailing
         }

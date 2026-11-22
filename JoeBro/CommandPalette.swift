@@ -9,7 +9,7 @@ extension Notification.Name {
 /// The panel order behind ⌘1–9 and the palette.
 enum JBPanelOrder {
     static let jumpTabs: [WorkspaceTab] = [.chat, .email, .calendar, .memory, .agents, .nightShift, .tasks, .skills, .tools]
-    static let paletteTabs: [WorkspaceTab] = jumpTabs + [.notes, .plugins, .research, .inbox, .aiCheck]
+    static let paletteTabs: [WorkspaceTab] = jumpTabs + [.notes, .research, .inbox, .aiCheck]
 
     static func shortcut(for tab: WorkspaceTab) -> String? {
         jumpTabs.firstIndex(of: tab).map { "⌘\($0 + 1)" }
@@ -144,7 +144,7 @@ struct CommandPalette: View {
                 .lineLimit(1)
             Spacer(minLength: 8)
             if let kbd = item.kbd { JBKbd(kbd) }
-            else if item.kind == .chat { Text("chat").font(.jbMono(10.5)).foregroundStyle(JB.ink3) }
+            else if item.kind == .chat { Text("chat").font(.jb(10.5)).foregroundStyle(JB.ink3) }
         }
         .padding(.horizontal, 10)
         .frame(height: 32)

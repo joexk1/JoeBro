@@ -187,6 +187,14 @@ struct WebBackdropView: NSViewRepresentable {
             ready = true
             applied = ""
             apply()
+            // Let the scene draw, then take the accent from what's on screen.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak webView] in
+                webView?.takeSnapshot(with: nil) { image, _ in
+                    if let cg = image?.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                        JBAppearance.shared.adoptAccent(from: cg)
+                    }
+                }
+            }
         }
 
         func apply() {
@@ -258,6 +266,11 @@ struct VideoBackdropView: NSViewRepresentable {
             looper = AVPlayerLooper(player: q, templateItem: AVPlayerItem(url: url))
             playerLayer.player = q
             queue = q
+            let gen = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+            gen.maximumSize = CGSize(width: 160, height: 160)
+            gen.generateCGImageAsynchronously(for: CMTime(seconds: 1, preferredTimescale: 600)) { cg, _, _ in
+                if let cg { JBAppearance.shared.adoptAccent(from: cg) }
+            }
         }
         func setPaused(_ p: Bool) {
             guard let queue else { return }

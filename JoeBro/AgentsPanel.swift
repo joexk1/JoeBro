@@ -37,7 +37,7 @@ struct AgentsPanel: View {
                     HStack(spacing: 6) {
                         ForEach(kinds, id: \.0) { k in
                             Button { kind = k.0 } label: {
-                                Text(k.1).font(.jbMono(11, .medium))
+                                Text(k.1).font(.jb(11, .medium))
                                     .foregroundStyle(kind == k.0 ? JB.ink : JB.ink2)
                                     .padding(.horizontal, 9).padding(.vertical, 5)
                                     .background(RoundedRectangle(cornerRadius: JB.rControl, style: .continuous)
@@ -51,7 +51,7 @@ struct AgentsPanel: View {
                         Text("live").jbEyebrow()
                     }
                     Toggle("Active only", isOn: $activeOnly)
-                        .toggleStyle(JBSwitchStyle()).font(.jbMono(11)).controlSize(.small)
+                        .toggleStyle(JBSwitchStyle()).font(.jb(11)).controlSize(.small)
                 }
 
                 HStack(spacing: JB.s3) {
@@ -99,7 +99,7 @@ struct AgentsPanel: View {
         case "coding": JBIcon(.coding, size: 13)
         case "research": JBIcon(.research, size: 13)
         case "task": JBIcon(.tasks, size: 13)
-        case "chat", "": JBIcon(.agent, size: 13)
+        case "chat", "": Image(systemName: "bubble.left").font(.jb(11))
         default: Image(systemName: run.kindIcon).font(.jb(11))
         }
     }
@@ -123,14 +123,14 @@ struct AgentsPanel: View {
                         Text(run.live && !run.progress.isEmpty ? run.progress : run.status)
                             .lineLimit(1)
                     }
-                    .font(.jbMono(10.5))
+                    .font(.jb(10.5))
                     .foregroundStyle(run.status == "waiting" ? JB.warn : JB.ink2)
                     if run.parentID.isEmpty, case let kids = all.filter({ $0.parentID == run.id }), !kids.isEmpty {
                         Text("\(kids.count) sub · \(kids.filter(\.live).count) live")
-                            .font(.jbMono(10)).foregroundStyle(JB.ink3)
+                            .font(.jb(10)).foregroundStyle(JB.ink3)
                     }
                     Text(relativeDate(run.finishedAt.isEmpty ? run.createdAt : run.finishedAt))
-                        .font(.jbMono(10)).foregroundStyle(JB.ink3)
+                        .font(.jb(10)).foregroundStyle(JB.ink3)
                 }
                 Spacer(minLength: 0)
             }
@@ -172,13 +172,13 @@ struct AgentsPanel: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: JB.s3) {
                             if !run.error.isEmpty {
-                                Text(run.error).font(.jbMono(11.5))
+                                Text(run.error).font(.jb(11.5))
                                     .foregroundStyle(run.status == "failed" ? JB.danger : JB.ink2)
                             }
-                            if let note = cancelNote { Text(note).font(.jbMono(11)).foregroundStyle(JB.ink2) }
+                            if let note = cancelNote { Text(note).font(.jb(11)).foregroundStyle(JB.ink2) }
                             if run.result.isEmpty {
                                 if run.live { HStack(spacing: 6) { JBSpinner(); JBStreamCursor() } }
-                                else { Text("No output").font(.jbMono(11)).foregroundStyle(JB.ink3) }
+                                else { Text("No output").font(.jb(11)).foregroundStyle(JB.ink3) }
                             } else {
                                 MarkdownText(text: run.result).textSelection(.enabled)
                             }
@@ -236,7 +236,7 @@ struct AgentsPanel: View {
                 if run.resultChars > 0 { Text("·"); Text("\(run.resultChars) chars") }
                 Text("·"); Text(relativeDate(run.finishedAt.isEmpty ? run.createdAt : run.finishedAt))
             }
-            .font(.jbMono(11))
+            .font(.jb(11))
             .foregroundStyle(JB.ink2)
         }
     }

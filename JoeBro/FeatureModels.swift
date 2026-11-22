@@ -57,8 +57,8 @@ struct NightHost: Decodable, Identifiable, Hashable {
 }
 
 struct NightConfig: Decodable, Hashable {
-    var enabled: Bool?, windowStart: String?, windowEnd: String?, defaultAgent: String?
-    enum CodingKeys: String, CodingKey { case enabled, windowStart = "window_start", windowEnd = "window_end", defaultAgent = "default_agent" }
+    var enabled: Bool?, windowStart: String?, windowEnd: String?, defaultAgent: String?, defaultHost: String?
+    enum CodingKeys: String, CodingKey { case enabled, windowStart = "window_start", windowEnd = "window_end", defaultAgent = "default_agent", defaultHost = "default_host" }
 }
 
 struct MemProvenance: Decodable, Hashable { let agent: String?, model: String?, host: String?, source: String? }
@@ -139,6 +139,7 @@ extension APIClient {
     func nightReorder(_ ids: [String]) async throws { _ = try await sendJSON("api/night-shift/reorder", body: ["ids": ids]) }
     func nightCancel(_ id: String) async throws { _ = try await sendJSON("api/night-shift/\(seg(id))/cancel", body: [:]) }
     func nightRun(_ id: String) async throws { _ = try await sendJSON("api/night-shift/\(seg(id))/run", body: [:]) }
+    func nightConfig(defaultHost: String) async throws { _ = try await sendJSON("api/night-shift/config", method: "PUT", body: ["default_host": defaultHost]) }
     func nightConfig(enabled: Bool) async throws { _ = try await sendJSON("api/night-shift/config", method: "PUT", body: ["enabled": enabled]) }
     func nightDecide(_ id: String, decision: String, mode: String? = nil, text: String? = nil) async throws {
         var b: [String: Any] = ["decision": decision]

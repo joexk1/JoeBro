@@ -60,7 +60,7 @@ struct ChatView: View {
                             .font(.jb(28, .light))
                             .foregroundStyle(JB.accent)
                         Text("Drop to attach")
-                            .font(.jbMono(12))
+                            .font(.jb(12))
                             .foregroundStyle(JB.ink2)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -234,7 +234,7 @@ struct ChatView: View {
 
             if !store.messages.isEmpty {
                 Text("\(store.messages.count)")
-                    .font(.jbMono(11))
+                    .font(.jb(11))
                     .foregroundStyle(JB.ink3)
                     .help("Messages in this chat")
             }
@@ -250,7 +250,7 @@ struct ChatView: View {
                     store.editorVisible = true
                 } label: {
                     Label("\(store.openDocs.count)", systemImage: "doc.text")
-                        .font(.jbMono(11.5))
+                        .font(.jb(11.5))
                         .foregroundStyle(JB.ink2)
                 }
                 .buttonStyle(.plain)
@@ -263,7 +263,7 @@ struct ChatView: View {
                         .font(.jb(10))
                         .foregroundStyle(JB.warn)
                     Text(err)
-                        .font(.jbMono(11))
+                        .font(.jb(11))
                         .foregroundStyle(JB.ink2)
                         .lineLimit(1)
                         .frame(maxWidth: 320)
@@ -283,7 +283,7 @@ struct ChatView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .jbSurface(.chrome, radius: nil)
+        .jbSurface(.chrome, radius: JB.rPanel)
     }
 
     private struct ChatPDFWrap: Identifiable {
@@ -302,19 +302,9 @@ struct ChatView: View {
     private var emptyState: some View {
         VStack(spacing: 22) {
             JBWordmark(dot: 3.4)
-            HStack(spacing: 8) {
-                ForEach(["agent", "chat", "think", "fast"], id: \.self) { name in
-                    let on = isOn(name)
-                    Button {
-                        if let item = ChatSlashSource.builtins.first(where: { $0.name == name }) {
-                            _ = store.runChatSlash(item)
-                        }
-                    } label: {
-                        JBChip(text: "/" + name, tint: on ? JB.accent : nil)
-                    }
-                    .buttonStyle(JBPressStyle())
-                }
-            }
+            Text("What should we work on today?")
+                .font(.jb(15))
+                .foregroundStyle(JB.ink2)
         }
         .frame(maxWidth: .infinity)
         .padding(.bottom, 28)
@@ -365,7 +355,7 @@ struct ChatView: View {
                         } label: {
                             Label("\(rows.count - visibleCount) earlier",
                                   systemImage: "arrow.up")
-                                .font(.jbMono(11.5))
+                                .font(.jb(11.5))
                                 .foregroundStyle(JB.ink2)
                         }
                         .buttonStyle(.plain)
@@ -458,7 +448,7 @@ struct CommandPermissionPrompt: View {
                     .foregroundStyle(JB.ink)
             }
             Text(prompt.command)
-                .font(.jbMono(12))
+                .font(.jb(12))
                 .foregroundStyle(JB.ink2)
                 .lineLimit(4)
                 .textSelection(.enabled)

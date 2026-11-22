@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import UniformTypeIdentifiers
 
 struct ComposerView: View {
@@ -19,7 +20,9 @@ struct ComposerView: View {
 
     /// Suggestions while the text is a single "/token" at the start.
     private var slashItems: [ChatSlashItem] {
-        guard !slashDismissed, text.hasPrefix("/"), !text.contains(where: \.isWhitespace) else { return [] }
+        guard !slashDismissed, text.hasPrefix("/"), !text.contains(where: \.isNewline),
+              text.filter({ $0 == " " }).count <= 1 else { return [] }
+        if text.contains(" "), ChatSlashSource.options(for: String(text.dropFirst().prefix(while: { $0 != " " })).lowercased()).isEmpty { return [] }
         return slash.matches(String(text.dropFirst()))
     }
 
@@ -37,6 +40,7 @@ struct ComposerView: View {
                         .font(.jb(14))
                         .foregroundStyle(JB.ink3)
                         .padding(.top, 2)
+                        .padding(.leading, 7)   // NSTextView's lineFragmentPadding: caret sits before the text, not on it
                         .allowsHitTesting(false)
                 }
                 ChatInputTextView(text: $text, height: $inputHeight, focused: $focused,
@@ -128,7 +132,7 @@ struct ComposerView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
         .background {
-            RoundedRectangle(cornerRadius: JB.rPanel, style: .continuous).fill(JB.raised)
+            RoundedRectangle(cornerRadius: JB.rPanel, style: .continuous).fill(JB.readFill)
                 .overlay(RoundedRectangle(cornerRadius: JB.rPanel, style: .continuous)
                     .strokeBorder(focused ? JB.accent.opacity(0.7) : JB.line, lineWidth: 1))
         }
@@ -168,6 +172,9 @@ struct ComposerView: View {
             if !text.hasPrefix("/") { slashDismissed = false }
             if text.hasPrefix("/") { slash.refresh() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .jbPickBackdropPhoto)) { _ in
+            DispatchQueue.main.async { pickBackdropPhoto() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .chatFillComposer)) { n in
             if let s = n.object as? String { text = s }
         }
@@ -201,8 +208,19 @@ struct ComposerView: View {
         }
     }
 
+    private func pickBackdropPhoto() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        store.setWallpaper(from: url)
+        JBAppearance.shared.backdrop = .photo
+        JBAppearance.shared.palette = .auto
+    }
+
     private func accept(_ item: ChatSlashItem) {
         text = store.runChatSlash(item)
+        slashIndex = 0
         slashDismissed = false
     }
 
@@ -244,7 +262,7 @@ struct ComposerView: View {
                         .font(.jb(10))
                         .foregroundStyle(JB.ink3)
                     Text(f.name)
-                        .font(.jbMono(11))
+                        .font(.jb(11))
                         .foregroundStyle(JB.ink2)
                         .lineLimit(1)
                     Button {
@@ -320,7 +338,7 @@ struct SlideSwitch: View {
             Text(label)
                 .lineLimit(1)
                 .fixedSize()
-                .font(.jbMono(11, active ? .medium : .regular))
+                .font(.jb(11, active ? .medium : .regular))
                 .foregroundStyle(active ? JB.ink : JB.ink3)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 3.5)

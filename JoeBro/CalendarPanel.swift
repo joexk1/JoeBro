@@ -49,7 +49,7 @@ struct CalendarPanel: View {
             Button { step(-1) } label: { Image(systemName: "chevron.left") }
                 .buttonStyle(.jbIcon)
             Text(titleLabel)
-                .font(.jbMono(12, .medium))
+                .font(.jb(12, .medium))
                 .frame(minWidth: 120)
             Button { step(1) } label: { Image(systemName: "chevron.right") }
                 .buttonStyle(.jbIcon)
@@ -354,7 +354,7 @@ struct CalendarPanel: View {
         return VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text("\(cal.component(.day, from: day))")
-                    .font(.jbMono(11, isToday ? .semibold : .regular))
+                    .font(.jb(11, isToday ? .semibold : .regular))
                     .foregroundStyle(isToday ? JB.onAccent : (inMonth ? JB.ink : JB.ink3.opacity(0.7)))
                     .frame(width: 20, height: 20, alignment: .center)
                     .background(isToday ? AnyShapeStyle(JB.accent) : AnyShapeStyle(.clear), in: Circle())
@@ -379,7 +379,7 @@ struct CalendarPanel: View {
             }
             if dayEvents.count > 3 {
                 Text("+\(dayEvents.count - 3) more")
-                    .font(.jbMono(9))
+                    .font(.jb(9))
                     .lineLimit(1)
                     .foregroundStyle(JB.ink3)
             }
@@ -416,7 +416,7 @@ struct CalendarPanel: View {
                     VStack(spacing: 3) {
                         Text(day.formatted(.dateTime.weekday(.abbreviated))).jbEyebrow()
                         Text("\(cal.component(.day, from: day))")
-                            .font(.jbMono(13, cal.isDateInToday(day) ? .semibold : .regular))
+                            .font(.jb(13, cal.isDateInToday(day) ? .semibold : .regular))
                             .foregroundStyle(cal.isDateInToday(day) ? JB.onAccent : JB.ink)
                             .frame(width: 24, height: 24)
                             .background(cal.isDateInToday(day) ? AnyShapeStyle(JB.accent) : AnyShapeStyle(.clear), in: Circle())
@@ -449,7 +449,7 @@ struct CalendarPanel: View {
                         VStack(spacing: 0) {
                             ForEach(firstHour..<24, id: \.self) { h in
                                 Text(String(format: "%02d:00", h))
-                                    .font(.jbMono(9.5))
+                                    .font(.jb(9.5))
                                     .foregroundStyle(JB.ink3)
                                     .frame(width: 40, height: hourHeight, alignment: .topTrailing)
                                     // Centre the label ON its grid line, not under it
@@ -526,7 +526,7 @@ struct CalendarPanel: View {
                         .lineLimit(h > 34 ? 2 : 1)
                     if h > 30 {
                         Text(s.formatted(date: .omitted, time: .shortened))
-                            .font(.jbMono(9.5))
+                            .font(.jb(9.5))
                             .foregroundStyle(JB.ink2)
                     }
                 }
@@ -565,7 +565,7 @@ struct CalendarPanel: View {
                 ForEach(days, id: \.self) { day in
                     VStack(alignment: .leading, spacing: 6) {
                         Text(dayLabel(day))
-                            .font(.jbMono(11, .medium))
+                            .font(.jb(11, .medium))
                             .textCase(.uppercase)
                             .tracking(0.6)
                             .foregroundStyle(cal.isDateInToday(day) ? JB.accent : JB.ink3)
@@ -605,7 +605,7 @@ struct CalendarPanel: View {
                         Label(loc, systemImage: "mappin").lineLimit(1)
                     }
                 }
-                .font(.jbMono(11))
+                .font(.jb(11))
                 .foregroundStyle(JB.ink2)
             }
             Spacer()

@@ -50,29 +50,31 @@ struct ModelMenuItems: View {
     }
 }
 
+/// The one model picker. The composer uses the chat model; other places
+/// (Deep Research, …) pass their own selection so they look identical.
 struct ModelPickerMenu: View {
     @Environment(AppStore.self) private var store
+    var selection: ModelChoice?? = nil          // nil = follow the chat model
+    var onPick: ((ModelChoice) -> Void)? = nil
+
+    private var current: ModelChoice? { selection ?? store.selectedModel }
 
     var body: some View {
         Menu {
             ModelMenuItems(models: store.models,
-                           selectedID: store.selectedModel?.id,
-                           onPick: { store.pick($0) })
+                           selectedID: current?.id,
+                           onPick: { m in if let onPick { onPick(m) } else { store.pick(m) } })
             Divider()
             Button("Refresh models") {
                 Task { await store.loadModels() }
             }
         } label: {
             HStack(spacing: 5) {
-                if let m = store.selectedModel {
+                if let m = current {
                     ProviderLogoView(model: m.modelID, size: 11)
-                        .foregroundStyle(JB.ink3)
-                } else {
-                    JBIcon(.agent, size: 12)
-                        .foregroundStyle(JB.ink3)
                 }
-                Text(store.selectedModel?.displayWithTag ?? "Select model")
-                    .font(.jbMono(11.5))
+                Text(current?.displayWithTag ?? "Select model")
+                    .font(.jb(11.5))
                     .foregroundStyle(JB.ink2)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")

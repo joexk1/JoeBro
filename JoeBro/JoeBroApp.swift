@@ -118,6 +118,9 @@ struct JoeBroApp: App {
                 .tint(JB.accent)
                 .frame(minWidth: 880, minHeight: 560)
                 .task { await store.bootstrap() }
+                #if DEBUG
+                .task { await DemoShots.run(store: store) }
+                #endif
         }
         .windowStyle(.hiddenTitleBar)
         .commands {

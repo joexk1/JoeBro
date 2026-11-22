@@ -27,7 +27,7 @@ struct MessageBotTab: View {
         Form {
             Section("Telegram") {
                 Toggle("Enable Message Bot", isOn: $enabled).jbToggle()
-                SecureField("Bot token", text: $token).font(.jbMono(12))
+                SecureField("Bot token", text: $token).font(.jb(12))
                 TextField("Allowed Telegram IDs (comma-separated)", text: $allowedIDs)
                 Text("Token from @BotFather. Leave IDs blank to allow anyone.")
                     .font(.jbCaption)
@@ -43,7 +43,7 @@ struct MessageBotTab: View {
             Section("System prompt") {
                 TextEditor(text: $systemPrompt)
                     .padding(6).jbSurface(.raised, radius: JB.rControl)
-                    .font(.jbMono(12))
+                    .font(.jb(12))
                     .scrollContentBackground(.hidden)
                     .frame(height: 110)
             }

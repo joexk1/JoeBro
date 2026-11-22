@@ -16,7 +16,7 @@ struct ExtrasShell<Actions: View, Content: View>: View {
                 actions
             }
             .padding(.horizontal, JB.s4).padding(.vertical, 10)
-            .jbSurface(.chrome, radius: nil)
+            .jbSurface(.chrome, radius: JB.rPanel)
             content.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }

@@ -61,7 +61,7 @@ struct PluginPanelsView: View {
                                         .foregroundStyle(sel ? JB.accent : JB.ink2)
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(e.panel.title).font(.jb(13, sel ? .semibold : .medium))
-                                        Text(e.plugin.name).font(.jbMono(10.5)).foregroundStyle(JB.ink3)
+                                        Text(e.plugin.name).font(.jb(10.5)).foregroundStyle(JB.ink3)
                                     }
                                     Spacer(minLength: 0)
                                 }

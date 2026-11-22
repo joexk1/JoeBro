@@ -18,7 +18,15 @@ struct InboxPanel: View {
                     withAnimation(JB.snap) { selection = Set(list.map(\.id)) }
                 }
                 .buttonStyle(JBButtonStyle(kind: .ghost, compact: true))
-                Button("Clear all") { remove(list.map(\.id), label: "Cleared inbox") }
+                Button("Clear all") {
+                    withAnimation(JB.smooth) { hidden.formUnion(list.map(\.id)) }
+                    Task {
+                        await APIClient.shared.markInboxRead(nil)
+                        await APIClient.shared.clearInbox()
+                        await load()
+                        hidden = []
+                    }
+                }
                     .buttonStyle(JBButtonStyle(kind: .ghost, compact: true))
             }
         } content: {
@@ -81,14 +89,15 @@ struct InboxPanel: View {
                         .foregroundStyle(JB.ink2)
                         .textSelection(.enabled)
                 }
-                if n.kind == "coding_approval", !n.source.isEmpty {
+                if n.kind == "coding_approval", !n.source.isEmpty, !n.read,
+                   let d = parseISO(n.createdAt ?? ""), Date().timeIntervalSince(d) < 15 * 60 {
                     AgentApprovalButtons(agentID: n.source) {
                         await APIClient.shared.markInboxRead(n.id); await load()
                     }
                     .padding(.top, 2)
                 }
                 Text(relativeDate(n.createdAt))
-                    .font(.jbMono(10.5))
+                    .font(.jb(10.5))
                     .foregroundStyle(JB.ink3)
             }
             Spacer()

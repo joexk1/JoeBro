@@ -98,7 +98,7 @@ struct NotesPanel: View {
             }
             if let due = note.dueDate {
                 Label(relativeDate(due), systemImage: "alarm")
-                    .font(.jbMono(10.5))
+                    .font(.jb(10.5))
                     .foregroundStyle(JB.ink3)
             }
         }

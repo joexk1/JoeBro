@@ -30,7 +30,7 @@ struct EmailPanel: View {
                 }
             } label: {
                 Label(folder, systemImage: "folder")
-                    .font(.jbMono(11.5))
+                    .font(.jb(11.5))
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -161,7 +161,7 @@ struct EmailPanel: View {
             if !selection.isEmpty {
                 HStack(spacing: 10) {
                     Text("\(selection.count) selected")
-                        .font(.jbMono(11, .medium))
+                        .font(.jb(11, .medium))
                     Button(allSelected ? "None" : "All") {
                         if case .loaded(let list) = emails {
                             withAnimation(JB.snap) {
@@ -442,7 +442,7 @@ private struct EmailRow: View {
                     Image(systemName: "paperclip").font(.jb(9)).foregroundStyle(JB.ink3)
                 }
                 Text(relativeDate(mail.date))
-                    .font(.jbMono(10.5))
+                    .font(.jb(10.5))
                     .foregroundStyle(JB.ink3)
             }
             Text(mail.subject ?? "(no subject)")
@@ -518,13 +518,13 @@ private struct EmailDetailView: View {
                     Text(detail.fromName ?? detail.fromAddress ?? "")
                         .font(.jb(13, .medium))
                     if detail.fromName != nil, let a = detail.fromAddress {
-                        Text(a).font(.jbMono(11)).foregroundStyle(JB.ink3).lineLimit(1)
+                        Text(a).font(.jb(11)).foregroundStyle(JB.ink3).lineLimit(1)
                     }
                     Spacer()
-                    Text(relativeDate(detail.date)).font(.jbMono(11)).foregroundStyle(JB.ink3)
+                    Text(relativeDate(detail.date)).font(.jb(11)).foregroundStyle(JB.ink3)
                 }
                 if let to = detail.to, !to.isEmpty {
-                    Text("to \(to)").font(.jbMono(11)).foregroundStyle(JB.ink3).lineLimit(1)
+                    Text("to \(to)").font(.jb(11)).foregroundStyle(JB.ink3).lineLimit(1)
                 }
                 if let atts = detail.attachments, !atts.isEmpty {
                     HStack(spacing: 6) {
@@ -537,7 +537,7 @@ private struct EmailDetailView: View {
                                 }
                             } label: {
                                 Label(a.filename ?? "file", systemImage: "paperclip")
-                                    .font(.jbMono(11))
+                                    .font(.jb(11))
                                     .lineLimit(1)
                             }
                             .buttonStyle(JBButtonStyle(kind: .secondary, compact: true))
@@ -699,7 +699,7 @@ struct EmailComposeSheet: View {
                     ForEach(attachments, id: \.token) { a in
                         HStack(spacing: 4) {
                             Image(systemName: "paperclip").font(.jb(10))
-                            Text(a.filename).font(.jbMono(11)).lineLimit(1)
+                            Text(a.filename).font(.jb(11)).lineLimit(1)
                             Button {
                                 attachments.removeAll { $0.token == a.token }
                             } label: {

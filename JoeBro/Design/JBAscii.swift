@@ -42,41 +42,42 @@ struct JBSpinner: View {
 struct JBScrambleText: View {
     let text: String
     var active = false
-    var font: Font = .jbMono(12)
+    var font: Font = .jb(13)
     var tint: Color = JB.ink2
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var start = Date()
-    private static let noise = Array("░▒▓<>/\\|=+*#%@$&01")
+
+    private var label: String { text.prefix(1).uppercased() + text.dropFirst() }
 
     var body: some View {
-        if reduceMotion {
-            Text(text).font(font).foregroundStyle(tint)
+        if active && !reduceMotion {
+            TimelineView(.animation(minimumInterval: 1.0 / 30)) { tl in
+                let t = tl.date.timeIntervalSinceReferenceDate
+                HStack(spacing: 6) {
+                    // A soft light sweeps across the label…
+                    Text(label).font(font).foregroundStyle(tint.opacity(0.55))
+                        .overlay {
+                            GeometryReader { g in
+                                let w = g.size.width, p = (t.truncatingRemainder(dividingBy: 1.8)) / 1.8
+                                LinearGradient(colors: [.clear, tint, .clear], startPoint: .leading, endPoint: .trailing)
+                                    .frame(width: max(40, w * 0.45))
+                                    .offset(x: -w * 0.45 + p * (w * 1.45))
+                            }
+                            .mask(Text(label).font(font))
+                        }
+                    // …and a three-cell dither trail breathes after it.
+                    HStack(spacing: 1.5) {
+                        ForEach(0..<3, id: \.self) { i in
+                            let v = 0.5 + 0.5 * sin(t * 5 - Double(i) * 0.9)
+                            Text(["░", "▒", "▓"][min(2, Int(v * 3))])
+                                .font(.jbMono(10))
+                                .foregroundStyle(JB.accent.opacity(0.35 + 0.5 * v))
+                        }
+                    }
+                }
+            }
         } else {
-            TimelineView(.periodic(from: .now, by: 0.05)) { tl in
-                Text(frame(at: tl.date)).font(font).foregroundStyle(tint)
-            }
-            .onAppear { start = Date() }
-            .accessibilityLabel(text)
+            Text(label).font(font).foregroundStyle(tint)
         }
-    }
-
-    private func frame(at date: Date) -> String {
-        let chars = Array(text)
-        let elapsed = date.timeIntervalSince(start)
-        let tick = Int(date.timeIntervalSinceReferenceDate * 20)
-        var out = ""
-        for (i, c) in chars.enumerated() {
-            if c == " " { out.append(" "); continue }
-            let revealAt = Double(i) * 0.035 + 0.12
-            var scrambled = elapsed < revealAt
-            if active && !scrambled {
-                // A soft travelling band of noise keeps "thinking" alive.
-                let band = (tick / 2) % (chars.count + 6)
-                scrambled = abs(band - i) <= 0 && (tick + i) % 3 == 0
-            }
-            out.append(scrambled ? Self.noise[(tick &+ i &* 7) % Self.noise.count] : c)
-        }
-        return out
     }
 }
 
@@ -166,71 +167,14 @@ struct JBFace: View {
 /// "JOEBRO" in a 5×7 dot matrix. Dots switch on in a scatter when it
 /// appears, then a faint sparkle travels across now and then.
 struct JBWordmark: View {
-    var text = "JOEBRO"
+    var text = "JoeBro"
     var dot: CGFloat = 3
     var gap: CGFloat = 1.6
     var tint: Color = JB.ink
     var animated = true
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var start = Date()
-
-    private static let glyphs: [Character: [String]] = [
-        "J": ["..###", "....#", "....#", "....#", "#...#", "#...#", ".###."],
-        "O": [".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
-        "E": ["#####", "#....", "#....", "####.", "#....", "#....", "#####"],
-        "B": ["####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."],
-        "R": ["####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#"],
-        "N": ["#...#", "##..#", "#.#.#", "#..##", "#...#", "#...#", "#...#"],
-        "G": [".###.", "#...#", "#....", "#.###", "#...#", "#...#", ".###."],
-        "H": ["#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
-        "T": ["#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."],
-        "I": [".###.", "..#..", "..#..", "..#..", "..#..", "..#..", ".###."],
-        "S": [".####", "#....", "#....", ".###.", "....#", "....#", "####."],
-        "A": [".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
-        "W": ["#...#", "#...#", "#...#", "#.#.#", "#.#.#", "##.##", "#...#"],
-        "K": ["#...#", "#..#.", "#.#..", "##...", "#.#..", "#..#.", "#...#"],
-        " ": [".....", ".....", ".....", ".....", ".....", ".....", "....."],
-    ]
-
-    private var cells: [(x: Int, y: Int, on: Bool)] {
-        var out: [(Int, Int, Bool)] = []
-        for (ci, ch) in text.uppercased().enumerated() {
-            let g = Self.glyphs[ch] ?? Self.glyphs[" "]!
-            for (y, row) in g.enumerated() {
-                for (x, c) in row.enumerated() { out.append((ci * 6 + x, y, c == "#")) }
-            }
-        }
-        return out
-    }
-
     var body: some View {
-        let cols = text.count * 6 - 1
-        let w = CGFloat(cols) * (dot + gap) - gap
-        let h = 7 * (dot + gap) - gap
-        let still = reduceMotion || !animated
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: still)) { tl in
-            let t = still ? 99 : tl.date.timeIntervalSince(start)
-            Canvas { ctx, _ in
-                for c in cells {
-                    let seed = Double((c.x &* 73 &+ c.y &* 151) % 97) / 97
-                    let rect = CGRect(x: CGFloat(c.x) * (dot + gap), y: CGFloat(c.y) * (dot + gap), width: dot, height: dot)
-                    let path = Path(roundedRect: rect, cornerRadius: dot * 0.28)
-                    if c.on {
-                        let appear = min(1, max(0, (t - seed * 0.6) / 0.18))
-                        // A slow sweep brightens a column band every ~6s.
-                        let sweep = (t.truncatingRemainder(dividingBy: 6.5)) * 14 - 8
-                        let near = max(0, 1 - abs(Double(c.x) - sweep) / 3)
-                        ctx.fill(path, with: .color(tint.opacity(appear * (0.86 + 0.14 * near))))
-                    } else {
-                        ctx.fill(path, with: .color(tint.opacity(0.035)))
-                    }
-                }
-            }
-            .frame(width: w, height: h)
-        }
-        .frame(width: w, height: h)
-        .onAppear { start = Date() }
-        .accessibilityLabel(text)
+        Text(text).font(.jb(dot * 10, .semibold)).tracking(-dot * 0.35).foregroundStyle(tint)
+            .accessibilityLabel("JoeBro")
     }
 }
 
@@ -241,30 +185,9 @@ struct JBDotNumber: View {
     let value: String
     var dot: CGFloat = 2
     var tint: Color = JB.ink
-    private static let digits: [Character: [String]] = [
-        "0": ["###", "#.#", "#.#", "#.#", "###"], "1": [".#.", "##.", ".#.", ".#.", "###"],
-        "2": ["###", "..#", "###", "#..", "###"], "3": ["###", "..#", ".##", "..#", "###"],
-        "4": ["#.#", "#.#", "###", "..#", "..#"], "5": ["###", "#..", "###", "..#", "###"],
-        "6": ["###", "#..", "###", "#.#", "###"], "7": ["###", "..#", ".#.", ".#.", ".#."],
-        "8": ["###", "#.#", "###", "#.#", "###"], "9": ["###", "#.#", "###", "..#", "###"],
-        ":": ["...", ".#.", "...", ".#.", "..."], "+": ["...", ".#.", "###", ".#.", "..."],
-    ]
     var body: some View {
-        let chars = Array(value)
-        let step = dot * 1.5
-        Canvas { ctx, _ in
-            for (i, ch) in chars.enumerated() {
-                guard let g = Self.digits[ch] else { continue }
-                for (y, row) in g.enumerated() {
-                    for (x, c) in row.enumerated() where c == "#" {
-                        let r = CGRect(x: CGFloat(i * 4 + x) * step, y: CGFloat(y) * step, width: dot, height: dot)
-                        ctx.fill(Path(ellipseIn: r), with: .color(tint))
-                    }
-                }
-            }
-        }
-        .frame(width: CGFloat(chars.count * 4 - 1) * step, height: 5 * step)
-        .accessibilityLabel(value)
+        Text(value).font(.jb(max(12, dot * 6.5), .semibold)).monospacedDigit().foregroundStyle(tint)
+            .contentTransition(.numericText())
     }
 }
 

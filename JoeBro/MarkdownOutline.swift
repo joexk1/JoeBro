@@ -66,7 +66,7 @@ struct DocOutlineView: View {
                 }
             }
         }
-        .frame(width: 200)
+        .frame(width: 168)
         .background(JB.raised.opacity(0.5))
         .overlay(alignment: .leading) { Rectangle().fill(JB.line).frame(width: 1) }
     }
@@ -85,5 +85,47 @@ struct DocOutlineView: View {
         }
         .buttonStyle(.plain)
         .jbHoverRow(selected: selected)
+    }
+}
+
+
+/// Compact outline for narrow editors: one tick per heading (longer = higher
+/// level), the current section in accent. Hover opens the full list.
+struct DocOutlineRail: View {
+    let model: DocOutlineModel
+    let onSelect: (MDHeading) -> Void
+    @State private var open = false
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 5) {
+            ForEach(model.headings.prefix(40)) { h in
+                let active = model.active == h.id
+                Button { onSelect(h) } label: {
+                    Capsule()
+                        .fill(active ? JB.accent : JB.ink3.opacity(h.level <= 2 ? 0.9 : 0.5))
+                        .frame(width: CGFloat(max(4, 14 - (h.level - 1) * 3)), height: 2)
+                        .frame(width: 18, height: 6, alignment: .trailing)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(h.title)
+            }
+        }
+        .padding(.vertical, 14)
+        .padding(.trailing, 8)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .contentShape(Rectangle())
+        .onHover { h in withAnimation(JB.snap) { open = h } }
+        .overlay(alignment: .topTrailing) {
+            if open {
+                DocOutlineView(model: model, onSelect: { onSelect($0) })
+                    .frame(maxHeight: 420)
+                    .jbFloating()
+                    .padding(.trailing, 4)
+                    .padding(.top, 6)
+                    .transition(.opacity.combined(with: .offset(x: 6)))
+                    .onHover { h in withAnimation(JB.snap) { open = h } }
+            }
+        }
     }
 }

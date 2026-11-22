@@ -15,14 +15,14 @@ struct ThinkingSection: View {
             } label: {
                 HStack(spacing: 6) {
                     if inProgress {
-                        JBScrambleText(text: "thinking", active: true, font: .jbMono(11.5))
+                        JBScrambleText(text: "thinking", active: true, font: .jb(11.5))
                     } else {
                         Text(label)
-                            .font(.jbMono(11.5))
+                            .font(.jb(11.5))
                             .foregroundStyle(JB.ink3)
                         if let seconds {
                             Text(String(format: "%.1fs", seconds))
-                                .font(.jbMono(11))
+                                .font(.jb(11))
                                 .foregroundStyle(JB.ink3)
                         }
                         Image(systemName: "chevron.right")
@@ -72,7 +72,7 @@ struct MessageBubbleView: View, Equatable {
             if message.isUser {
                 userBubble
             } else {
-                assistantBubble
+                assistantBubble.modifier(ReadableOnBackdrop())
             }
         }
     }
@@ -82,7 +82,7 @@ struct MessageBubbleView: View, Equatable {
         HStack(spacing: 10) {
             Rectangle().fill(JB.line).frame(height: 1)
             Text("compacted")
-                .font(.jbMono(11))
+                .font(.jb(11))
                 .foregroundStyle(JB.ink3)
             Rectangle().fill(JB.line).frame(height: 1)
         }
@@ -159,7 +159,7 @@ struct MessageBubbleView: View, Equatable {
                     ProviderLogoView(model: model, size: 11)
                         .foregroundStyle(JB.ink3)
                     Text(model.components(separatedBy: "/").last ?? model)
-                        .font(.jbMono(11))
+                        .font(.jb(11))
                         .foregroundStyle(JB.ink3)
                 }
             }
@@ -226,7 +226,7 @@ struct MessageBubbleView: View, Equatable {
                         .help("Context window used")
                     }
                 }
-                .font(.jbMono(10.5))
+                .font(.jb(10.5))
                 .foregroundStyle(JB.ink3)
             }
         }
@@ -284,7 +284,7 @@ struct MessageBubbleView: View, Equatable {
                     Link(destination: URL(string: src.url) ?? URL(string: "about:blank")!) {
                         HStack(spacing: 6) {
                             Text("\(i + 1)")
-                                .font(.jbMono(10, .medium))
+                                .font(.jb(10, .medium))
                                 .foregroundStyle(JB.accent)
                             Text(src.title)
                                 .font(.jb(11))
@@ -335,7 +335,7 @@ private struct WorkspaceActionButtons: View {
                             open(action.target)
                         } label: {
                             Label(action.label, systemImage: action.icon)
-                                .font(.jbMono(11))
+                                .font(.jb(11))
                                 .foregroundStyle(JB.ink2)
                         }
                         .buttonStyle(.plain)
@@ -400,7 +400,7 @@ private struct WorkspaceActionButtons: View {
 
 struct ThinkingDots: View {
     var body: some View {
-        JBScrambleText(text: "thinking", active: true, font: .jbMono(11.5))
+        JBScrambleText(text: "thinking", active: true, font: .jb(11.5))
             .padding(.vertical, 4)
     }
 }
@@ -420,7 +420,7 @@ private struct ChatUsedList: View {
                 HStack(spacing: 5) {
                     JBIcon(glyph, size: 11)
                     Text(title)
-                        .font(.jbMono(10.5))
+                        .font(.jb(10.5))
                     Image(systemName: "chevron.right")
                         .font(.jb(7, .bold))
                         .rotationEffect(.degrees(expanded ? 90 : 0))
@@ -556,11 +556,11 @@ private struct ToolActivityView: View {
                 HStack(spacing: 8) {
                     JBStatusDot(color: failed && !running ? JB.danger : (running ? JB.live : JB.ink3), live: running, size: 6)
                     Text(summary)
-                        .font(.jbMono(11.5))
+                        .font(.jb(11.5))
                         .foregroundStyle(JB.ink2)
                         .lineLimit(1)
                     Text("\(calls.count)")
-                        .font(.jbMono(11))
+                        .font(.jb(11))
                         .foregroundStyle(JB.ink3)
                     Image(systemName: "chevron.right")
                         .font(.jb(7, .bold))
@@ -599,12 +599,12 @@ private struct ToolActivityStep: View {
                 HStack(spacing: 8) {
                     JBStatusDot(color: failed ? JB.danger : (message.toolDone ? JB.ink3 : JB.live), live: !message.toolDone, size: 5)
                     Text(prettyToolName(message.toolName) + (message.groupedToolCount > 1 ? " (\(message.groupedToolCount))" : ""))
-                        .font(.jbMono(11.5))
+                        .font(.jb(11.5))
                         .foregroundStyle(JB.ink2)
                         .lineLimit(1)
                     if !expanded, let cmd = message.command, !cmd.isEmpty {
                         Text(cmd)
-                            .font(.jbMono(11))
+                            .font(.jb(11))
                             .foregroundStyle(JB.ink3)
                             .lineLimit(1)
                     }
@@ -617,11 +617,11 @@ private struct ToolActivityStep: View {
             if expanded {
                 VStack(alignment: .leading, spacing: 6) {
                     if let command = message.command, !command.isEmpty {
-                        Text(command).font(.jbMono(11)).foregroundStyle(JB.ink).textSelection(.enabled)
+                        Text(command).font(.jb(11)).foregroundStyle(JB.ink).textSelection(.enabled)
                     }
                     if let output = message.toolOutput, !output.isEmpty {
                         ScrollView {
-                            Text(output).font(.jbMono(11)).foregroundStyle(JB.ink2).textSelection(.enabled)
+                            Text(output).font(.jb(11)).foregroundStyle(JB.ink2).textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .frame(maxHeight: 220)
@@ -655,4 +655,21 @@ private func toolActivityText(_ raw: String, running: Bool) -> String {
     if name.contains("agent") { return running ? "Working with agents" : "Checked agents" }
     if name == "bash" || name == "python" { return running ? "Running a command" : "Finished command steps" }
     return running ? "Working" : "Finished steps"
+}
+
+
+/// Over a photo or animated backdrop, assistant text sits on a card that
+/// follows the panel-opacity slider; on the plain ground it stays bare.
+private struct ReadableOnBackdrop: ViewModifier {
+    @State private var look = JBAppearance.shared
+    func body(content: Content) -> some View {
+        if look.backdrop == .palette {
+            content
+        } else {
+            content
+                .padding(.horizontal, 14).padding(.vertical, 10)
+                .background(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).fill(JB.readFill))
+                .overlay(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).strokeBorder(JB.line, lineWidth: 1))
+        }
+    }
 }

@@ -30,8 +30,6 @@ struct SidebarView: View {
         @Bindable var store = store
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                JBIcon(.agent, size: 17)
-                    .foregroundStyle(JB.ink)
                 Text("JoeBro")
                     .font(.jb(15, .semibold))
                     .tracking(-0.2)
@@ -129,7 +127,6 @@ struct SidebarView: View {
                         }
                         .transition(.opacity.combined(with: .move(edge: .top)))
                         Group {
-                            navRow(.plugins)
                             navRow(.research)
                             navRow(.inbox)
                             navRow(.aiCheck)
@@ -366,7 +363,7 @@ struct SidebarView: View {
                     .foregroundStyle(JB.ink)
                     .lineLimit(1)
                 Text("\(count)")
-                    .font(.jbMono(10.5))
+                    .font(.jb(10.5))
                     .foregroundStyle(JB.ink3)
                 if pinnedFolders.contains(name) {
                     Image(systemName: "pin.fill")
@@ -554,7 +551,7 @@ struct FileTreeSection: View {
                 .buttonStyle(.plain)
                 if let wd = store.workdirPath {
                     Text((wd as NSString).lastPathComponent)
-                        .font(.jbMono(10.5))
+                        .font(.jb(10.5))
                         .foregroundStyle(JB.ink3)
                         .lineLimit(1)
                 }
@@ -758,7 +755,7 @@ private struct SessionRow: View {
                     .foregroundStyle(JB.ink3)
             }
             Text(timeLabel)
-                .font(.jbMono(10.5))
+                .font(.jb(10.5))
                 .foregroundStyle(JB.ink3)
         }
         .padding(.horizontal, 10)

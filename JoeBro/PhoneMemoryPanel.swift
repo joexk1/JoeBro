@@ -18,7 +18,7 @@ struct PhoneMemoryView: View {
                     LazyVStack(spacing: 2) {
                         ForEach(files, id: \.self) { f in
                             Button { selected = f } label: {
-                                Text(f).font(.jbMono(12)).foregroundStyle(selected == f ? JB.ink : JB.ink2)
+                                Text(f).font(.jb(12)).foregroundStyle(selected == f ? JB.ink : JB.ink2)
                                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 6)
                                     .jbHoverRow(selected: selected == f)
                             }.buttonStyle(.plain)
@@ -38,12 +38,12 @@ struct PhoneMemoryView: View {
                     JBEmptyState(art: .files, text: "Pick a file")
                 } else {
                     TextEditor(text: $text)
-                        .font(.jbMono(12.5)).foregroundStyle(JB.ink)
+                        .font(.jb(12.5)).foregroundStyle(JB.ink)
                         .scrollContentBackground(.hidden)
                         .padding(8)
                         .onChange(of: text) { scheduleSave() }
                 }
-                if let error { Text(error).font(.jbMono(11)).foregroundStyle(JB.danger).padding([.horizontal, .bottom], 10) }
+                if let error { Text(error).font(.jb(11)).foregroundStyle(JB.danger).padding([.horizontal, .bottom], 10) }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .jbSurface(.panel)

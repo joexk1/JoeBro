@@ -29,7 +29,7 @@ STATUSES = ("queued", "running", "review", "approved", "rejected", "failed", "ca
 EDITABLE = ("title", "repo", "prompt", "agent", "model", "host", "window_start", "window_end", "run_after",
             "max_minutes", "budget_usd", "test_command", "on_approve")
 DEFAULTS = {"enabled": True, "window_start": "23:00", "window_end": "07:00", "on_approve": "keep", "parallel": 1,
-            "default_agent": "claude", "max_minutes": 60, "budget_usd": 5.0}
+            "default_agent": "claude", "max_minutes": 60, "budget_usd": 5.0, "default_host": ""}
 MAX_MINUTES, MAX_BUDGET = 240, 50.0
 NODE_WAIT = 45             # seconds the start tool waits for a node to pick a session up
 _NODES = {}              # node/host name -> last time it polled (a node that polls every ~30 s is "up")
@@ -195,6 +195,8 @@ class NightShiftMixin:
                 v = max(0.0, min(float(v), MAX_BUDGET))
             elif k == "enabled":
                 v = bool(v)
+            elif k == "default_host":
+                v = str(v or "").strip()[:64]
             self.set_pref("night_shift_" + k, v)
         return self.night_config()
 
@@ -259,6 +261,8 @@ class NightShiftMixin:
         f.setdefault("title", f["prompt"].splitlines()[0][:70])
         f.setdefault("max_minutes", cfg["max_minutes"])
         f.setdefault("budget_usd", cfg["budget_usd"])       # every task has a cap
+        if not f.get("host") and cfg.get("default_host"):
+            f["host"] = cfg["default_host"]                  # "Run on" from the Night Shift header
         tid = "ns_" + os.urandom(5).hex()
         now = time.time()
         pos = (self.store.one("SELECT COALESCE(MAX(position),0)+1 AS p FROM night_tasks") or {}).get("p", 1)

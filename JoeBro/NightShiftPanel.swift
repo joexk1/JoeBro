@@ -6,6 +6,7 @@ struct NightShiftPanel: View {
     @State private var page = Page.review
     @State private var tasks: [NightTask] = []
     @State private var hosts: [NightHost] = []
+    @State private var runOn = ""
     @State private var enabled = true
     @State private var composing = false
     @State private var followUp: NightTask?
@@ -17,11 +18,39 @@ struct NightShiftPanel: View {
     private var reviews: [NightTask] { tasks.filter(\.needsReview) }
     private var queue: [NightTask] { tasks.filter(\.isOpen) }
     private var multiHost: Bool { hosts.count > 1 }
+    /// The chosen computer, else the Mac (the backend's fallback for unpinned tasks).
+    private var currentHost: String {
+        if !runOn.isEmpty { return runOn }
+        return hosts.first { $0.label == "Mac" }?.id ?? hosts.first?.id ?? ""
+    }
 
     var body: some View {
         ExtrasShell(title: "Night Shift", glyph: .nightShift) {
             Toggle("Overnight", isOn: Binding(get: { enabled }, set: { v in enabled = v; Task { try? await APIClient.shared.nightConfig(enabled: v) } }))
-                .toggleStyle(JBSwitchStyle()).controlSize(.small).font(.jbMono(11)).foregroundStyle(JB.ink2)
+                .toggleStyle(JBSwitchStyle()).controlSize(.small).font(.jb(11)).foregroundStyle(JB.ink2)
+            if multiHost {
+                Menu {
+                    ForEach(hosts) { h in
+                        Button {
+                            runOn = h.id
+                            Task { try? await APIClient.shared.nightConfig(defaultHost: h.id) }
+                        } label: {
+                            if h.id == currentHost { Label(h.label, systemImage: "checkmark") }
+                            else { Text(h.up == false ? h.label + " (offline)" : h.label) }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("Runs on").foregroundStyle(JB.ink3)
+                        Text(hosts.first { $0.id == currentHost }?.label ?? "Mac").foregroundStyle(JB.ink)
+                        Image(systemName: "chevron.down").font(.jb(8, .semibold)).foregroundStyle(JB.ink3)
+                    }
+                    .font(.jb(11.5))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Where Night Shift agents run")
+            }
             ExtrasIconButton(symbol: "plus", help: "Queue a task") { composing = true }
             ExtrasIconButton(symbol: "arrow.clockwise", help: "Refresh") { Task { await load() } }
         } content: {
@@ -32,13 +61,13 @@ struct NightShiftPanel: View {
                             HStack(spacing: 6) {
                                 Text(p.rawValue)
                                 let n = p == .review ? reviews.count : queue.count
-                                if n > 0 { Text("\(n)").font(.jbMono(10.5)).foregroundStyle(page == p ? JB.accent : JB.ink3) }
+                                if n > 0 { Text("\(n)").font(.jb(10.5)).foregroundStyle(page == p ? JB.accent : JB.ink3) }
                             }
                         }
                         .buttonStyle(JBButtonStyle(kind: page == p ? .secondary : .ghost, compact: true))
                     }
                     Spacer()
-                    if let note { Text(note).font(.jbMono(11)).foregroundStyle(JB.danger).lineLimit(1) }
+                    if let note { Text(note).font(.jb(11)).foregroundStyle(JB.danger).lineLimit(1) }
                 }
                 ScrollView {
                     LazyVStack(spacing: JB.s2) {
@@ -60,7 +89,7 @@ struct NightShiftPanel: View {
             }
         }
         .task { await load() }
-        .sheet(isPresented: $composing) { NightComposerSheet(hosts: hosts) { Task { await load() } } }
+        .sheet(isPresented: $composing) { NightComposerSheet(hosts: hosts, defaultHost: currentHost) { Task { await load() } } }
         .sheet(item: $diffTask) { NightDiffSheet(task: $0) }
         .alert("Follow-up", isPresented: Binding(get: { followUp != nil }, set: { if !$0 { followUp = nil } })) {
             TextField("What should change?", text: $followUpText)
@@ -87,17 +116,17 @@ struct NightShiftPanel: View {
                 Spacer()
                 if let ok = t.result?.tests?.passed { JBChip(text: ok ? "tests ok" : "tests failed", tint: ok ? JB.live : JB.danger) }
             }
-            Text(meta(t)).font(.jbMono(11)).foregroundStyle(JB.ink3)
+            Text(meta(t)).font(.jb(11)).foregroundStyle(JB.ink3)
             if let d = t.result?.diff {
                 HStack(spacing: 12) {
                     Text("\(d.files ?? 0) files").foregroundStyle(JB.ink2)
                     Text("+\(d.insertions ?? 0)").foregroundStyle(JB.live)
                     Text("-\(d.deletions ?? 0)").foregroundStyle(JB.danger)
                     if let s = t.result?.durationS { Text("\(max(1, Int(s / 60)))m").foregroundStyle(JB.ink3) }
-                }.font(.jbMono(11.5))
+                }.font(.jb(11.5))
                 ForEach(d.fileList?.prefix(3).map { $0 } ?? [], id: \.path) { f in
                     HStack { Text(f.path).lineLimit(1).truncationMode(.head); Spacer(); Text("+\(f.added ?? 0) -\(f.removed ?? 0)").foregroundStyle(JB.ink3) }
-                        .font(.jbMono(11)).foregroundStyle(JB.ink2)
+                        .font(.jb(11)).foregroundStyle(JB.ink2)
                 }
             }
             if let s = t.result?.summary ?? t.error, !s.isEmpty { Text(s).font(.jb(12)).foregroundStyle(JB.ink2).fixedSize(horizontal: false, vertical: true) }
@@ -117,7 +146,7 @@ struct NightShiftPanel: View {
             if t.state == "running" { JBStatusDot(live: true) } else { JBIcon(.nightShift, size: 14).foregroundStyle(JB.ink3) }
             VStack(alignment: .leading, spacing: 2) {
                 Text(t.name).font(.jb(12.5, .medium)).foregroundStyle(JB.ink).lineLimit(2)
-                Text(meta(t)).font(.jbMono(11)).foregroundStyle(JB.ink3)
+                Text(meta(t)).font(.jb(11)).foregroundStyle(JB.ink3)
             }
         } actions: {
             HStack(spacing: 2) {
@@ -151,6 +180,7 @@ struct NightShiftPanel: View {
             let r = try await APIClient.shared.nightShift()
             withAnimation(JB.smooth) { tasks = r.tasks }
             hosts = r.hosts; enabled = r.config?.enabled ?? true; note = nil
+            runOn = r.config?.defaultHost ?? ""
         }
         catch where error.isNotFound { tasks = []; note = nil }
         catch { note = error.localizedDescription }
@@ -169,12 +199,12 @@ struct NightDiffSheet: View {
             ExtrasSheetHeader(title: task.name) { Button("Done") { dismiss() }.buttonStyle(JBButtonStyle(kind: .secondary, compact: true)) }
             VStack(alignment: .leading, spacing: JB.s2) {
                 if let out = task.result?.tests?.outputTail, !out.isEmpty {
-                    Text(out).font(.jbMono(11)).foregroundStyle(JB.ink2).jbCard(padding: JB.s2)
+                    Text(out).font(.jb(11)).foregroundStyle(JB.ink2).jbCard(padding: JB.s2)
                 }
                 ForEach(task.result?.learned ?? [], id: \.self) { l in
                     HStack(alignment: .top, spacing: 6) { JBIcon(.memory, size: 13).foregroundStyle(JB.accent); Text(l).font(.jb(12)).foregroundStyle(JB.ink2) }
                 }
-                ScrollView { Text(diff).font(.jbMono(11)).foregroundStyle(JB.ink).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+                ScrollView { Text(diff).font(.jb(11)).foregroundStyle(JB.ink).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
             }.padding(JB.s3)
         }
         .frame(minWidth: 640, minHeight: 440).background(JB.surface)
@@ -184,6 +214,7 @@ struct NightDiffSheet: View {
 
 struct NightComposerSheet: View {
     var hosts: [NightHost] = []
+    var defaultHost = ""
     let saved: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var repo = ""
@@ -207,8 +238,9 @@ struct NightComposerSheet: View {
                 TextField("What should the agent do?", text: $prompt, axis: .vertical).lineLimit(3...8).focused($focus, equals: .prompt).jbField(focused: focus == .prompt)
                 TextField("Title", text: $title).focused($focus, equals: .title).jbField(focused: focus == .title)
                 CodingTargetFields(agent: $agent, model: $model, host: $host, repo: $repo, hosts: hosts)
+                    .onAppear { if host.isEmpty { host = defaultHost } }
                 TextField("Test command", text: $tests).focused($focus, equals: .tests).jbField(focused: focus == .tests)
-                if let error { Text(error).font(.jbMono(11)).foregroundStyle(JB.danger) }
+                if let error { Text(error).font(.jb(11)).foregroundStyle(JB.danger) }
             }.padding(JB.s4)
         }.frame(width: 540).background(JB.surface)
     }

@@ -16,6 +16,7 @@ struct EditorPane: View {
     @State private var richFontName: String = "Calibri"
     @State private var richExtraSaveTask: Task<Void, Never>?
     @State private var outline = DocOutlineModel()
+    @State private var paneWidth: CGFloat = 1000
     @AppStorage("editorOutlineVisible") private var outlineVisible = true
     @State private var previewProxy: ScrollViewProxy?
 
@@ -101,7 +102,7 @@ struct EditorPane: View {
                         JBIcon(.spark, size: 13).foregroundStyle(JB.accent)
                         Text("JoeBro edited this").font(.jb(12, .medium)).foregroundStyle(JB.ink)
                         Text(changeSummary(old: doc.content, new: pending))
-                            .font(.jbMono(11)).foregroundStyle(JB.ink3)
+                            .font(.jb(11)).foregroundStyle(JB.ink3)
                         Image(systemName: "chevron.right")
                             .font(.jb(8, .semibold))
                             .foregroundStyle(JB.ink3)
@@ -443,7 +444,7 @@ struct EditorPane: View {
                         .overlay(alignment: .topTrailing) {
                             HStack(spacing: 6) {
                                 JBSpinner(size: 10, tint: JB.accent)
-                                Text("writing").font(.jbMono(10.5)).foregroundStyle(JB.ink2)
+                                Text("writing").font(.jb(10.5)).foregroundStyle(JB.ink2)
                             }
                             .padding(.horizontal, 9)
                             .padding(.vertical, 4)
@@ -481,10 +482,17 @@ struct EditorPane: View {
                     }
                 }
                 if md && outlineVisible && !outline.headings.isEmpty {
-                    DocOutlineView(model: outline, onSelect: selectHeading)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                    if paneWidth >= 760 {
+                        DocOutlineView(model: outline, onSelect: selectHeading)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    } else {
+                        DocOutlineRail(model: outline, onSelect: selectHeading)
+                            .transition(.opacity)
+                    }
                 }
             }
+            .background(GeometryReader { g in Color.clear.onAppear { paneWidth = g.size.width }
+                .onChange(of: g.size.width) { _, w in paneWidth = w } })
             .animation(JB.smooth, value: outlineVisible)
 
             Rectangle().fill(JB.line).frame(height: 1)
@@ -568,12 +576,12 @@ struct EditorPane: View {
                         HStack(alignment: .top, spacing: 8) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(s.find)
-                                    .font(.jbMono(10.5))
+                                    .font(.jb(10.5))
                                     .strikethrough()
                                     .foregroundStyle(JB.danger)
                                     .lineLimit(3)
                                 Text(s.replace)
-                                    .font(.jbMono(10.5))
+                                    .font(.jb(10.5))
                                     .foregroundStyle(JB.live)
                                     .lineLimit(3)
                             }
@@ -628,7 +636,7 @@ struct EditorPane: View {
                 Image(systemName: "checkmark").font(.jb(9, .medium)).foregroundStyle(JB.ink3)
             }
         }
-        .font(.jbMono(10.5))
+        .font(.jb(10.5))
         .foregroundStyle(JB.ink3)
         .padding(.horizontal, 12)
         .frame(height: 26)
@@ -661,7 +669,7 @@ struct EmailDocEditor: View {
             EditorTextView(text: $fields.body, monospaced: false)
             Rectangle().fill(JB.line).frame(height: 1)
             HStack {
-                Text("email").font(.jbMono(10.5)).foregroundStyle(JB.ink3)
+                Text("email").font(.jb(10.5)).foregroundStyle(JB.ink3)
                 if let error {
                     Text(error).font(.jbCaption).foregroundStyle(JB.danger).lineLimit(1)
                 }
@@ -785,7 +793,7 @@ struct ViewerControls: View {
         HStack(spacing: 0) {
             Button(action: minus) { Image(systemName: "minus") }
                 .buttonStyle(JBIconButtonStyle(size: 24)).help("Zoom out")
-            Text(label).font(.jbMono(10.5)).foregroundStyle(JB.ink2)
+            Text(label).font(.jb(10.5)).foregroundStyle(JB.ink2)
                 .frame(minWidth: 52).onTapGesture(perform: fit).help("Fit")
             Button(action: plus) { Image(systemName: "plus") }
                 .buttonStyle(JBIconButtonStyle(size: 24)).help("Zoom in")
@@ -807,7 +815,7 @@ struct PDFPreview: View {
                 HStack(spacing: 8) {
                     if model.pages > 0 {
                         Text("\(model.page) / \(model.pages)")
-                            .font(.jbMono(10.5)).foregroundStyle(JB.ink2)
+                            .font(.jb(10.5)).foregroundStyle(JB.ink2)
                             .padding(.horizontal, 9).frame(height: 28)
                             .jbSurface(.raised, radius: JB.rControl)
                     }
@@ -912,9 +920,9 @@ struct DiffView: View {
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, entry in
                     HStack(alignment: .top, spacing: 6) {
                         Text(entry.1 == 1 ? "+" : "−")
-                            .font(.jbMono(10.5, .bold))
+                            .font(.jb(10.5, .bold))
                         Text(entry.0.isEmpty ? " " : entry.0)
-                            .font(.jbMono(10.5))
+                            .font(.jb(10.5))
                             .lineLimit(2)
                     }
                     .foregroundStyle(entry.1 == 1 ? JB.live : JB.danger)
