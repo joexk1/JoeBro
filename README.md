@@ -4,11 +4,22 @@
 
 <h1 align="center">JoeBro</h1>
 
-<p align="center">The Mac workspace for your agents, with a companion iPhone app.</p>
+<p align="center">The local-first Mac workspace for your agents. Your files, your models, your machine.</p>
 
 ![JoeBro on the Mac, with a Codex session asking for approval](assets/readme/hero.png)
 
-JoeBro is a free, open-source Mac workspace for your AI agents: Claude Code, Codex and OpenCode sessions, your own API keys and local models (Ollama, LM Studio) as agents, your files and editor, one memory they all share, and an iPhone companion. It is for people who already use more than one AI tool: a chat with one model, Claude Code on one machine, Codex on another, a local model on a third. JoeBro brings them into one app, with a memory they share and one place to check on them. It is free, and there is no JoeBro server: your data stays on your own devices.
+JoeBro is a free, open-source, local-first Mac workspace for your AI agents. Your files, your chats, your memory and your keys stay on your own Mac. There is no account, no JoeBro server and no telemetry, and nothing leaves your machine unless you choose a cloud model. Run a local model and nothing leaves at all.
+
+Inside it: Claude Code, Codex and OpenCode sessions, your own API keys and local models (Ollama, LM Studio) as agents, your files and editor, one memory they all share, and an iPhone companion that talks only to your Mac. It is for people who use more than one AI tool and don't want to rent their workflow from any of them.
+
+### Why local first
+
+AI is becoming where people think, write and build. That shouldn't depend on someone else's server, account or terms. JoeBro is built on a simple rule: **your AI works for you, on your machine.**
+
+- **Your files stay where they are.** Agents work on the folders you bind, in place. Nothing is uploaded to a JoeBro cloud, because there isn't one.
+- **Your memory is yours.** What your agents learn lives in a local store you can read, edit and delete, not in a vendor's profile of you.
+- **Your models, your choice.** Local models run fully offline. Hosted models use your own keys and go straight to the provider you picked, with Cloak Mode masking secrets first.
+- **No account, no telemetry, no lock-in.** Open source under the GPLv3, so you can read exactly what it does, change it, and keep it running for as long as you like.
 
 **Website:** [joebro.pages.dev](https://joebro.pages.dev/) · **iPhone app:** [JoeBro Mobile](https://github.com/joexk1/JoeBro-Mobile) · **Plugins:** [joebro-plugins](https://github.com/joexk1/joebro-plugins) · **Comparing tools?** [How JoeBro compares](https://joebro.pages.dev/mac-app-for-claude-code-codex-opencode/)
 
