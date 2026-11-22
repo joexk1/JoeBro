@@ -46,7 +46,6 @@ struct ModelMenuItems: View {
         }
         if grouped.isEmpty {
             Text("Add a local endpoint in Settings")
-                .foregroundStyle(.secondary)
         }
     }
 }
@@ -67,18 +66,21 @@ struct ModelPickerMenu: View {
             HStack(spacing: 5) {
                 if let m = store.selectedModel {
                     ProviderLogoView(model: m.modelID, size: 11)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink3)
                 } else {
-                    Image(systemName: "cpu")
-                        .font(.jb(10.5))
+                    JBIcon(.agent, size: 12)
+                        .foregroundStyle(JB.ink3)
                 }
                 Text(store.selectedModel?.displayWithTag ?? "Select model")
-                    .font(.jb(12, .medium))
+                    .font(.jbMono(11.5))
+                    .foregroundStyle(JB.ink2)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.jb(8, .bold))
-                    .foregroundStyle(.secondary)
+                    .font(.jb(8, .semibold))
+                    .foregroundStyle(JB.ink3)
             }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
         }
         .menuStyle(.borderlessButton)
         .fixedSize()

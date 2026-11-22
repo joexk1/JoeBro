@@ -8,65 +8,74 @@ struct ComposerView: View {
     @State private var mic = MicRecorder()
     @State private var showPermissions = false
     @State private var inputHeight: CGFloat = 22
+    @State private var focused = false
+    @State private var slashIndex = 0
+    @State private var slashDismissed = false
+    private let slash = ChatSlashSource.shared
+
+    private var hasContent: Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !store.pendingAttachments.isEmpty
+    }
+
+    /// Suggestions while the text is a single "/token" at the start.
+    private var slashItems: [ChatSlashItem] {
+        guard !slashDismissed, text.hasPrefix("/"), !text.contains(where: \.isWhitespace) else { return [] }
+        return slash.matches(String(text.dropFirst()))
+    }
 
     var body: some View {
         @Bindable var store = store
+        let items = slashItems
         VStack(spacing: 8) {
             if !store.pendingAttachments.isEmpty {
                 attachmentChips
             }
 
-            // Row 1 — input + model picker (matches the web composer)
-            HStack(alignment: .top, spacing: 10) {
-                ZStack(alignment: .topLeading) {
-                    if text.isEmpty {
-                        Text("Message…")
-                            .font(.jb(14))
-                            .foregroundStyle(.tertiary)
-                            .padding(.top, 2)
-                            .padding(.leading, 5)
-                            .allowsHitTesting(false)
-                    }
-                    ChatInputTextView(text: $text, height: $inputHeight, onSend: send)
-                        .frame(height: inputHeight)
+            ZStack(alignment: .topLeading) {
+                if text.isEmpty {
+                    Text("Message")
+                        .font(.jb(14))
+                        .foregroundStyle(JB.ink3)
+                        .padding(.top, 2)
+                        .allowsHitTesting(false)
                 }
-                .padding(.vertical, 4)
-
+                ChatInputTextView(text: $text, height: $inputHeight, focused: $focused,
+                                  onKey: handleKey, onSend: send)
+                    .frame(height: inputHeight)
             }
+            .padding(.vertical, 4)
 
-            // Row 2 — toggles left, mode switches + mic + attach right
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 LitToggle(icon: "magnifyingglass", isOn: $store.useWeb, help: "Web search (agent mode)")
                     .disabled(!store.agentMode)
                     .opacity(store.agentMode ? 1 : 0.35)
-                LitToggle(icon: "apple.terminal", isOn: $store.allowBash, help: "Allow terminal commands (agent mode)")
+                LitToggle(glyph: .coding, isOn: $store.allowBash, help: "Allow terminal commands (agent mode)")
                     .disabled(!store.agentMode)
                     .opacity(store.agentMode ? 1 : 0.35)
 
                 Button {
                     showPermissions.toggle()
                 } label: {
-                    Image(systemName: "lock.fill")
-                        .font(.jb(12))
+                    Image(systemName: "lock")
                         .foregroundStyle(
-                            store.permissionMode == "sandbox" ? Color.secondary :
-                            store.permissionMode == "readonly" ? Color.orange : Color.red)
-                        .contentTransition(.symbolEffect(.replace))
+                            store.permissionMode == "sandbox" ? JB.ink2 :
+                            store.permissionMode == "readonly" ? JB.warn : JB.danger)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(JBIconButtonStyle(size: 26))
                 .help("Agent file access mode")
                 .popover(isPresented: $showPermissions, arrowEdge: .top) {
                     VStack(alignment: .leading, spacing: 2) {
-                        permissionRow("sandbox", "Bound folder", "folder.badge.gearshape", .secondary)
-                        permissionRow("readonly", "Read-only", "eye", .orange)
-                        permissionRow("full", "Full access", "exclamationmark.shield", .red)
+                        permissionRow("sandbox", "Bound folder", "folder", JB.ink2)
+                        permissionRow("readonly", "Read-only", "eye", JB.warn)
+                        permissionRow("full", "Full access", "exclamationmark.triangle", JB.danger)
                         if store.permissionMode == "full" {
-                            Divider().padding(.vertical, 3)
+                            Rectangle().fill(JB.line).frame(height: 1).padding(.vertical, 4)
                             Toggle(isOn: $store.askBeforeCommands) {
-                                Label("Ask before running commands", systemImage: "hand.raised.fill")
+                                Text("Ask before running commands")
                                     .font(.jb(11.5))
+                                    .foregroundStyle(JB.ink)
                             }
-                            .toggleStyle(.switch)
+                            .toggleStyle(JBSwitchStyle())
                             .controlSize(.mini)
                             .padding(.horizontal, 6)
                             .frame(width: 220)
@@ -74,7 +83,7 @@ struct ComposerView: View {
                         }
                     }
                     .padding(8)
-                    .animation(.spring(duration: 0.25), value: store.permissionMode)
+                    .animation(JB.snap, value: store.permissionMode)
                     // Force the popover body to re-evaluate the instant the mode
                     // changes (popover content otherwise snapshots on present).
                     .id(store.permissionMode)
@@ -95,34 +104,45 @@ struct ComposerView: View {
                     }
                 } label: {
                     if mic.isTranscribing {
-                        ProgressView().controlSize(.small)
+                        JBSpinner()
                     } else {
                         Image(systemName: mic.isRecording ? "mic.fill" : "mic")
-                            .foregroundStyle(mic.isRecording ? Color.red : Color.secondary)
+                            .foregroundStyle(mic.isRecording ? JB.danger : JB.ink2)
                             .symbolEffect(.pulse, isActive: mic.isRecording)
                     }
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(JBIconButtonStyle(size: 26))
                 .help(mic.isRecording ? "Stop recording" : "Voice input")
 
                 Button {
                     showFileImporter = true
                 } label: {
-                    Image(systemName: "plus")
-                        .font(.jb(13, .medium))
+                    Image(systemName: "paperclip")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(JBIconButtonStyle(size: 26))
                 .help("Attach files")
 
                 sendButton
             }
-            .buttonStyle(.borderless)
-            .controlSize(.small)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
-        .joeGlassRectInteractive(22)
-        .shadow(color: .black.opacity(0.14), radius: 14, y: 6)
+        .background {
+            RoundedRectangle(cornerRadius: JB.rPanel, style: .continuous).fill(JB.raised)
+                .overlay(RoundedRectangle(cornerRadius: JB.rPanel, style: .continuous)
+                    .strokeBorder(focused ? JB.accent.opacity(0.7) : JB.line, lineWidth: 1))
+        }
+        .animation(JB.fade, value: focused)
+        .overlay(alignment: .top) {
+            if !items.isEmpty {
+                ChatSlashPopover(items: items, selected: min(slashIndex, items.count - 1),
+                                 onHover: { slashIndex = $0 }, onPick: accept)
+                    .alignmentGuide(.top) { $0[.bottom] + 8 }
+                    .transition(.opacity.combined(with: .offset(y: 2)))
+            }
+        }
+        .animation(JB.snap, value: items.isEmpty)
+        .zIndex(1)
         .fileImporter(isPresented: $showFileImporter,
                       allowedContentTypes: [.item],
                       allowsMultipleSelection: true) { result in
@@ -143,20 +163,63 @@ struct ComposerView: View {
             }
             store.persistChatMode()
         }
+        .onChange(of: text) {
+            slashIndex = 0
+            if !text.hasPrefix("/") { slashDismissed = false }
+            if text.hasPrefix("/") { slash.refresh() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .chatFillComposer)) { n in
+            if let s = n.object as? String { text = s }
+        }
+    }
+
+    // MARK: Keys and slash
+
+    private func handleKey(_ key: ChatKey) -> Bool {
+        let items = slashItems
+        if !items.isEmpty {
+            let i = min(slashIndex, items.count - 1)
+            switch key {
+            case .up: slashIndex = (i - 1 + items.count) % items.count; return true
+            case .down: slashIndex = (i + 1) % items.count; return true
+            case .enter, .tab: accept(items[i]); return true
+            case .escape: slashDismissed = true; return true
+            }
+        }
+        switch key {
+        case .escape:
+            guard store.isStreaming else { return false }
+            store.stopStreaming()
+            return true
+        case .up:
+            guard text.isEmpty, !store.isStreaming,
+                  let last = store.messages.last(where: { $0.isUser }) else { return false }
+            store.beginEdit(last)
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func accept(_ item: ChatSlashItem) {
+        text = store.runChatSlash(item)
+        slashDismissed = false
     }
 
     private func permissionRow(_ mode: String, _ title: String, _ icon: String, _ color: Color) -> some View {
         Button {
-            withAnimation(.spring(duration: 0.25)) { store.permissionMode = mode }
+            withAnimation(JB.snap) { store.permissionMode = mode }
             showPermissions = false
         } label: {
             HStack(spacing: 8) {
                 Circle().fill(color).frame(width: 7, height: 7)
                 Image(systemName: icon)
                     .font(.jb(11))
+                    .foregroundStyle(JB.ink2)
                     .frame(width: 16)
                 Text(title)
                     .font(.jb(12))
+                    .foregroundStyle(JB.ink)
                 Spacer()
                 if store.permissionMode == mode {
                     Image(systemName: "checkmark")
@@ -167,6 +230,7 @@ struct ComposerView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .frame(width: 160, alignment: .leading)
+            .jbHoverRow(selected: false)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -178,24 +242,29 @@ struct ComposerView: View {
                 HStack(spacing: 5) {
                     Image(systemName: "paperclip")
                         .font(.jb(10))
+                        .foregroundStyle(JB.ink3)
                     Text(f.name)
-                        .font(.jb(11.5))
+                        .font(.jbMono(11))
+                        .foregroundStyle(JB.ink2)
                         .lineLimit(1)
                     Button {
                         store.pendingAttachments.removeAll { $0.id == f.id }
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.jb(10))
-                            .foregroundStyle(.secondary)
+                        Image(systemName: "xmark")
+                            .font(.jb(8, .semibold))
+                            .foregroundStyle(JB.ink3)
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5)
-                .background(.quaternary.opacity(0.5), in: Capsule())
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(JB.hover))
+                .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(JB.line, lineWidth: 1))
+                .transition(.opacity)
             }
             Spacer()
         }
+        .animation(JB.snap, value: store.pendingAttachments.count)
     }
 
     @ViewBuilder
@@ -205,23 +274,19 @@ struct ComposerView: View {
                 store.stopStreaming()
             } label: {
                 Image(systemName: "stop.fill")
-                    .font(.jb(12, .bold))
-                    .frame(width: 28, height: 28)
+                    .foregroundStyle(JB.danger)
             }
-            .buttonStyle(.jbPrimary)
-            .tint(.red)
-            .help("Stop generating")
+            .buttonStyle(JBIconButtonStyle(size: 28))
+            .help("Stop (esc)")
         } else {
             Button(action: send) {
                 Image(systemName: "arrow.up")
-                    .font(.jb(13, .bold))
-                    .frame(width: 28, height: 28)
+                    .fontWeight(.semibold)
             }
-            .buttonStyle(.jbPrimary)
-            .tint(JB.accent)
-            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && store.pendingAttachments.isEmpty)
+            .buttonStyle(JBIconButtonStyle(size: 28, active: hasContent))
+            .disabled(!hasContent)
             .keyboardShortcut(.return, modifiers: .command)
-            .help("Send (⏎, or ⌘⏎ from the text field)")
+            .help("Send (⏎)")
         }
     }
 
@@ -246,53 +311,50 @@ struct SlideSwitch: View {
             segment(right, active: !isLeft) { isLeft = false }
         }
         .padding(2)
-        .background(.quaternary.opacity(0.4), in: Capsule())
+        .background(RoundedRectangle(cornerRadius: JB.rControl, style: .continuous).fill(JB.hover.opacity(0.6)))
         .fixedSize()
     }
 
     private func segment(_ label: String, active: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: { withAnimation(.spring(duration: 0.28)) { action() } }) {
+        Button(action: { withAnimation(JB.snap) { action() } }) {
             Text(label)
                 .lineLimit(1)
                 .fixedSize()
-                .font(.jb(11.5, active ? .semibold : .regular))
-                .foregroundStyle(active ? .primary : .secondary)
-                .padding(.horizontal, 11)
-                .padding(.vertical, 4)
+                .font(.jbMono(11, active ? .medium : .regular))
+                .foregroundStyle(active ? JB.ink : JB.ink3)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 3.5)
                 .background {
                     if active {
-                        Capsule()
-                            .fill(JB.panelFill)
-                            .overlay(Capsule().strokeBorder(.white.opacity(0.18), lineWidth: 1))
+                        RoundedRectangle(cornerRadius: JB.rControl - 2, style: .continuous)
+                            .fill(JB.raised)
+                            .overlay(RoundedRectangle(cornerRadius: JB.rControl - 2, style: .continuous).strokeBorder(JB.line, lineWidth: 1))
                             .matchedGeometryEffect(id: "thumb", in: ns)
                     }
                 }
-                .contentShape(Capsule())
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 }
 
-/// Toggle button that visibly lights up — accent icon + tinted capsule when
-/// on (Toggle(.button) + borderless was swallowing the on-state entirely).
+/// Toggle button that lights up in the accent when on.
 struct LitToggle: View {
-    let icon: String
+    var icon: String? = nil
+    var glyph: JBGlyph? = nil
     @Binding var isOn: Bool
     let help: String
 
     var body: some View {
         Button {
-            withAnimation(.spring(duration: 0.2)) { isOn.toggle() }
+            withAnimation(JB.snap) { isOn.toggle() }
         } label: {
-            Image(systemName: icon)
-                .font(.jb(12, isOn ? .semibold : .regular))
-                .foregroundStyle(isOn ? JB.accent : Color.secondary)
-                .frame(width: 26, height: 22)
-                .background(
-                    Capsule().fill(isOn ? AnyShapeStyle(JB.accent.opacity(0.22)) : AnyShapeStyle(.clear))
-                )
+            Group {
+                if let glyph { JBIcon(glyph, size: 14) } else if let icon { Image(systemName: icon) }
+            }
+            .foregroundStyle(isOn ? JB.accent : JB.ink2)
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(JBIconButtonStyle(size: 26, active: isOn))
         .help(help)
     }
 }

@@ -12,6 +12,8 @@ struct ChatView: View {
     @State private var visibleCount = 60
     @State private var dragStartWidth: CGFloat?
     @State private var dropTargeted = false
+    @State private var rowsSettled = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { geo in
@@ -28,42 +30,52 @@ struct ChatView: View {
             VStack(spacing: 12) {
                 header
 
-                ZStack(alignment: .bottom) {
-                    if store.messages.isEmpty {
-                        emptyState
-                    } else {
-                        messageList
-                    }
+                // One ComposerView slot for both states, so draft text and
+                // focus survive the first send. Empty: banner + composer
+                // centred; otherwise the transcript fills the column.
+                if store.messages.isEmpty {
+                    Spacer(minLength: 0)
+                    emptyState
+                } else {
+                    messageList
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 ComposerView()
+                    .frame(maxWidth: 860)
+                    .frame(maxWidth: .infinity)
+
+                if store.messages.isEmpty {
+                    Spacer(minLength: 0)
+                }
             }
+            .animation(JB.smooth, value: store.messages.isEmpty)
             .onDrop(of: [.fileURL, .image], isTargeted: $dropTargeted) { providers in
                 store.attachProviders(providers)
             }
             .overlay {
                 if dropTargeted {
                     VStack(spacing: 10) {
-                        Image(systemName: "paperclip.badge.ellipsis")
-                            .font(.jb(34, .light))
+                        Image(systemName: "paperclip")
+                            .font(.jb(28, .light))
                             .foregroundStyle(JB.accent)
                         Text("Drop to attach")
-                            .font(.jb(14, .semibold))
+                            .font(.jbMono(12))
+                            .foregroundStyle(JB.ink2)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(JB.panelFill)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 18)
-                            .strokeBorder(JB.accent.opacity(0.7), style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
+                        RoundedRectangle(cornerRadius: JB.rPanel, style: .continuous)
+                            .strokeBorder(JB.accent.opacity(0.7), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
                             .padding(6)
                     )
-                    .clipShape(RoundedRectangle(cornerRadius: 18))
+                    .clipShape(RoundedRectangle(cornerRadius: JB.rPanel, style: .continuous))
                     .transition(.opacity)
                     .allowsHitTesting(false)
                 }
             }
-            .animation(.spring(duration: 0.25), value: dropTargeted)
+            .animation(JB.snap, value: dropTargeted)
             .overlay(alignment: .bottom) {
                 if let p = store.pendingPermission {
                     CommandPermissionPrompt(prompt: p) { store.respondPermission($0) }
@@ -71,7 +83,7 @@ struct ChatView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
-            .animation(.spring(duration: 0.28), value: store.pendingPermission?.id)
+            .animation(JB.snap, value: store.pendingPermission?.id)
 
         }
         .padding(.trailing, splits ? paneWidth + 12 : 0)
@@ -110,21 +122,31 @@ struct ChatView: View {
         .animation(.spring(duration: 0.25), value: splits)
         }
         .animation(.spring(duration: 0.32), value: store.editorVisible)
-        .onChange(of: store.selectedSessionID) { visibleCount = 60 }
+        .onChange(of: store.selectedSessionID) {
+            visibleCount = 60
+            // Opening a chat should not animate its whole history in.
+            rowsSettled = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { rowsSettled = true }
+        }
+        .task {
+            try? await Task.sleep(for: .milliseconds(600))
+            rowsSettled = true
+        }
         .sheet(isPresented: $renaming) {
             VStack(spacing: 14) {
-                Text("Rename Chat")
-                    .font(.jb(14, .semibold))
+                Text("Rename chat")
+                    .font(.jb(14, .medium))
+                    .foregroundStyle(JB.ink)
                 TextField("Chat name", text: $renameText)
-                    .textFieldStyle(.roundedBorder)
+                    .jbField()
                     .frame(width: 280)
                     .onSubmit(doRename)
                 HStack {
                     Button("Cancel") { renaming = false }
+                        .buttonStyle(.jbGhost)
                         .keyboardShortcut(.cancelAction)
                     Button("Rename", action: doRename)
                         .buttonStyle(.jbPrimary)
-                        .tint(JB.accent)
                         .disabled(renameText.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
@@ -157,9 +179,8 @@ struct ChatView: View {
                 sidebarVisible.toggle()
             } label: {
                 Image(systemName: "sidebar.left")
-                    .font(.jb(13, .medium))
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(JBIconButtonStyle(size: 26))
             .help("Toggle sidebar")
 
             // Title dropdown — Rename / Compact / Copy / PDF / Save to Documents
@@ -198,11 +219,12 @@ struct ChatView: View {
             } label: {
                 HStack(spacing: 5) {
                     Text(currentTitle)
-                        .font(.jb(14, .semibold))
+                        .font(.jb(14, .medium))
+                        .foregroundStyle(JB.ink)
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
-                        .font(.jb(8, .bold))
-                        .foregroundStyle(.secondary)
+                        .font(.jb(8, .semibold))
+                        .foregroundStyle(JB.ink3)
                 }
             }
             .menuStyle(.borderlessButton)
@@ -212,16 +234,13 @@ struct ChatView: View {
 
             if !store.messages.isEmpty {
                 Text("\(store.messages.count)")
-                    .font(.jb(11, .medium))
-                    .foregroundStyle(.tertiary)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(.quaternary.opacity(0.4), in: Capsule())
+                    .font(.jbMono(11))
+                    .foregroundStyle(JB.ink3)
                     .help("Messages in this chat")
             }
 
             if store.compacting || exportingPDF {
-                ProgressView().controlSize(.small)
+                JBSpinner()
             }
 
             Spacer()
@@ -231,38 +250,40 @@ struct ChatView: View {
                     store.editorVisible = true
                 } label: {
                     Label("\(store.openDocs.count)", systemImage: "doc.text")
-                        .font(.jb(12, .medium))
+                        .font(.jbMono(11.5))
+                        .foregroundStyle(JB.ink2)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
                 .help("Show editor")
             }
 
             if let err = store.loadError {
                 HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
+                    Image(systemName: "exclamationmark.triangle")
                         .font(.jb(10))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(JB.warn)
                     Text(err)
-                        .font(.jb(11))
+                        .font(.jbMono(11))
+                        .foregroundStyle(JB.ink2)
                         .lineLimit(1)
                         .frame(maxWidth: 320)
                     Button {
                         store.loadError = nil
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.jb(10))
-                            .foregroundStyle(.secondary)
+                        Image(systemName: "xmark")
+                            .font(.jb(9, .semibold))
+                            .foregroundStyle(JB.ink3)
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.plain)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Capsule().fill(.orange.opacity(0.15)))
+                .background(Capsule().fill(JB.warn.opacity(0.14)))
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .joeGlassCapsule()
+        .jbSurface(.chrome, radius: nil)
     }
 
     private struct ChatPDFWrap: Identifiable {
@@ -279,26 +300,33 @@ struct ChatView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 14) {
-            Spacer()
-            Image(systemName: "sparkles")
-                .font(.jb(42, .light))
-                .foregroundStyle(JB.accent.gradient)
-            Text("What can I help with?")
-                .font(.jb(.title2, .semibold))
-            if let model = store.selectedModel {
-                HStack(spacing: 6) {
-                    ProviderLogoView(model: model.modelID, size: 12)
-                        .foregroundStyle(.secondary)
-                    Text(model.displayWithTag)
-                        .font(.jb(12))
-                        .foregroundStyle(.secondary)
+        VStack(spacing: 22) {
+            JBWordmark(dot: 3.4)
+            HStack(spacing: 8) {
+                ForEach(["agent", "chat", "think", "fast"], id: \.self) { name in
+                    let on = isOn(name)
+                    Button {
+                        if let item = ChatSlashSource.builtins.first(where: { $0.name == name }) {
+                            _ = store.runChatSlash(item)
+                        }
+                    } label: {
+                        JBChip(text: "/" + name, tint: on ? JB.accent : nil)
+                    }
+                    .buttonStyle(JBPressStyle())
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .joeGlassCapsule()
             }
-            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, 28)
+        .transition(.opacity)
+    }
+
+    private func isOn(_ name: String) -> Bool {
+        switch name {
+        case "agent": return store.agentMode
+        case "chat": return !store.agentMode
+        case "think": return store.thinkingOn
+        default: return !store.thinkingOn
         }
     }
 
@@ -322,7 +350,8 @@ struct ChatView: View {
     }
 
     private var messageList: some View {
-        ScrollViewReader { proxy in
+        let rows = groupedMessages
+        return ScrollViewReader { proxy in
             ScrollView {
                 // Eager VStack: LazyVStack + defaultScrollAnchor(.bottom)
                 // left the viewport empty until first scroll (rows above the
@@ -330,34 +359,35 @@ struct ChatView: View {
                 VStack(spacing: 12) {
                     // Big chats render only the recent tail — eager-rendering
                     // hundreds of markdown bubbles at once was the open-chat lag.
-                    if groupedMessages.count > visibleCount {
+                    if rows.count > visibleCount {
                         Button {
                             visibleCount += 100
                         } label: {
-                            Label("Show earlier messages (\(groupedMessages.count - visibleCount) more)",
-                                  systemImage: "arrow.up.circle")
-                                .font(.jb(12, .medium))
+                            Label("\(rows.count - visibleCount) earlier",
+                                  systemImage: "arrow.up")
+                                .font(.jbMono(11.5))
+                                .foregroundStyle(JB.ink2)
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.plain)
                         .padding(.top, 6)
                     }
-                    ForEach(groupedMessages.suffix(visibleCount)) { message in
+                    ForEach(rows.suffix(visibleCount)) { message in
                         MessageBubbleView(message: message)
                             .equatable()
                             .id(message.id)
+                            .transition(.opacity.combined(with: .offset(y: 6)))
                     }
                     Color.clear.frame(height: 1).id("bottom")
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 8)
+                .animation(rowsSettled && !reduceMotion ? JB.smooth : nil, value: rows.count)
                 .frame(maxWidth: 860)
                 .frame(maxWidth: .infinity)
             }
             .scrollIndicators(.never)
             .defaultScrollAnchor(.bottom)
-            // Hard clip + edge fade so message cards never visually collide
-            // with the glass composer below / header above.
-            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .clipShape(RoundedRectangle(cornerRadius: JB.rPanel, style: .continuous))
             .onScrollGeometryChange(for: Bool.self) { geo in
                 geo.contentOffset.y + geo.containerSize.height >= geo.contentSize.height - 80
             } action: { _, isNear in
@@ -384,26 +414,20 @@ struct ChatView: View {
             .overlay(alignment: .bottom) {
                 if !nearBottom {
                     Button {
-                        withAnimation(.spring(duration: 0.35)) {
+                        withAnimation(JB.smooth) {
                             proxy.scrollTo("bottom", anchor: .bottom)
                         }
                     } label: {
                         Image(systemName: "arrow.down")
-                            .font(.jb(13, .semibold))
-                            .foregroundStyle(.primary)
-                            .frame(width: 34, height: 34)
-                            .contentShape(Circle())
                     }
-                    .buttonStyle(.plain)
-                    .background(JB.panelFill, in: Circle())
-                    .overlay(Circle().strokeBorder(.white.opacity(0.18), lineWidth: 1))
-                    .shadow(color: .black.opacity(0.2), radius: 10, y: 4)
+                    .buttonStyle(JBIconButtonStyle(size: 30))
+                    .jbFloating(radius: JB.rControl + 2)
                     .padding(.bottom, 12)
-                    .transition(.scale.combined(with: .opacity))
+                    .transition(.opacity.combined(with: .offset(y: 4)))
                     .help("Jump to latest")
                 }
             }
-            .animation(.spring(duration: 0.25), value: nearBottom)
+            .animation(JB.snap, value: nearBottom)
         }
     }
 }
@@ -420,36 +444,42 @@ struct CommandPermissionPrompt: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 7) {
-                Image(systemName: isDocEdit ? "pencil.line" : "terminal.fill")
-                    .font(.jb(12))
-                    .foregroundStyle(Color.orange)
+            HStack(spacing: 8) {
+                if isDocEdit {
+                    Image(systemName: "pencil.line")
+                        .font(.jb(12))
+                        .foregroundStyle(JB.warn)
+                } else {
+                    JBIcon(.coding, size: 14)
+                        .foregroundStyle(JB.warn)
+                }
                 Text(isDocEdit ? "Let the AI edit this file?" : "Run \(prompt.tool) command?")
-                    .font(.jb(13, .semibold))
+                    .font(.jb(13, .medium))
+                    .foregroundStyle(JB.ink)
             }
             Text(prompt.command)
                 .font(.jbMono(12))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(JB.ink2)
                 .lineLimit(4)
                 .textSelection(.enabled)
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+                .jbSurface(.raised, radius: JB.rControl)
             HStack(spacing: 8) {
                 Button("Deny") { respond("deny") }
+                    .buttonStyle(.jbGhost)
                     .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button("Always allow this session") { respond("always") }
+                    .buttonStyle(.jbSecondary)
                 Button("Allow") { respond("allow") }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.jbPrimary)
             }
-            .font(.jb(12))
         }
         .padding(14)
         .frame(width: 380)
-        .joeGlassRect(14)   // real Liquid Glass, consistent with the rest of the app
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.orange.opacity(0.45), lineWidth: 1))
-        .shadow(color: .black.opacity(0.3), radius: 20, y: 8)
+        .jbFloating()
+        .overlay(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).strokeBorder(JB.warn.opacity(0.45), lineWidth: 1))
     }
 }
