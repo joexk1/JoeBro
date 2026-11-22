@@ -19,11 +19,16 @@ struct AgentsPanel: View {
 
     private let kinds = [("", "All"), ("research", "Research"), ("chat", "Chats"), ("task", "Tasks"), ("subagent", "Subagents"), ("coding", "Coding")]
 
+    @State private var showNewAgent = false
+
     private var liveCount: Int { if case .loaded(let l) = runs { return l.filter(\.live).count } else { return 0 } }
 
     var body: some View {
         PanelChrome(title: "Agents", icon: "person.3.sequence") {
             PanelSearchField(text: $search, open: $searchOpen, placeholder: "Search agents")
+            Button { showNewAgent = true } label: { Image(systemName: "plus") }
+                .buttonStyle(JBIconButtonStyle())
+                .help("New coding agent")
             Button {
                 Task { await load() }
             } label: {
@@ -67,6 +72,7 @@ struct AgentsPanel: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .task { await poll() }
+        .sheet(isPresented: $showNewAgent) { NewCodingAgentSheet { Task { await load() } } }
         .onChange(of: kind) { Task { await load() } }
     }
 

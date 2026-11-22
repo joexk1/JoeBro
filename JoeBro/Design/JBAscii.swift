@@ -14,24 +14,24 @@ import UIKit
 
 // MARK: - Spinner
 
-/// A three-cell block wave: ▂▄▆ → ▄▆█ … Replaces ProgressView spinners
-/// for anything the agent is doing.
+/// A thin rotating arc for anything the agent is doing.
 struct JBSpinner: View {
     var size: CGFloat = 12
     var tint: Color = JB.ink2
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private static let ramp = Array("▁▂▃▄▅▆▇█▇▆▅▄▃▂")
+    @State private var spin = false
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: reduceMotion ? 1 : 0.09)) { tl in
-            let t = Int(tl.date.timeIntervalSinceReferenceDate / 0.09)
-            let r = Self.ramp
-            Text(String([r[t % r.count], r[(t + 3) % r.count], r[(t + 6) % r.count]]))
-                .font(.jbMono(size))
-                .foregroundStyle(tint)
-                .fixedSize()
-        }
-        .accessibilityLabel("Working")
+        Circle()
+            .trim(from: 0.12, to: 0.78)
+            .stroke(tint, style: StrokeStyle(lineWidth: max(1.3, size * 0.13), lineCap: .round))
+            .frame(width: size, height: size)
+            .rotationEffect(.degrees(spin ? 360 : 0))
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.linear(duration: 0.8).repeatForever(autoreverses: false)) { spin = true }
+            }
+            .accessibilityLabel("Working")
     }
 }
 
