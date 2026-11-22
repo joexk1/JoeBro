@@ -192,11 +192,14 @@ struct WindowConfigurator: NSViewRepresentable {
 }
 
 struct RootView: View {
+    /// The dot-sphere intro plays once per launch (not in demo/screenshot runs unless asked).
+    @State private var intro = !DemoMode.active || ProcessInfo.processInfo.arguments.contains("-JoeBroIntro")
     var body: some View {
         ZStack {
             WindowConfigurator().frame(width: 0, height: 0)
             WallpaperBackground()
             MainSplitView()
+            if intro { JBIntro { withAnimation(.easeOut(duration: 0.2)) { intro = false } }.transition(.opacity) }
         }
         .ignoresSafeArea()
         .preferredColorScheme(nil)

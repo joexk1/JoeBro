@@ -270,7 +270,7 @@ struct AgentsPanel: View {
     // MARK: data
 
     /// Still a conversation you can type into (running, waiting on you, or open between turns).
-    static func isOpenSession(_ r: AgentRun) -> Bool { r.live || r.status == "waiting" || r.status == "idle" }
+    static func isOpenSession(_ r: AgentRun) -> Bool { r.open || r.live || r.status == "waiting" }
 
     /// Resume a finished session where it ran, then open it as a chat once it's back.
     private func resume(_ run: AgentRun) async {
@@ -324,7 +324,7 @@ struct AgentsPanel: View {
     }
 
     private func filtered(_ list: [AgentRun]) -> [AgentRun] {
-        let base = activeOnly ? list.filter(\.live) : list
+        let base = activeOnly ? list.filter { $0.live || ($0.kind == "coding" && Self.isOpenSession($0)) } : list
         let q = search.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return base }
         return base.filter {

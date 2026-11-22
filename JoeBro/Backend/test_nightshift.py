@@ -283,6 +283,14 @@ class SendToSession(Base):
         self.assertIn("queued", out)
         self.assertIn("Nothing to send", h.send_to_coding_session_tool({"id": "s1", "text": " "}))
 
+    def test_a_fresh_start_launches_the_agent_that_was_asked_for(self):
+        # Regression: a stray comment once dropped "agent" here, so every start launched Claude.
+        task = self.h.night_task(self.h.night_add({"repo": self.repo, "prompt": "hi", "agent": "codex"}, kind="session")["id"])
+        self.assertEqual(task["agent"], "codex")
+        self.h.start_coding_session_tool({"repo": self.repo, "agent": "codex", "prompt": "hello"})
+        latest = self.h.store.one("SELECT agent FROM night_tasks ORDER BY rowid DESC LIMIT 1")
+        self.assertEqual(latest["agent"], "codex")
+
     def test_send_to_a_session_that_is_not_open_resumes_it_with_the_text(self):
         h = self.h
         self.event("s2", "prompt"); self.event("s2", "stop", "half way")

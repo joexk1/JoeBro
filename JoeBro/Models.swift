@@ -533,6 +533,7 @@ struct AgentRun: Decodable, Identifiable, Hashable {
     var title: String
     var status: String
     var live: Bool
+    var open = false            // coding: still a conversation in its terminal (backend's one rule for "as a chat")
     var progress: String
     var sessionID: String
     var model: String
@@ -548,7 +549,7 @@ struct AgentRun: Decodable, Identifiable, Hashable {
     var messages: [AgentMessage]?
 
     enum CodingKeys: String, CodingKey {
-        case id, kind, title, status, live, progress, model, error, result, messages
+        case id, kind, title, status, live, open, progress, model, error, result, messages
         case sessionID = "session_id", refID = "ref_id", parentID = "parent_id"
         case createdAt = "created_at", startedAt = "started_at", finishedAt = "finished_at"
         case resultChars = "result_chars", resultTruncated = "result_truncated"
@@ -563,6 +564,7 @@ struct AgentRun: Decodable, Identifiable, Hashable {
         title = (try? c.decode(String.self, forKey: .title)) ?? ""
         status = (try? c.decode(String.self, forKey: .status)) ?? "queued"
         live = (try? c.decode(Bool.self, forKey: .live)) ?? false
+        open = (try? c.decode(Bool.self, forKey: .open)) ?? false
         progress = (try? c.decode(String.self, forKey: .progress)) ?? ""
         sessionID = (try? c.decode(String.self, forKey: .sessionID)) ?? ""
         model = (try? c.decode(String.self, forKey: .model)) ?? ""

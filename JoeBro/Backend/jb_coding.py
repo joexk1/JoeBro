@@ -262,8 +262,13 @@ class CodingAgentsMixin:
             live = n["busy"]
             sub = n["kind"] == "subagent"
             label = SOURCES.get(n["source"], n["source"])
+            name = n["name"]
+            if re.match(r"^New session - \d{4}-", name or "") or not name:   # OpenCode's placeholder title
+                name = os.path.basename(str(n["cwd"] or "").rstrip("/")) or label
             recs.append({
-                "id": n["id"], "kind": n["kind"], "title": ("%s · %s" % (label, n["name"])) if not sub else n["name"],
+                "id": n["id"], "kind": n["kind"], "title": ("%s · %s" % (label, name)) if not sub else name,
+                # Still a conversation (open in its terminal): the one rule every list uses for "coding agents as chats".
+                "open": not sub and n["status"] in ("idle", "running", "waiting", "limited"),
                 "agent_type": n["agent_type"], "children": n["children"],
                 "subagent_count": n["subagents"]["total"], "subagent_live": n["subagents"]["live"],
                 "status": n["status"] if n["status"] != "idle" else "done", "limited": n["status"] == "limited", "live": live,
@@ -282,12 +287,40 @@ class CodingAgentsMixin:
         node = next(n for n in self.coding_nodes() if n["id"] == aid)
         rec["result"] = "\n".join(node["detail"])
         rec["child_agents"] = [r for r in self.coding_agent_records() if r["parent_id"] == aid]
-        rec["messages"] = [m for m in (self._detail_message(line, node["last_activity"]) for line in node["detail"]) if m]
+        rec["messages"] = self._tidy_approvals([m for m in (self._detail_message(line, node["last_activity"]) for line in node["detail"]) if m],
+                                               bool(node["waiting"]))
         rec["waiting"] = bool(node["waiting"])
         rec["can_send"] = node["status"] != "ended"
         pending = next((d[2:] for d in reversed(node["detail"]) if d.startswith("⏸")), "") if node["waiting"] else ""
         rec["pending_approval"] = pending or ("needs your approval" if node["waiting"] else "")
         return rec
+
+    @staticmethod
+    def _tidy_approvals(msgs, waiting):
+        """One approval card per request, live only while it's pending; answered ones
+        become a quiet event ("Approved: Write"), and the answer isn't shown as a typed message."""
+        out = []
+        for i, m in enumerate(msgs):
+            if m["role"] == "user" and m["content"] in ("approved from phone", "denied from phone"):
+                verdict = "Approved" if m["content"].startswith("approved") else "Denied"
+                prev = next((o for o in reversed(out) if o["role"] in ("approval", "event")), None)
+                if prev and prev["role"] == "approval":
+                    what = re.sub(r"^(approve|needs your approval:?)\s*", "", prev["content"], flags=re.I)
+                    prev.update(role="event", content="%s%s" % (verdict, (": " + what) if what and "permission" not in what else ""))
+                else:
+                    out.append(dict(m, role="event", content=verdict))
+                continue
+            if m["role"] == "approval" and out and out[-1]["role"] == "approval":
+                if "permission" in m["content"].lower():   # generic follow-up to a specific request
+                    continue
+                out[-1] = m
+                continue
+            out.append(m)
+        if not waiting:   # nothing pending: any leftover request was answered in the terminal
+            for m in out:
+                if m["role"] == "approval":
+                    m.update(role="event", content="Asked: " + re.sub(r"^(approve)\s*", "", m["content"], flags=re.I))
+        return out
 
     @staticmethod
     def _detail_message(line, when):
@@ -401,7 +434,8 @@ class CodingAgentsMixin:
         for row in rows:
             if row["host"] in down:
                 continue
-            hit = next((s for s in sessions if s.get("host") == row["host"] and self._session_matches(row, s)), None)
+            hit = next((s for s in sessions if s.get("host") == row["host"] and self._session_matches(row, s)), None) \
+                or next(iter(self._same_folder(row, [s for s in sessions if s.get("host") == row["host"] and id(s) not in claimed])), None)
             if hit:
                 claimed.add(id(hit))
             else:
@@ -437,8 +471,24 @@ class CodingAgentsMixin:
     def _coding_terminal(self, row):
         """The exact Agent Control session for this agent, or None."""
         data = self._agent_control("agent_list_sessions", {"host": row["host"], "filter_type": "all"})
-        match = [s for s in data.get("sessions") or [] if s.get("controllable") and self._session_matches(row, s)]
+        sessions = [s for s in data.get("sessions") or [] if s.get("controllable")]
+        # An exact Claude session id beats everything (a tmux agent can inherit another
+        # terminal's Kitty variables, which must never send its input elsewhere).
+        match = [s for s in sessions if row["source"] == "claude" and s.get("claude_session_id") == row["session_id"]] \
+            or [s for s in sessions if self._session_matches(row, s)]
+        if not match:
+            match = self._same_folder(row, sessions)
         return match[0] if len(match) == 1 else None
+
+    @staticmethod
+    def _same_folder(row, sessions):
+        """Fallback when ids/pids don't line up (Codex hooks run under a helper process, so
+        their pid isn't the agent's): the one terminal running that agent in that folder."""
+        cwd = str(row.get("cwd") or "").rstrip("/")
+        hits = [s for s in sessions if cwd and s.get("agent_type") == row["source"]
+                and str(s.get("cwd") or "").rstrip("/") == cwd and not s.get("claude_session_id")
+                or (cwd and row["source"] == "claude" and s.get("claude_session_id") == row["session_id"])]
+        return hits if len(hits) == 1 else []
 
     def _coding_inbox_table(self):
         self.store.exec("""CREATE TABLE IF NOT EXISTS coding_inbox(id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, text TEXT NOT NULL,
@@ -467,6 +517,8 @@ class CodingAgentsMixin:
                 term = None
             if term:
                 r = self._agent_control("agent_send_input", {"session_id": term["session_id"], "host": row["host"], "text": text, "press_enter": True})
+                if r.get("error"):
+                    print("coding_send: typing into %s failed: %s" % (term["session_id"], r["error"]), flush=True)
                 if not r.get("error"):
                     # The agent's own prompt hook reports the typed message: logging it here too duplicated it.
                     return {"ok": True, "delivered": "terminal"}

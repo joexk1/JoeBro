@@ -219,6 +219,9 @@ class CodingControl(unittest.TestCase):
         self.assertEqual(f.coding_send("code:pc:claude:aaa", "run the tests")["delivered"], "terminal")
         self.assertIn("agent_send_input", [c[0] for c in self.calls])
         f.coding_event({"source": "claude", "host": "pc", "session_id": "aaa", "event": "prompt"})
+        # Busy Claude/Codex take typed input and queue it themselves; Agent Control off -> the hook inbox.
+        self.assertEqual(f.coding_send("code:pc:claude:aaa", "and the docs")["delivered"], "terminal")
+        f._agent_control = lambda tool, args: (_ for _ in ()).throw(ValueError("off"))
         self.assertEqual(f.coding_send("code:pc:claude:aaa", "also lint")["delivered"], "queued")
         got = f.coding_inbox_pull({"host": "pc", "source": "claude", "session_id": "aaa"})
         self.assertEqual([m["text"] for m in got["messages"]], ["also lint"])

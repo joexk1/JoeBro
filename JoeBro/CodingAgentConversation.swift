@@ -26,10 +26,9 @@ final class AgentNav {
 
     func refresh() async {
         guard let env = try? await APIClient.shared.agents(kind: "coding") else { return }
-        let dayAgo = Date().addingTimeInterval(-24 * 3600)
-        runs = env.agents.filter { r in
-            r.parentID.isEmpty && r.kind != "subagent" && (r.live || r.status == "waiting" || (r.status == "idle" || r.status == "limited") && (parseISO(r.startedAt.isEmpty ? r.createdAt : r.startedAt) ?? .distantPast) > dayAgo)
-        }
+        // Exactly the backend's rule, so the sidebar, the iPhone's Chats and both Agents pages agree:
+        // top-level coding agents still open in their terminal (subagents live inside their parent).
+        runs = env.agents.filter { $0.kind == "coding" && $0.parentID.isEmpty && ($0.open || $0.live || $0.status == "waiting") }
     }
 }
 

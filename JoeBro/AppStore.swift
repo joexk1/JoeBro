@@ -606,6 +606,7 @@ final class AppStore {
 
     func newChat() {
         stopStreaming()
+        AgentNav.shared.close()   // a new chat always leaves an open coding agent (selectedSessionID may already be nil)
         activeTab = .chat
         selectedSessionID = nil
         if let id = serverDefaultModelID, let choice = models.first(where: { $0.id == id }) {
