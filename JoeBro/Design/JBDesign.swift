@@ -655,13 +655,21 @@ struct JBIcon: View {
                 ctx.stroke(l, with: shade, style: StrokeStyle(lineWidth: w * 0.8, lineCap: .round, lineJoin: .round))
                 for (x, y) in [(4.0, 11.5), (8.0, 4.5), (12.0, 11.5)] { ctx.fill(dot(x, y, 2), with: shade) }
             case .nightShift:
-                // Crescent + one star point.
+                // Crescent: big circle minus an offset circle, outlined.
+                let c1 = CGPoint(x: 7.6, y: 8.6), r1: CGFloat = 5.4
+                let c2 = CGPoint(x: 10.4, y: 5.9), r2: CGFloat = 4.3
+                let dx = c2.x - c1.x, dy = c2.y - c1.y, d = sqrt(dx * dx + dy * dy)
+                let a = (r1 * r1 - r2 * r2 + d * d) / (2 * d), h = sqrt(max(0, r1 * r1 - a * a))
+                let mx = c1.x + a * dx / d, my = c1.y + a * dy / d
+                let i1 = CGPoint(x: mx + h * dy / d, y: my - h * dx / d)
+                let i2 = CGPoint(x: mx - h * dy / d, y: my + h * dx / d)
+                func ang(_ c: CGPoint, _ q: CGPoint) -> Angle { .radians(atan2(Double(q.y - c.y), Double(q.x - c.x))) }
                 var c = Path()
-                c.addArc(center: p(7.5, 8.5), radius: 5 * k, startAngle: .degrees(-60), endAngle: .degrees(200), clockwise: false)
-                c.addArc(center: p(9.6, 6.6), radius: 3.6 * k, startAngle: .degrees(205), endAngle: .degrees(-62), clockwise: true)
+                c.addArc(center: p(c1.x, c1.y), radius: r1 * k, startAngle: ang(c1, i1), endAngle: ang(c1, i2), clockwise: true)
+                c.addArc(center: p(c2.x, c2.y), radius: r2 * k, startAngle: ang(c2, i2), endAngle: ang(c2, i1), clockwise: false)
                 c.closeSubpath()
                 ctx.stroke(c, with: shade, style: style)
-                ctx.fill(dot(13, 3, 0.95), with: shade)
+                ctx.fill(dot(13.4, 2.8, 0.9), with: shade)
             case .skills:
                 // Stacked layers.
                 var s = Path()

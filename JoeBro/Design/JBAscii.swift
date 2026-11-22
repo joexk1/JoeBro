@@ -222,7 +222,7 @@ struct JBWordmark: View {
                         let near = max(0, 1 - abs(Double(c.x) - sweep) / 3)
                         ctx.fill(path, with: .color(tint.opacity(appear * (0.86 + 0.14 * near))))
                     } else {
-                        ctx.fill(path, with: .color(tint.opacity(0.06)))
+                        ctx.fill(path, with: .color(tint.opacity(0.035)))
                     }
                 }
             }
