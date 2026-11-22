@@ -77,6 +77,7 @@ struct FlashcardsEditor: View {
     @State private var sessionAgain = 0
     @State private var sessionStarted = false
     @FocusState private var focused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var doc: EditorDoc? { store.openDocs.indices.contains(index) ? store.openDocs[index] : nil }
     private var stillToLearn: Int { cards.filter { !$0.learned }.count }
@@ -160,12 +161,11 @@ struct FlashcardsEditor: View {
                 studyHeader
                 Spacer(minLength: 8)
                 cardFace(card)
-                    .onTapGesture { withAnimation(.spring(duration: 0.35)) { revealed.toggle() } }
+                    .onTapGesture { flip() }
                 Spacer(minLength: 8)
                 gradeBar
             } else if cards.isEmpty {
-                ContentUnavailableView("No cards yet", systemImage: "rectangle.on.rectangle.slash",
-                                       description: Text("Switch to edit mode to add cards, or ask the AI for a deck."))
+                ContentUnavailableView("No cards yet", systemImage: "rectangle.on.rectangle.slash")
             } else {
                 sessionSummary
             }
@@ -177,7 +177,9 @@ struct FlashcardsEditor: View {
         .focusEffectDisabled()
         .focused($focused)
         .onAppear { focused = true }
-        .onKeyPress(.space) { studyKeyAdvance(); return .handled }
+        .onKeyPress(.space) { flip(); return .handled }
+        .onKeyPress(.leftArrow) { step(-1); return .handled }
+        .onKeyPress(.rightArrow) { step(1); return .handled }
         .onKeyPress(.return) { studyKeyAdvance(); return .handled }
         .onKeyPress(characters: CharacterSet(charactersIn: "1")) { _ in
             if revealed { gradeStillLearning() }
@@ -189,42 +191,59 @@ struct FlashcardsEditor: View {
         }
     }
 
-    /// Space/Return: reveal first, then count as "learned" — Anki's default flow.
+    private func flip() {
+        guard currentCard != nil else { return }
+        withAnimation(reduceMotion ? nil : JB.smooth) { revealed.toggle() }
+    }
+
+    /// ← / →: browse the queue without grading (next sends the card to the back).
+    private func step(_ dir: Int) {
+        guard queue.count > 1 else { return }
+        if dir > 0 { queue.append(queue.removeFirst()) } else { queue.insert(queue.removeLast(), at: 0) }
+        withAnimation(reduceMotion ? nil : JB.snap) { revealed = false }
+    }
+
+    /// Return: reveal first, then count as "learned" — Anki's default flow.
     private func studyKeyAdvance() {
         guard currentCard != nil else { return }
         if revealed {
             gradeLearned()
         } else {
-            withAnimation(.spring(duration: 0.35)) { revealed = true }
+            withAnimation(reduceMotion ? nil : JB.smooth) { revealed = true }
         }
     }
 
     private var studyHeader: some View {
-        let total = sessionLearned + queue.count
-        return HStack(spacing: 10) {
-            Text("\(queue.count) to go")
-                .font(.jb(11, .semibold))
-                .foregroundStyle(.secondary)
-            if sessionLearned > 0 {
-                Label("\(sessionLearned)", systemImage: "checkmark.circle.fill")
-                    .font(.jb(11)).foregroundStyle(.green)
+        let total = max(sessionLearned + queue.count, 1)
+        return VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                JBDotNumber(value: "\(queue.count)", dot: 2, tint: JB.accent)
+                Text("/ \(total)").font(.jbMono(11)).foregroundStyle(JB.ink3)
+                if sessionLearned > 0 {
+                    Text("+\(sessionLearned)").font(.jbMono(11)).foregroundStyle(JB.live)
+                }
+                if sessionAgain > 0 {
+                    Text("↺\(sessionAgain)").font(.jbMono(11)).foregroundStyle(JB.warn)
+                }
+                Spacer()
+                Button {
+                    queue.shuffle()
+                    revealed = false
+                } label: {
+                    Image(systemName: "shuffle")
+                }
+                .buttonStyle(JBIconButtonStyle(size: 24))
+                .help("Shuffle")
             }
-            if sessionAgain > 0 {
-                Label("\(sessionAgain)", systemImage: "arrow.counterclockwise.circle.fill")
-                    .font(.jb(11)).foregroundStyle(.orange)
+            GeometryReader { g in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(JB.line)
+                    Capsule().fill(JB.accent)
+                        .frame(width: g.size.width * CGFloat(sessionLearned) / CGFloat(total))
+                        .animation(JB.smooth, value: sessionLearned)
+                }
             }
-            Spacer()
-            Button {
-                queue.shuffle()
-                revealed = false
-            } label: {
-                Image(systemName: "shuffle").font(.jb(11))
-            }
-            .buttonStyle(.borderless)
-            .help("Shuffle the remaining cards")
-            ProgressView(value: total == 0 ? 0 : Double(sessionLearned), total: Double(max(total, 1)))
-                .frame(width: 90)
-                .controlSize(.small)
+            .frame(height: 2)
         }
     }
 
@@ -232,41 +251,34 @@ struct FlashcardsEditor: View {
         // One card, front/back on a 3D flip. The back face is pre-mirrored so
         // it reads correctly once the container turns 180°.
         ZStack {
-            face(label: "QUESTION", text: card.front, hint: "Click or press Space to flip")
+            face(label: "Question", text: card.front)
                 .opacity(revealed ? 0 : 1)
-            face(label: "ANSWER", text: card.back, hint: nil)
+            face(label: "Answer", text: card.back)
                 .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0))
                 .opacity(revealed ? 1 : 0)
         }
-        .rotation3DEffect(.degrees(revealed ? 180 : 0), axis: (x: 0, y: 1, z: 0))
+        .rotation3DEffect(.degrees(revealed && !reduceMotion ? 180 : 0), axis: (x: 0, y: 1, z: 0), perspective: 0.5)
         .frame(maxWidth: 560, minHeight: 240)
     }
 
-    private func face(label: String, text: String, hint: String?) -> some View {
-        VStack(spacing: 10) {
-            Text(label)
-                .font(.jb(9.5, .bold))
-                .kerning(1.2)
-                .foregroundStyle(.tertiary)
+    private func face(label: String, text: String) -> some View {
+        VStack(spacing: 12) {
+            Text(label).jbEyebrow()
             ScrollView {
                 Text(text.isEmpty ? "(blank)" : text)
-                    .font(.jb(19, .medium))
+                    .font(.jb(20, .medium))
+                    .tracking(-0.2)
+                    .foregroundStyle(JB.ink)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
                     .textSelection(.enabled)
             }
             .frame(maxHeight: 260)
-            if let hint {
-                Text(hint)
-                    .font(.jb(10))
-                    .foregroundStyle(.quaternary)
-            }
         }
-        .padding(22)
+        .padding(24)
         .frame(maxWidth: .infinity, minHeight: 240)
-        .background(.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).stroke(.quaternary, lineWidth: 1))
-        .shadow(color: .black.opacity(0.10), radius: 12, y: 5)
+        .background(JB.raised, in: RoundedRectangle(cornerRadius: JB.rPanel, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: JB.rPanel, style: .continuous).strokeBorder(JB.line, lineWidth: 1))
     }
 
     @ViewBuilder
@@ -280,9 +292,8 @@ struct FlashcardsEditor: View {
                         .font(.jb(12.5, .medium))
                         .frame(minWidth: 110)
                 }
-                .buttonStyle(.jbPrimary)
-                .tint(.orange)
-                .help("Show this card again in a few cards (1)")
+                .buttonStyle(.jbSecondary)
+                .help("Show again in a few cards (1)")
                 Button {
                     gradeLearned()
                 } label: {
@@ -291,8 +302,7 @@ struct FlashcardsEditor: View {
                         .frame(minWidth: 110)
                 }
                 .buttonStyle(.jbPrimary)
-                .tint(.green)
-                .help("Mark learned and move on (2 or Space)")
+                .help("Mark learned (2 or Return)")
             }
             .padding(.bottom, 6)
         } else {
@@ -303,19 +313,17 @@ struct FlashcardsEditor: View {
 
     private var sessionSummary: some View {
         VStack(spacing: 14) {
-            Image(systemName: stillToLearn == 0 ? "trophy.fill" : "checkmark.seal.fill")
-                .font(.jb(40))
-                .foregroundStyle(stillToLearn == 0 ? .yellow : .green)
+            JBDotNumber(value: "\(sessionLearned)", dot: 3, tint: JB.live)
             if sessionStarted {
-                Text(stillToLearn == 0 ? "All \(cards.count) cards learned!" : "Session done")
+                Text(stillToLearn == 0 ? "All \(cards.count) learned" : "Session done")
                     .font(.jb(17, .semibold))
                 Text("\(sessionLearned) learned this round" +
                      (sessionAgain > 0 ? " · \(sessionAgain) retries" : "") +
                      (stillToLearn > 0 ? " · \(stillToLearn) still to learn" : ""))
-                    .font(.jb(12))
-                    .foregroundStyle(.secondary)
+                    .font(.jbMono(11.5))
+                    .foregroundStyle(JB.ink3)
             } else {
-                Text("All \(cards.count) cards learned!")
+                Text("All \(cards.count) learned")
                     .font(.jb(17, .semibold))
             }
             HStack(spacing: 10) {
@@ -360,21 +368,18 @@ struct FlashcardsEditor: View {
                     Label("Card", systemImage: "plus")
                 }
                 Spacer()
-                Text("\(cards.count) cards · \(cards.count - stillToLearn) learned")
-                    .font(.jb(10.5))
-                    .foregroundStyle(.secondary)
-                if doc?.dirty == true {
-                    Text("unsaved").font(.jb(10)).foregroundStyle(.secondary)
-                }
+                Text("\(cards.count - stillToLearn)/\(cards.count)")
+                    .font(.jbMono(11))
+                    .foregroundStyle(JB.ink3)
+                    .help("Learned")
             }
-            .buttonStyle(.borderless)
-            .font(.jb(11))
+            .buttonStyle(.jbGhost)
+            .controlSize(.small)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            Divider().opacity(0.4)
+            Rectangle().fill(JB.line).frame(height: 1)
             if cards.isEmpty {
-                ContentUnavailableView("No cards yet", systemImage: "rectangle.on.rectangle.slash",
-                                       description: Text("Add a card above, or ask the AI for a deck."))
+                ContentUnavailableView("No cards yet", systemImage: "rectangle.on.rectangle.slash")
             } else {
                 ScrollView {
                     LazyVStack(spacing: 10) {
@@ -392,8 +397,8 @@ struct FlashcardsEditor: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text("\(i + 1)")
-                    .font(.jbMono(10, .semibold))
-                    .foregroundStyle(.tertiary)
+                    .font(.jbMono(10, .medium))
+                    .foregroundStyle(JB.ink3)
                 Spacer()
                 Button {
                     cards[i].learned.toggle()
@@ -402,7 +407,7 @@ struct FlashcardsEditor: View {
                     Label(cards[i].learned ? "Learned" : "Learning",
                           systemImage: cards[i].learned ? "checkmark.seal.fill" : "seal")
                         .font(.jb(10.5))
-                        .foregroundStyle(cards[i].learned ? .green : .secondary)
+                        .foregroundStyle(cards[i].learned ? JB.live : JB.ink3)
                 }
                 .buttonStyle(.borderless)
                 .help(cards[i].learned ? "Mark as still learning" : "Mark as learned")
@@ -412,7 +417,7 @@ struct FlashcardsEditor: View {
                 } label: {
                     Image(systemName: "trash")
                         .font(.jb(10.5))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink3)
                 }
                 .buttonStyle(.borderless)
             }
@@ -420,16 +425,16 @@ struct FlashcardsEditor: View {
                 .textFieldStyle(.plain)
                 .font(.jb(13, .medium))
                 .lineLimit(1...6)
-            Divider().opacity(0.5)
+            Rectangle().fill(JB.line).frame(height: 1)
             TextField("Answer", text: cardBinding(i, \.back), axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.jb(12.5))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(JB.ink2)
                 .lineLimit(1...8)
         }
         .padding(12)
-        .background(.background.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(.quaternary, lineWidth: 0.5))
+        .background(JB.raised, in: RoundedRectangle(cornerRadius: JB.rCard, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).strokeBorder(JB.line, lineWidth: 1))
     }
 
     private func cardBinding(_ i: Int, _ keyPath: WritableKeyPath<Flashcard, String>) -> Binding<String> {
