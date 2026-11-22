@@ -400,7 +400,7 @@ struct SidebarView: View {
     @ViewBuilder
     private func sessionRow(_ session: ChatSessionInfo, indented: Bool) -> some View {
         SessionRow(session: session,
-                   isSelected: store.activeTab == .chat && session.id == store.selectedSessionID,
+                   isSelected: store.activeTab == .chat && session.id == store.selectedSessionID && AgentNav.shared.openID == nil,
                    isWorking: store.workingSessions.contains(session.id),
                    hasDocAlert: store.docAlertSessions.contains(session.id))
             .padding(.leading, indented ? 14 : 0)
