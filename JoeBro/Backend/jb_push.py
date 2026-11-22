@@ -601,6 +601,7 @@ def end_if_idle(store, busy_turns):
 
 DEAD_REASONS = ("BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic", "ExpiredToken")
 START_EVERY, UPDATE_EVERY, STRUCT_EVERY, KEEPALIVE = 60, 3, 15, 120
+IDLE_END = 300   # seconds a finished card lingers (and can be repopulated) before it is really ended
 WAKE = threading.Event()      # set by coding_event: the island loop re-checks within about a second
 
 
@@ -662,10 +663,18 @@ class LiveActivityPusher:
         _activity_schema(self.store)
         out = {"start": 0, "update": 0, "end": 0}
         if not runs:
+            # Finishing updates the card in place and keeps its token: if work starts again soon the same card
+            # is repopulated. It is only really ended after IDLE_END seconds without any run.
             if self.last_sig not in (None, "[]"):
+                self._finished_started = self.started or now
+                out["update"] = self._end(now, final=False)
+                self.idle_since = now
+            elif getattr(self, "idle_since", None) and now - self.idle_since >= IDLE_END:
                 out["end"] = self._end(now)
+                self.idle_since = None
             self.last_sig, self.last_struct, self.started = "[]", None, None
             return out
+        self.idle_since = None
         st = self.state(runs, now)
         sig = json.dumps([(r["id"], str(r.get("detail", ""))[:40], r.get("queued"), r.get("subagents", 0), bool(r.get("waiting"))) for r in runs])
         struct = json.dumps([(r["id"], r.get("subagents", 0), bool(r.get("waiting"))) for r in runs])
@@ -706,12 +715,19 @@ class LiveActivityPusher:
                 self.last_sig, self.last_struct = sig, struct   # nothing to update: don't retry every tick
         return out
 
-    def _end(self, now):
-        st = {"count": 0, "runs": [], "startedAt": (self.started or now) - 978307200, "headline": "JoeBro finished",
+    def _end(self, now, final=True):
+        """final=False: show the finished card but keep the activity (and its token) alive for reuse."""
+        started = getattr(self, "_finished_started", None) or self.started or now
+        st = {"count": 0, "runs": [], "startedAt": started - 978307200, "headline": "JoeBro finished",
               "finished": "done", "subagents": 0, "waiting": 0}
-        payload = {"aps": {"timestamp": int(now), "event": "end", "dismissal-date": int(now) + 300, "content-state": st}}
+        if not final:
+            payload = {"aps": {"timestamp": int(now), "event": "update", "stale-date": int(now) + IDLE_END + 60,
+                               "content-state": st}}
+        else:
+            payload = {"aps": {"timestamp": int(now), "event": "end", "dismissal-date": int(now) + 60, "content-state": st}}
         n = 0
         for row in self.store.rows("SELECT * FROM push_activities"):
-            n += self._push("end", row, payload, 10)
-            self.store.exec("DELETE FROM push_activities WHERE token=?", (row["token"],))
+            n += self._push("update" if not final else "end", row, payload, 10)
+            if final:
+                self.store.exec("DELETE FROM push_activities WHERE token=?", (row["token"],))
         return n

@@ -130,10 +130,17 @@ class PushToStart(unittest.TestCase):
         self.assertEqual(len(self.sent), n)             # nothing changed, no keep-alive yet
         p.tick(runs(2, True), 1235)
         self.assertEqual(len(self.sent), n + 1)         # keep-alive
-        out = p.tick([], 1240)
+        out = p.tick([], 1240)                          # finished: the card is updated in place, not ended
+        self.assertEqual((out["end"], out["update"]), (0, 1)); self.assertEqual(self.sent[-1][2], "update")
+        self.assertEqual(self.sent[-1][4]["aps"]["content-state"]["finished"], "done")
+        self.assertIsNotNone(s.one("select 1 from push_activities"))
+        n = len(self.sent); p.tick(runs(), 1260)        # work starts again: same card repopulated, no new start
+        self.assertEqual([x[2] for x in self.sent[n:]], ["update"])
+        self.assertIsNone(self.sent[-1][4]["aps"]["content-state"]["finished"])
+        p.tick([], 1300); out = p.tick([], 1300 + 301)  # idle long enough: really ended
         self.assertEqual(out["end"], 1); self.assertEqual(self.sent[-1][2], "end")
         self.assertIsNone(s.one("select 1 from push_activities"))
-        self.assertEqual(p.tick([], 1245)["end"], 0)
+        self.assertEqual(p.tick([], 1700)["end"], 0)
 
     def test_dead_tokens_dropped_and_scene(self):
         register_activity(self.store, {"install_id": "i1", "push_to_start_token": HEX, "environment": "production"})
