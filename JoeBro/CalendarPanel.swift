@@ -39,39 +39,36 @@ struct CalendarPanel: View {
 
     var body: some View {
         PanelChrome(title: "Calendar", icon: "calendar") {
-            Picker("", selection: $viewMode) {
-                Text("Month").tag("month")
-                Text("Week").tag("week")
-                Text("Agenda").tag("agenda")
+            HStack(spacing: 2) {
+                ForEach([("month", "Month"), ("week", "Week"), ("agenda", "Agenda")], id: \.0) { key, label in
+                    Button(label) { withAnimation(JB.snap) { viewMode = key } }
+                        .buttonStyle(JBButtonStyle(kind: viewMode == key ? .secondary : .ghost, compact: true))
+                }
             }
-            .pickerStyle(.segmented)
-            .controlSize(.small)
-            .frame(width: 200)
 
             Button { step(-1) } label: { Image(systemName: "chevron.left") }
-                .buttonStyle(.borderless)
+                .buttonStyle(.jbIcon)
             Text(titleLabel)
-                .font(.jb(12, .semibold))
-                .frame(minWidth: 110)
+                .font(.jbMono(12, .medium))
+                .frame(minWidth: 120)
             Button { step(1) } label: { Image(systemName: "chevron.right") }
-                .buttonStyle(.borderless)
+                .buttonStyle(.jbIcon)
             Button("Today") { anchor = cal.startOfDay(for: Date()) }
-                .buttonStyle(.borderless)
-                .font(.jb(12))
+                .buttonStyle(JBButtonStyle(kind: .ghost, compact: true))
             Button {
                 editing = EventDraft()
             } label: {
                 Image(systemName: "plus")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.jbIcon)
             .help("New event")
             Button {
                 Task { await load() }
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
-            .buttonStyle(.borderless)
-            .help("Refresh from calendar")
+            .buttonStyle(.jbIcon)
+            .help("Refresh")
         } content: {
             VStack(spacing: 10) {
                 quickAddBar
@@ -79,14 +76,12 @@ struct CalendarPanel: View {
                 Group {
                     switch events {
                     case .loading:
-                        ProgressView().frame(maxHeight: .infinity)
+                        PanelLoading()
                     case .failed(let e):
-                        ContentUnavailableView("Couldn't load events", systemImage: "calendar.badge.exclamationmark", description: Text(e))
+                        PanelFailure(title: "Couldn't load events", detail: e)
                     case .loaded(let list):
                         if list.isEmpty, calendarStatus?.configured != true {
-                            ContentUnavailableView("Connect a calendar in Settings", systemImage: "calendar.badge.plus",
-                                                   description: Text("Open Settings > General to connect CalDAV or macOS Calendar."))
-                                .frame(maxHeight: .infinity)
+                            PanelEmpty(art: .plug, text: "Connect a calendar in Settings")
                         } else {
                             switch viewMode {
                             case "month": monthGrid(list)
@@ -97,7 +92,7 @@ struct CalendarPanel: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .joeGlassRect(16)
+                .jbSurface(.panel, radius: JB.rPanel)
             }
         }
         .task(id: "\(anchor.timeIntervalSince1970)-\(viewMode)") { await load() }
@@ -237,8 +232,8 @@ struct CalendarPanel: View {
     // MARK: Natural-language quick add
 
     private var quickAddBar: some View {
-        QuickAddBar(placeholder: "Add with natural language — \"lunch with Sara friday 1pm\"",
-                    actionIcon: "plus.circle.fill", busy: nlBusy, errorText: nlError) { quickAdd($0) }
+        QuickAddBar(placeholder: "Lunch with Sara friday 1pm",
+                    actionIcon: "plus.circle", busy: nlBusy, errorText: nlError) { quickAdd($0) }
     }
 
     private func quickAdd(_ text: String) {
@@ -312,8 +307,7 @@ struct CalendarPanel: View {
                 HStack(spacing: 0) {
                     ForEach(weekdays, id: \.self) { d in
                         Text(d)
-                            .font(.jb(10, .semibold))
-                            .foregroundStyle(JB.ink3)
+                            .jbEyebrow()
                             .frame(width: cellWidth, height: headerHeight)
                     }
                 }
@@ -331,7 +325,7 @@ struct CalendarPanel: View {
                             path.addLine(to: CGPoint(x: cellWidth * 7, y: y))
                         }
                     }
-                    .stroke(Color.primary.opacity(0.12), lineWidth: 0.5)
+                    .stroke(JB.line, lineWidth: 1)
 
                     ForEach(0..<42, id: \.self) { index in
                         let row = index / 7
@@ -360,8 +354,8 @@ struct CalendarPanel: View {
         return VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text("\(cal.component(.day, from: day))")
-                    .font(.jb(11, isToday ? .bold : .regular))
-                    .foregroundStyle(isToday ? Color.white : (inMonth ? Color.primary : JB.ink2.opacity(0.45)))
+                    .font(.jbMono(11, isToday ? .semibold : .regular))
+                    .foregroundStyle(isToday ? JB.onAccent : (inMonth ? JB.ink : JB.ink3.opacity(0.7)))
                     .frame(width: 20, height: 20, alignment: .center)
                     .background(isToday ? AnyShapeStyle(JB.accent) : AnyShapeStyle(.clear), in: Circle())
                 Spacer(minLength: 0)
@@ -370,19 +364,22 @@ struct CalendarPanel: View {
 
             ForEach(dayEvents.prefix(3)) { ev in
                 Text(ev.summary)
-                    .font(.jb(9.5, .medium))
+                    .font(.jb(10, .medium))
+                    .foregroundStyle(JB.ink)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1.5)
                     .frame(maxWidth: .infinity, maxHeight: 16, alignment: .leading)
-                    .background(JB.accent.opacity(ev.allDay == true || isMultiDay(ev) ? 0.30 : 0.16),
-                                in: RoundedRectangle(cornerRadius: 4))
+                    .background(JB.accent.opacity(ev.allDay == true || isMultiDay(ev) ? 0.24 : 0.12),
+                                in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .strokeBorder(JB.accent.opacity(0.25), lineWidth: 1))
                     .onTapGesture { editing = EventDraft(from: ev) }
             }
             if dayEvents.count > 3 {
                 Text("+\(dayEvents.count - 3) more")
-                    .font(.jb(8.5))
+                    .font(.jbMono(9))
                     .lineLimit(1)
                     .foregroundStyle(JB.ink3)
             }
@@ -417,22 +414,23 @@ struct CalendarPanel: View {
                 Color.clear.frame(width: 44, height: 1)
                 ForEach(days, id: \.self) { day in
                     VStack(spacing: 3) {
-                        Text(day.formatted(.dateTime.weekday(.abbreviated)))
-                            .font(.jb(10, .semibold))
-                            .foregroundStyle(JB.ink3)
+                        Text(day.formatted(.dateTime.weekday(.abbreviated))).jbEyebrow()
                         Text("\(cal.component(.day, from: day))")
-                            .font(.jb(13, cal.isDateInToday(day) ? .bold : .regular))
-                            .foregroundStyle(cal.isDateInToday(day) ? Color.white : Color.primary)
+                            .font(.jbMono(13, cal.isDateInToday(day) ? .semibold : .regular))
+                            .foregroundStyle(cal.isDateInToday(day) ? JB.onAccent : JB.ink)
                             .frame(width: 24, height: 24)
                             .background(cal.isDateInToday(day) ? AnyShapeStyle(JB.accent) : AnyShapeStyle(.clear), in: Circle())
                         ForEach(eventsOn(day, list).filter { $0.allDay == true }.prefix(2)) { ev in
                             Text(ev.summary)
-                                .font(.jb(9, .medium))
+                                .font(.jb(9.5, .medium))
+                                .foregroundStyle(JB.ink)
                                 .lineLimit(1)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 2)
                                 .frame(maxWidth: .infinity)
-                                .background(JB.accent.opacity(0.30), in: RoundedRectangle(cornerRadius: 5))
+                                .background(JB.accent.opacity(0.22), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                                .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                    .strokeBorder(JB.accent.opacity(0.3), lineWidth: 1))
                                 .onTapGesture { editing = EventDraft(from: ev) }
                         }
                     }
@@ -441,7 +439,7 @@ struct CalendarPanel: View {
             }
             .padding(.vertical, 8)
             .padding(.trailing, 8)
-            Divider().opacity(0.3)
+            Rectangle().fill(JB.line).frame(height: 1)
 
             // Scrollable 24h grid, opens at 07:00
             ScrollViewReader { proxy in
@@ -451,7 +449,7 @@ struct CalendarPanel: View {
                         VStack(spacing: 0) {
                             ForEach(firstHour..<24, id: \.self) { h in
                                 Text(String(format: "%02d:00", h))
-                                    .font(.jb(9))
+                                    .font(.jbMono(9.5))
                                     .foregroundStyle(JB.ink3)
                                     .frame(width: 40, height: hourHeight, alignment: .topTrailing)
                                     // Centre the label ON its grid line, not under it
@@ -485,7 +483,7 @@ struct CalendarPanel: View {
         let gridStart = cal.date(bySettingHour: firstHour, minute: 0, second: 0, of: day) ?? day
         return ZStack(alignment: .top) {
             if cal.isDateInToday(day) {
-                JB.accent.opacity(0.045)
+                JB.accent.opacity(0.05)
             }
             // Hour lines
             VStack(spacing: 0) {
@@ -494,12 +492,12 @@ struct CalendarPanel: View {
                         .fill(.clear)
                         .frame(height: hourHeight)
                         .overlay(alignment: .top) {
-                            Divider().opacity(0.18)
+                            Rectangle().fill(JB.line).frame(height: 1)
                         }
                 }
             }
             .overlay(alignment: .leading) {
-                Divider().opacity(0.12).frame(width: 1)
+                Rectangle().fill(JB.line).frame(width: 1)
             }
 
             // "Now" indicator
@@ -507,8 +505,9 @@ struct CalendarPanel: View {
                 let mins = Date().timeIntervalSince(gridStart) / 60
                 if mins > 0 {
                     Rectangle()
-                        .fill(Color.red.opacity(0.85))
+                        .fill(JB.accent)
                         .frame(height: 1.5)
+                        .overlay(alignment: .leading) { Circle().fill(JB.accent).frame(width: 6, height: 6).offset(x: -3) }
                         .offset(y: CGFloat(mins) / 60 * hourHeight)
                 }
             }
@@ -522,11 +521,12 @@ struct CalendarPanel: View {
                 let h = max(CGFloat(e.timeIntervalSince(s) / 3600) * hourHeight, 18)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(ev.summary)
-                        .font(.jb(10, .semibold))
+                        .font(.jb(10.5, .medium))
+                        .foregroundStyle(JB.ink)
                         .lineLimit(h > 34 ? 2 : 1)
                     if h > 30 {
                         Text(s.formatted(date: .omitted, time: .shortened))
-                            .font(.jb(9))
+                            .font(.jbMono(9.5))
                             .foregroundStyle(JB.ink2)
                     }
                 }
@@ -534,7 +534,8 @@ struct CalendarPanel: View {
                 .padding(.vertical, 3)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .frame(height: h, alignment: .topLeading)
-                .background(JB.accent.opacity(0.22), in: RoundedRectangle(cornerRadius: 6))
+                .background(JB.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(JB.accent.opacity(0.28), lineWidth: 1))
                 .overlay(alignment: .leading) {
                     UnevenRoundedRectangle(topLeadingRadius: 6, bottomLeadingRadius: 6)
                         .fill(JB.accent)
@@ -559,13 +560,15 @@ struct CalendarPanel: View {
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 14) {
                 if days.isEmpty {
-                    ContentUnavailableView("No events in this window", systemImage: "calendar")
+                    PanelEmpty(art: .done, text: "No events").frame(height: 240)
                 }
                 ForEach(days, id: \.self) { day in
                     VStack(alignment: .leading, spacing: 6) {
                         Text(dayLabel(day))
-                            .font(.jb(12, .semibold))
-                            .foregroundStyle(cal.isDateInToday(day) ? JB.accent : .secondary)
+                            .font(.jbMono(11, .medium))
+                            .textCase(.uppercase)
+                            .tracking(0.6)
+                            .foregroundStyle(cal.isDateInToday(day) ? JB.accent : JB.ink3)
                         ForEach(groups[day] ?? []) { ev in
                             agendaRow(ev)
                         }
@@ -585,7 +588,7 @@ struct CalendarPanel: View {
 
     private func agendaRow(_ ev: CalEvent) -> some View {
         HStack(spacing: 10) {
-            RoundedRectangle(cornerRadius: 2)
+            RoundedRectangle(cornerRadius: 1.5)
                 .fill(JB.accent)
                 .frame(width: 3, height: 30)
             VStack(alignment: .leading, spacing: 1) {
@@ -602,15 +605,15 @@ struct CalendarPanel: View {
                         Label(loc, systemImage: "mappin").lineLimit(1)
                     }
                 }
-                .font(.jb(11))
+                .font(.jbMono(11))
                 .foregroundStyle(JB.ink2)
             }
             Spacer()
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
+        .jbHoverRow()
         .contentShape(Rectangle())
-        .hoverBounce(1.01)
         .onTapGesture { editing = EventDraft(from: ev) }
         .contextMenu {
             Button("Edit") { editing = EventDraft(from: ev) }
@@ -662,7 +665,7 @@ struct EventEditorSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(draft.uid == nil ? "New Event" : "Edit Event")
+                Text(draft.uid == nil ? "New event" : "Edit event")
                     .font(.jb(14, .semibold))
                 Spacer()
                 if let uid = draft.uid {
@@ -676,19 +679,18 @@ struct EventEditorSheet: View {
                     } label: {
                         Image(systemName: "trash")
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.jbIcon)
                 }
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).buttonStyle(.jbGhost)
                 Button(draft.uid == nil ? "Add" : "Save") { save() }
                     .buttonStyle(.jbPrimary)
-                    .tint(JB.accent)
                     .disabled(saving || draft.summary.isEmpty)
             }
             .padding(14)
-            Divider()
+            Rectangle().fill(JB.line).frame(height: 1)
             Form {
                 TextField("Title", text: $draft.summary)
-                Toggle("All day", isOn: $draft.allDay)
+                Toggle("All day", isOn: $draft.allDay).jbToggle()
                 DatePicker("Starts", selection: $draft.start,
                            displayedComponents: draft.allDay ? [.date] : [.date, .hourAndMinute])
                 DatePicker("Ends", selection: $draft.end,

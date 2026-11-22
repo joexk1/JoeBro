@@ -25,7 +25,7 @@ struct SkillsPanel: View {
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.jbIcon)
             Menu {
                 Button {
                     showNew = true
@@ -41,7 +41,7 @@ struct SkillsPanel: View {
                     generatePrefill = ""
                     showGenerate = true
                 } label: {
-                    Label("Generate with AI…", systemImage: "sparkles")
+                    Label { Text("Generate with AI…") } icon: { JBIcon(.spark, size: 13) }
                 }
                 Button {
                     showLearn = true
@@ -50,6 +50,7 @@ struct SkillsPanel: View {
                 }
             } label: {
                 Image(systemName: "plus")
+                    .frame(width: 26, height: 26)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -62,12 +63,11 @@ struct SkillsPanel: View {
             ZStack {
                 switch skills {
                 case .loading:
-                    ProgressView()
+                    PanelLoading()
                 case .failed(let e):
-                    ContentUnavailableView("Couldn't load skills", systemImage: "graduationcap", description: Text(e))
+                    PanelFailure(title: "Couldn't load skills", detail: e)
                 case .loaded(let list) where list.isEmpty:
-                    ContentUnavailableView("No skills yet", systemImage: "graduationcap",
-                                           description: Text("The agent learns skills from successful sessions — or add one with +."))
+                    PanelEmpty(art: .files, text: "No skills yet")
                 case .loaded(let list):
                     let shown = filtered(list)
                     VStack(spacing: 0) {
@@ -90,13 +90,14 @@ struct SkillsPanel: View {
                                 }
                             }
                             .padding(12)
+                            .animation(JB.smooth, value: shown.map(\.skillRowID))
                         }
                     }
-                    .animation(.spring(duration: 0.25), value: selection.isEmpty)
+                    .animation(JB.snap, value: selection.isEmpty)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .joeGlassRect(16)
+            .jbSurface(.panel, radius: JB.rPanel)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
@@ -174,40 +175,46 @@ struct SkillsPanel: View {
                              onToggleCheck: { toggleSelection(id, in: &selection) }) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
+                    JBStatusDot(color: active ? JB.live : JB.ink3, size: 6)
                     Text(s["name"]?.stringValue ?? "Unnamed skill")
                         .font(.jb(13, .semibold))
-                        .foregroundStyle(active ? .primary : .secondary)
+                        .foregroundStyle(active ? JB.ink : JB.ink2)
                     if let cat = s["category"]?.stringValue, !cat.isEmpty {
-                        Text(cat)
-                            .font(.jb(10))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background(.quaternary.opacity(0.6), in: Capsule())
-                    }
-                    if !active {
-                        Text("off")
-                            .font(.jb(10))
-                            .foregroundStyle(JB.ink3)
+                        JBChip(text: cat)
                     }
                 }
                 if let desc = s["description"]?.stringValue, !desc.isEmpty {
                     Text(desc)
-                        .font(.jb(11.5))
+                        .font(.jb(12))
                         .foregroundStyle(JB.ink2)
                         .lineLimit(2)
                 }
                 HStack(spacing: 8) {
                     if let uses = s["uses"]?.intValue { Text("\(uses) uses") }
-                    if let conf = s["confidence"]?.doubleValue { Text("\(Int(conf))% confidence") }
+                    if let conf = s["confidence"]?.doubleValue { Text("\(Int(conf))%") }
                     if let src = s["source"]?.stringValue { Text(src) }
                 }
-                .font(.jb(10))
+                .font(.jbMono(10.5))
                 .foregroundStyle(JB.ink3)
             }
             Spacer()
         }
-        .opacity(active ? 1 : 0.55)
+        .opacity(active ? 1 : 0.65)
         .contentShape(Rectangle())
+        .onTapGesture(count: 2) { editing = SkillDraft(from: s) }
+        .jbHoverActions {
+            Button { editing = SkillDraft(from: s) } label: { Image(systemName: "pencil") }
+                .buttonStyle(.jbIcon).help("Edit")
+            Button { toggle(id: id, currentlyActive: active) } label: { Image(systemName: "power") }
+                .buttonStyle(JBIconButtonStyle(size: 26, active: active)).help(active ? "Disable" : "Activate")
+            Button {
+                Task {
+                    _ = try? await APIClient.shared.sendJSON("api/skills/\(id)", method: "DELETE")
+                    await load()
+                }
+            } label: { Image(systemName: "trash") }
+                .buttonStyle(.jbIcon).help("Delete")
+        }
         .contextMenu {
             Button("Edit…") { editing = SkillDraft(from: s) }
             Button(active ? "Disable" : "Activate") { toggle(id: id, currentlyActive: active) }
@@ -266,9 +273,9 @@ struct SkillEditorSheet: View {
                 Text(draft.skillID == nil ? "New Skill" : "Edit Skill")
                     .font(.jb(14, .semibold))
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).buttonStyle(.jbGhost)
                 Button { save() } label: {
-                    if saving { ProgressView().controlSize(.small) }
+                    if saving { JBSpinner(size: 12, tint: JB.onAccent) }
                     else { Text(draft.skillID == nil ? "Add" : "Save") }
                 }
                 .buttonStyle(.jbPrimary)
@@ -277,7 +284,7 @@ struct SkillEditorSheet: View {
                 .disabled(saving || draft.name.isEmpty || draft.procedure.isEmpty)
             }
             .padding(14)
-            Divider()
+            Rectangle().fill(JB.line).frame(height: 1)
             Form {
                 TextField("Name", text: $draft.name)
                 TextField("Description", text: $draft.description)
@@ -285,9 +292,7 @@ struct SkillEditorSheet: View {
                 TextField("When to use", text: $draft.whenToUse, axis: .vertical)
                     .lineLimit(2...4)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Procedure (markdown)")
-                        .font(.jb(11))
-                        .foregroundStyle(JB.ink2)
+                    Text("Procedure").jbEyebrow()
                     // Fixed-height TextEditor so a long procedure scrolls inside
                     // the field instead of stretching the whole sheet.
                     TextEditor(text: $draft.procedure)
@@ -295,7 +300,7 @@ struct SkillEditorSheet: View {
                         .frame(height: 240)
                         .scrollContentBackground(.hidden)
                         .padding(6)
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+                        .overlay(RoundedRectangle(cornerRadius: JB.rControl, style: .continuous).strokeBorder(JB.line, lineWidth: 1))
                 }
                 if let error {
                     Text(error).font(.jbCaption).foregroundStyle(JB.danger)
@@ -345,14 +350,14 @@ struct GenerateSkillSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Label("Generate Skill", systemImage: "sparkles")
+                Label { Text("Generate skill") } icon: { JBIcon(.spark, size: 14) }
                     .font(.jb(14, .semibold))
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).buttonStyle(.jbGhost)
                 Button {
                     generate()
                 } label: {
-                    if generating { ProgressView().controlSize(.small) }
+                    if generating { JBSpinner(size: 12, tint: JB.onAccent) }
                     else { Text("Generate") }
                 }
                 .buttonStyle(.jbPrimary)
@@ -360,14 +365,11 @@ struct GenerateSkillSheet: View {
                 .disabled(generating || prompt.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             .padding(14)
-            Divider()
+            Rectangle().fill(JB.line).frame(height: 1)
             Form {
                 TextField("Describe the skill — e.g. \"how to review a pull request\"",
                           text: $prompt, axis: .vertical)
                     .lineLimit(4...8)
-                Text("Your default model drafts the skill, then it's saved to the library.")
-                    .font(.jbCaption)
-                    .foregroundStyle(JB.ink2)
                 if let error {
                     Text(error).font(.jbCaption).foregroundStyle(JB.danger)
                 }
@@ -506,7 +508,7 @@ struct LearnSkillsSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Label("Learn from Sources", systemImage: "books.vertical")
+                Label { Text("Learn from sources") } icon: { JBIcon(.skills, size: 14) }
                     .font(.jb(14, .semibold))
                 Spacer()
                 Button(made.isEmpty ? "Cancel" : "Done") { dismiss() }.keyboardShortcut(.cancelAction)
@@ -514,7 +516,7 @@ struct LearnSkillsSheet: View {
                     Button {
                         start()
                     } label: {
-                        if running { ProgressView().controlSize(.small) } else { Text("Learn") }
+                        if running { JBSpinner(size: 12, tint: JB.onAccent) } else { Text("Learn") }
                     }
                     .buttonStyle(.jbPrimary)
                     .tint(JB.accent)
@@ -522,26 +524,23 @@ struct LearnSkillsSheet: View {
                 }
             }
             .padding(14)
-            Divider()
+            Rectangle().fill(JB.line).frame(height: 1)
             Form {
                 HStack {
                     Text(folder?.path ?? "No folder selected")
                         .lineLimit(1).truncationMode(.middle)
-                        .foregroundStyle(folder == nil ? .secondary : .primary)
+                        .foregroundStyle(folder == nil ? JB.ink3 : JB.ink)
                     Spacer()
                     Button("Choose folder…") { pick() }.disabled(running)
                 }
-                Text("Your default model studies the folder's documents — exercises, analyses, structures — and saves skill(s) that teach it to do the same kind of work.")
-                    .font(.jbCaption)
-                    .foregroundStyle(JB.ink2)
                 if running {
                     HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text(detail.isEmpty ? "Working…" : detail).font(.jbCaption)
+                        JBSpinner()
+                        Text(detail.isEmpty ? "Working" : detail).font(.jbMono(11)).foregroundStyle(JB.ink2)
                     }
                 }
                 if !made.isEmpty {
-                    Label("Learned: " + made.joined(separator: ", "), systemImage: "checkmark.circle.fill")
+                    Label("Learned: " + made.joined(separator: ", "), systemImage: "checkmark")
                         .font(.jbCaption)
                         .foregroundStyle(JB.live)
                 }
