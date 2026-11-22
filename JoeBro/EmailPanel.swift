@@ -145,7 +145,7 @@ struct EmailPanel: View {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .font(.jb(11))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JB.ink2)
                 TextField("Search emails", text: $search)
                     .textFieldStyle(.plain)
                     .font(.jb(12))
@@ -153,7 +153,7 @@ struct EmailPanel: View {
                     Button { search = "" } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.jb(11))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(JB.ink2)
                     }
                     .buttonStyle(.borderless)
                 }
@@ -199,7 +199,7 @@ struct EmailPanel: View {
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.jb(12))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(JB.ink2)
                     }
                     .buttonStyle(.borderless)
                 }
@@ -444,16 +444,16 @@ private struct EmailRow: View {
                     Spacer()
                     Text(relativeDate(mail.date))
                         .font(.jb(10.5))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(JB.ink3)
                 }
                 Text(mail.subject ?? "(no subject)")
                     .font(.jb(12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JB.ink2)
                     .lineLimit(1)
                 if let s = mail.cachedSummary {
                     Text(s)
                         .font(.jb(11))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(JB.ink3)
                         .lineLimit(2)
                 }
             }
@@ -465,7 +465,7 @@ private struct EmailRow: View {
             if mail.hasAttachments == true {
                 Image(systemName: "paperclip")
                     .font(.jb(9))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(JB.ink3)
             }
         }
     }
@@ -531,13 +531,13 @@ private struct EmailDetailView: View {
                 .buttonStyle(.borderless)
                 Text("\(detail.fromName ?? "") <\(detail.fromAddress ?? "")>")
                     .font(.jb(12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JB.ink2)
                 HStack {
                     if let to = detail.to, !to.isEmpty {
-                        Text("To: \(to)").font(.jb(11)).foregroundStyle(.tertiary).lineLimit(1)
+                        Text("To: \(to)").font(.jb(11)).foregroundStyle(JB.ink3).lineLimit(1)
                     }
                     Spacer()
-                    Text(relativeDate(detail.date)).font(.jb(11)).foregroundStyle(.tertiary)
+                    Text(relativeDate(detail.date)).font(.jb(11)).foregroundStyle(JB.ink3)
                 }
                 if let atts = detail.attachments, !atts.isEmpty {
                     HStack(spacing: 6) {
@@ -562,7 +562,7 @@ private struct EmailDetailView: View {
                     .padding(.top, 4)
                 }
                 if let aiError {
-                    Text(aiError).font(.jbCaption).foregroundStyle(.red).lineLimit(2)
+                    Text(aiError).font(.jbCaption).foregroundStyle(JB.danger).lineLimit(2)
                 }
                 if summarizing || summary != nil {
                     VStack(alignment: .leading, spacing: 4) {
@@ -730,7 +730,7 @@ struct EmailComposeSheet: View {
             if let error {
                 Text(error)
                     .font(.jbCaption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(JB.danger)
                     .padding(.bottom, 8)
             }
 

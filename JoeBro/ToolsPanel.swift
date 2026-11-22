@@ -84,7 +84,7 @@ struct ToolsPanel: View {
 
             Text("Install richer capabilities the model can use in Agent mode.")
                 .font(.jbCaption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(JB.ink2)
 
             if store.plugins.isEmpty {
                 Spacer()
@@ -138,18 +138,18 @@ struct ToolsPanel: View {
                 if let d = plugin.description, !d.isEmpty {
                     Text(d)
                         .font(.jb(11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                         .lineLimit(2)
                 }
                 if !plugin.summary.isEmpty {
                     Text(plugin.summary)
                         .font(.jb(10, .medium))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(JB.ink3)
                 }
                 if let e = plugin.error, !e.isEmpty {
                     Text(e)
                         .font(.jb(10))
-                        .foregroundStyle(.red)
+                        .foregroundStyle(JB.danger)
                         .lineLimit(3)
                 }
             }
@@ -239,12 +239,12 @@ struct ToolsPanel: View {
 
             Text("Connect any MCP server (stdio). JoeBro launches it, discovers its tools, and offers them to the model in Agent mode.")
                 .font(.jbCaption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(JB.ink2)
 
             if let err = store.mcpError, !err.isEmpty {
                 Text(err)
                     .font(.jb(11))
-                    .foregroundStyle(.red)
+                    .foregroundStyle(JB.danger)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
@@ -284,22 +284,22 @@ struct ToolsPanel: View {
                     .font(.jb(13, .medium))
                 Text("\(server.command) \(server.args)")
                     .font(.jbMono(11))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JB.ink2)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if let err = server.error, !err.isEmpty {
                     Text(err)
                         .font(.jb(11))
-                        .foregroundStyle(.red)
+                        .foregroundStyle(JB.danger)
                         .lineLimit(2)
                 } else if server.tools.isEmpty {
                     Text("No tools discovered.")
                         .font(.jb(11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                 } else {
                     Text(server.tools.joined(separator: ", "))
                         .font(.jb(11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                 }
             }
 
@@ -341,7 +341,7 @@ struct ToolsPanel: View {
 
             Text("Register any JSON API as a tool the model can call in Agent mode. The description tells the model when and how to use it.")
                 .font(.jbCaption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(JB.ink2)
 
             if store.apiTools.isEmpty {
                 Spacer()
@@ -386,13 +386,13 @@ struct ToolsPanel: View {
                     if tool.hasKey == true {
                         Image(systemName: "key.fill")
                             .font(.jb(9))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(JB.ink2)
                     }
                 }
                 if let url = tool.baseURL, !url.isEmpty {
                     Text(url)
                         .font(.jbMono(11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
@@ -467,7 +467,7 @@ struct APIToolSheet: View {
                     .font(.jbMono(12))
                 Text("Put {query} anywhere in the URL to place the model's input exactly (e.g. …/search?name={query}). Otherwise it's appended as ?query=…")
                     .font(.jbCaption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JB.ink2)
                 SecureField(tool?.hasKey == true ? "API key (leave blank to keep)" : "API key (optional)", text: $apiKey)
                 Picker("Method", selection: $method) {
                     Text("GET").tag("GET")
@@ -477,13 +477,13 @@ struct APIToolSheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Description")
                         .font(.jbCaption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                     TextEditor(text: $description)
                         .font(.jb(12))
                         .frame(minHeight: 90)
                     Text("The model reads this to know when and how to call the tool.")
                         .font(.jbCaption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                 }
             }
             .formStyle(.grouped)
@@ -557,13 +557,13 @@ struct MCPServerSheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Arguments")
                         .font(.jbCaption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                     TextEditor(text: $args)
                         .font(.jbMono(12))
                         .frame(minHeight: 60)
                     Text("e.g. -y @modelcontextprotocol/server-filesystem /Users/me/Documents")
                         .font(.jbCaption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                 }
                 Picker("Agent access", selection: $permission) {
                     Text("Bound folder").tag("sandbox")
@@ -572,10 +572,10 @@ struct MCPServerSheet: View {
                 }
                 Text("The permission level the agent must be in to use this server's tools (e.g. phone or computer control should require Full access).")
                     .font(.jbCaption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JB.ink2)
                 Text("JoeBro launches the server, discovers its tools, and offers them to the model in Agent mode. The first connection may take a moment.")
                     .font(.jbCaption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JB.ink2)
             }
             .formStyle(.grouped)
         }
@@ -642,11 +642,11 @@ struct PluginEditSheet: View {
                     Text("Full access").tag("full")
                 }
                 Text("The permission level the agent must be in to use this plugin (computer-use plugins need Full access).")
-                    .font(.jbCaption).foregroundStyle(.secondary)
+                    .font(.jbCaption).foregroundStyle(JB.ink2)
                 if let repo = plugin.repoPath, !repo.isEmpty {
                     Text(repo)
                         .font(.jbMono(11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                         .lineLimit(1).truncationMode(.middle)
                 }
             }
@@ -697,13 +697,13 @@ struct ComputerUseSettingsSheet: View {
                             .font(.jb(12, .semibold))
                         Text("In Agent mode (Full access), JoeBro can drive this Mac: read an app's windows, menus and buttons as an accessibility tree, open apps, click, type and press shortcuts. With Vercel's agent-desktop installed it works headless: it doesn't move your mouse or steal focus. It reads the screen as text first and only takes a picture when it must, so it stays fast and cheap.")
                             .font(.jb(12))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(JB.ink2)
                         Text("Install agent-desktop with `npm i -g agent-desktop`. Until it's installed, JoeBro uses its built-in osascript version.")
                             .font(.jb(12))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(JB.ink2)
                         Text("It needs Accessibility access (System Settings > Privacy & Security > Accessibility). Turn the plugin off above to revoke all of this at once.")
                             .font(.jb(12))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(JB.ink2)
                     }
                     Divider()
                     VStack(alignment: .leading, spacing: 6) {
@@ -711,7 +711,7 @@ struct ComputerUseSettingsSheet: View {
                             .font(.jb(12, .semibold))
                         Text("One app name per line. JoeBro will refuse to open, click, type into or read any app whose name matches — even if you ask it to. Good for banking and other sensitive apps.")
                             .font(.jb(12))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(JB.ink2)
                         TextEditor(text: $blocked)
                             .font(.jbMono(13))
                             .frame(minHeight: 120)
@@ -774,7 +774,7 @@ struct AdvisorSettingsSheet: View {
                             .font(.jb(12, .semibold))
                         Text("A more powerful model your everyday AI can call for a second opinion — at any agent access level. It sees only the question it's sent, never the whole chat.")
                             .font(.jb(12))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(JB.ink2)
                         Picker("", selection: $modelID) {
                             Text("Choose a model…").tag("")
                             ModelPickerItems(models: store.models)
@@ -794,7 +794,7 @@ struct AdvisorSettingsSheet: View {
                         }
                         Text("This is the advisor tool's description — it's what tells your everyday model when to ask for advice. Edit it to make calls more or less frequent, or to point them at specific topics.")
                             .font(.jb(12))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(JB.ink2)
                         TextEditor(text: $desc)
                             .font(.jb(12))
                             .frame(minHeight: 140)

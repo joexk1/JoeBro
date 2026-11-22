@@ -1,66 +1,63 @@
 import SwiftUI
 
-/// Notices from the phone agent, tasks and agents land here. Tap to mark read.
+/// Notices from the phone agent, tasks and agents.
 struct InboxPanel: View {
     @Environment(AppStore.self) private var store
     @State private var items: Loadable<[InboxItem]> = .loading
     @State private var selection: Set<String> = []
-    @State private var confirmClear = false
+    @State private var hidden: Set<String> = []
+    @State private var undoTask: Task<Void, Never>?
+    @State private var undoText: String?
 
     var body: some View {
         PanelChrome(title: "Inbox", icon: "tray") {
-            Button {
-                Task { await load() }
-            } label: {
-                Image(systemName: "arrow.clockwise")
-            }
-            .buttonStyle(.borderless)
+            Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }
+                .buttonStyle(.jbIcon)
             if case .loaded(let list) = items, !list.isEmpty {
                 Button("Select all") {
-                    withAnimation(.spring(duration: 0.25)) { selection = Set(list.map(\.id)) }
+                    withAnimation(JB.snap) { selection = Set(list.map(\.id)) }
                 }
-                .buttonStyle(.borderless)
-                .font(.jb(11))
-                Button("Clear all") { confirmClear = true }
-                    .buttonStyle(.borderless)
-                    .font(.jb(11))
+                .buttonStyle(JBButtonStyle(kind: .ghost, compact: true))
+                Button("Clear all") { remove(list.map(\.id), label: "Cleared inbox") }
+                    .buttonStyle(JBButtonStyle(kind: .ghost, compact: true))
             }
         } content: {
-            ZStack {
+            ZStack(alignment: .bottom) {
                 switch items {
                 case .loading:
-                    ProgressView()
+                    PanelLoading()
                 case .failed(let e):
-                    ContentUnavailableView("Couldn't load the inbox", systemImage: "tray", description: Text(e))
-                case .loaded(let list) where list.isEmpty:
-                    ContentUnavailableView("Nothing here", systemImage: "tray",
-                                           description: Text("Notices from your phone agent, tasks and agents show up here."))
-                case .loaded(let list):
-                    VStack(spacing: 0) {
-                        if !selection.isEmpty {
-                            SelectionBar(total: list.count, allIDs: list.map(\.id), selection: $selection) { ids in
-                                Task { await APIClient.shared.deleteInbox(ids: ids); await load() }
+                    PanelFailure(title: "Couldn't load the inbox", detail: e)
+                case .loaded(let all):
+                    let list = all.filter { !hidden.contains($0.id) }
+                    if list.isEmpty {
+                        PanelEmpty(art: .done, text: "Nothing here")
+                    } else {
+                        VStack(spacing: 0) {
+                            if !selection.isEmpty {
+                                SelectionBar(total: list.count, allIDs: list.map(\.id), selection: $selection) { ids in
+                                    remove(ids, label: "Deleted \(ids.count)")
+                                }
+                            }
+                            ScrollView {
+                                LazyVStack(spacing: 8) {
+                                    ForEach(list) { row($0) }
+                                }
+                                .padding(12)
+                                .animation(JB.smooth, value: list.map(\.id))
                             }
                         }
-                        ScrollView {
-                            LazyVStack(spacing: 8) {
-                                ForEach(list) { row($0) }
-                            }
-                            .padding(12)
-                        }
+                        .animation(JB.snap, value: selection.isEmpty)
                     }
-                    .animation(.spring(duration: 0.25), value: selection.isEmpty)
+                }
+                if let undoText {
+                    UndoStrip(text: undoText) { undo() }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .joeGlassRect(16)
+            .jbSurface(.panel, radius: JB.rPanel)
         }
         .task { await load() }
-        .confirmationDialog("Delete every notification?", isPresented: $confirmClear) {
-            Button("Clear all", role: .destructive) {
-                Task { await APIClient.shared.clearInbox(); await load() }
-            }
-        }
     }
 
     private func row(_ n: InboxItem) -> some View {
@@ -69,32 +66,64 @@ struct InboxPanel: View {
                       onToggleCheck: { toggleSelection(n.id, in: &selection) }) {
             Image(systemName: n.icon)
                 .font(.jb(13))
-                .foregroundStyle(n.read ? Color.secondary : JB.accent)
+                .foregroundStyle(n.read ? JB.ink3 : JB.accent)
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 3) {
-                Text(n.title.isEmpty ? "Notice" : n.title)
-                    .font(.jb(13, n.read ? .regular : .semibold))
+                HStack(spacing: 6) {
+                    if !n.read { Circle().fill(JB.accent).frame(width: 6, height: 6) }
+                    Text(n.title.isEmpty ? "Notice" : n.title)
+                        .font(.jb(13, n.read ? .regular : .semibold))
+                        .foregroundStyle(n.read ? JB.ink2 : JB.ink)
+                }
                 if !n.body.isEmpty {
                     Text(n.body)
                         .font(.jb(12))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                         .textSelection(.enabled)
                 }
                 Text(relativeDate(n.createdAt))
-                    .font(.jb(10))
-                    .foregroundStyle(.tertiary)
+                    .font(.jbMono(10.5))
+                    .foregroundStyle(JB.ink3)
             }
             Spacer()
+        }
+        .jbHoverActions {
+            Button { remove([n.id], label: "Deleted") } label: { Image(systemName: "trash") }
+                .buttonStyle(.jbIcon).help("Delete")
         }
         .contentShape(Rectangle())
         .onTapGesture {
             guard !n.read else { return }
             Task { await APIClient.shared.markInboxRead(n.id); await load() }
         }
-        .contextMenu {
-            Button("Delete", role: .destructive) {
-                Task { await APIClient.shared.deleteInbox(ids: [n.id]); await load() }
-            }
+        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+    }
+
+    /// Hide now, delete for real after the undo window.
+    private func remove(_ ids: [String], label: String) {
+        undoTask?.cancel()
+        flush()
+        withAnimation(JB.smooth) { hidden.formUnion(ids); selection.subtract(ids); undoText = label }
+        undoTask = Task {
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            flush()
+        }
+    }
+
+    private func undo() {
+        undoTask?.cancel()
+        withAnimation(JB.smooth) { hidden = []; undoText = nil }
+    }
+
+    private func flush() {
+        let ids = Array(hidden)
+        withAnimation(JB.smooth) { undoText = nil }
+        guard !ids.isEmpty else { return }
+        Task {
+            await APIClient.shared.deleteInbox(ids: ids)
+            await load()
+            hidden.subtract(ids)
         }
     }
 

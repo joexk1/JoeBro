@@ -313,7 +313,7 @@ struct CalendarPanel: View {
                     ForEach(weekdays, id: \.self) { d in
                         Text(d)
                             .font(.jb(10, .semibold))
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(JB.ink3)
                             .frame(width: cellWidth, height: headerHeight)
                     }
                 }
@@ -361,7 +361,7 @@ struct CalendarPanel: View {
             HStack {
                 Text("\(cal.component(.day, from: day))")
                     .font(.jb(11, isToday ? .bold : .regular))
-                    .foregroundStyle(isToday ? Color.white : (inMonth ? Color.primary : Color.secondary.opacity(0.45)))
+                    .foregroundStyle(isToday ? Color.white : (inMonth ? Color.primary : JB.ink2.opacity(0.45)))
                     .frame(width: 20, height: 20, alignment: .center)
                     .background(isToday ? AnyShapeStyle(JB.accent) : AnyShapeStyle(.clear), in: Circle())
                 Spacer(minLength: 0)
@@ -384,7 +384,7 @@ struct CalendarPanel: View {
                 Text("+\(dayEvents.count - 3) more")
                     .font(.jb(8.5))
                     .lineLimit(1)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(JB.ink3)
             }
             Spacer(minLength: 0)
         }
@@ -419,7 +419,7 @@ struct CalendarPanel: View {
                     VStack(spacing: 3) {
                         Text(day.formatted(.dateTime.weekday(.abbreviated)))
                             .font(.jb(10, .semibold))
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(JB.ink3)
                         Text("\(cal.component(.day, from: day))")
                             .font(.jb(13, cal.isDateInToday(day) ? .bold : .regular))
                             .foregroundStyle(cal.isDateInToday(day) ? Color.white : Color.primary)
@@ -452,7 +452,7 @@ struct CalendarPanel: View {
                             ForEach(firstHour..<24, id: \.self) { h in
                                 Text(String(format: "%02d:00", h))
                                     .font(.jb(9))
-                                    .foregroundStyle(.tertiary)
+                                    .foregroundStyle(JB.ink3)
                                     .frame(width: 40, height: hourHeight, alignment: .topTrailing)
                                     // Centre the label ON its grid line, not under it
                                     .offset(y: -6.5)
@@ -527,7 +527,7 @@ struct CalendarPanel: View {
                     if h > 30 {
                         Text(s.formatted(date: .omitted, time: .shortened))
                             .font(.jb(9))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(JB.ink2)
                     }
                 }
                 .padding(.horizontal, 5)
@@ -603,7 +603,7 @@ struct CalendarPanel: View {
                     }
                 }
                 .font(.jb(11))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(JB.ink2)
             }
             Spacer()
         }
@@ -697,7 +697,7 @@ struct EventEditorSheet: View {
                 TextField("Notes", text: $draft.notes, axis: .vertical)
                     .lineLimit(3...6)
                 if let error {
-                    Text(error).font(.jbCaption).foregroundStyle(.red)
+                    Text(error).font(.jbCaption).foregroundStyle(JB.danger)
                 }
             }
             .formStyle(.grouped)

@@ -147,7 +147,7 @@ struct BrainPanel: View {
                         .background(.quaternary.opacity(0.6), in: Capsule())
                     Text(relativeDate(m.createdAt))
                         .font(.jb(10))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(JB.ink3)
                 }
             }
             Spacer()
@@ -332,7 +332,7 @@ private struct MemoryMapView: View {
                 ForEach(graph.nodes) { node in
                     Text(node.label)
                         .font(.jb(9))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                         .opacity(zoom > 0.55 || hoveredID == node.id ? 1 : 0)
                         .position(labelPoint(node, center: center))
                         .allowsHitTesting(false)
@@ -370,7 +370,7 @@ private struct MemoryMapView: View {
             let strength = (200 - rest) / 140   // 0 weak … 1 strong
             ctx.stroke(path,
                        with: .color(hot ? JB.accent
-                                        : Color.secondary.opacity(0.2 + 0.25 * strength)),
+                                        : JB.ink2.opacity(0.2 + 0.25 * strength)),
                        lineWidth: hot ? 1.6 : 0.7 + strength)
         }
     }
@@ -506,7 +506,7 @@ private struct MemoryMapView: View {
                         .background(.quaternary.opacity(0.6), in: Capsule())
                     Text(relativeDate(m.createdAt))
                         .font(.jb(10))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(JB.ink3)
                 }
             }
             .padding(10)
@@ -611,13 +611,13 @@ struct NotesPanel: View {
             } else if let content = note.content, !content.isEmpty {
                 Text(content)
                     .font(.jb(12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JB.ink2)
                     .lineLimit(6)
             }
             if let due = note.dueDate {
                 Label(relativeDate(due), systemImage: "alarm")
                     .font(.jb(10))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(JB.ink3)
             }
         }
         .panelCard()
@@ -719,7 +719,7 @@ struct EditMemorySheet: View {
                     ForEach(categories, id: \.self) { Text($0.capitalized).tag($0) }
                 }
                 if let error {
-                    Text(error).font(.jbCaption).foregroundStyle(.red)
+                    Text(error).font(.jbCaption).foregroundStyle(JB.danger)
                 }
             }
             .formStyle(.grouped)

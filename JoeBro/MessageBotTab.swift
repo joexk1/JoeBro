@@ -25,48 +25,37 @@ struct MessageBotTab: View {
 
     var body: some View {
         Form {
-            Section {
-                Text("Control JoeBro from Telegram — your pocket orchestrator over every chat and agent.")
-                    .font(.jb(12, .semibold))
-                Text("Message the bot and it manages your work: it searches and reads across all your chats, creates chats, binds them to folders, sets their mode and file-access level, and delegates coding/file jobs to them — reporting back what happened. It also uses your email, calendar, memory, web search and deep research directly. It does NOT write code or edit files itself; it hands that to a chat. Reply y/n to approve actions; send /chats to list your chats, or /compact to trim this conversation.")
-                    .font(.jbCaption)
-                    .foregroundStyle(.secondary)
-            }
             Section("Telegram") {
-                Toggle("Enable Message Bot", isOn: $enabled)
-                SecureField("Bot token", text: $token)
+                Toggle("Enable Message Bot", isOn: $enabled).jbToggle()
+                SecureField("Bot token", text: $token).font(.jbMono(12))
                 TextField("Allowed Telegram IDs (comma-separated)", text: $allowedIDs)
-                Text("Create a bot with @BotFather and paste its token here. Message your bot once — if you're not on the allowed list it replies with your numeric ID to add. Leaving IDs blank allows anyone who finds the bot (not recommended).")
+                Text("Token from @BotFather. Leave IDs blank to allow anyone.")
                     .font(.jbCaption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JB.ink3)
             }
             Section("Model") {
                 Picker("Model", selection: $selectedModel) {
                     Text("Default model").tag("")
                     ModelPickerItems(models: store.models)
                 }
-                Toggle("Ask before commands & edits", isOn: $askPermissions)
-                Text("When on, anything the bot delegates that needs Full Access (a command) or edits an open document asks you to approve it in Telegram — reply y or n.")
-                    .font(.jbCaption)
-                    .foregroundStyle(.secondary)
+                Toggle("Ask before commands & edits", isOn: $askPermissions).jbToggle()
             }
             Section("System prompt") {
                 TextEditor(text: $systemPrompt)
+                    .padding(6).jbSurface(.raised, radius: JB.rControl)
                     .font(.jbMono(12))
-                    .frame(height: 110)
                     .scrollContentBackground(.hidden)
-                Text("Extra instructions appended to the bot's built-in orchestrator prompt. Leave blank for the default behaviour.")
-                    .font(.jbCaption)
-                    .foregroundStyle(.secondary)
+                    .frame(height: 110)
             }
             Section("Show in replies") {
-                Toggle("Skills used", isOn: $showSkills)
-                Toggle("Memories used", isOn: $showMemories)
-                Toggle("Tool calls", isOn: $showTools)
-                Toggle("Plugins used", isOn: $showPlugins)
+                Toggle("Skills used", isOn: $showSkills).jbToggle()
+                Toggle("Memories used", isOn: $showMemories).jbToggle()
+                Toggle("Tool calls", isOn: $showTools).jbToggle()
+                Toggle("Plugins used", isOn: $showPlugins).jbToggle()
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
         .task {
             if store.models.isEmpty { await store.loadModels() }
             await load()

@@ -187,13 +187,13 @@ struct SkillsPanel: View {
                     if !active {
                         Text("off")
                             .font(.jb(10))
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(JB.ink3)
                     }
                 }
                 if let desc = s["description"]?.stringValue, !desc.isEmpty {
                     Text(desc)
                         .font(.jb(11.5))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                         .lineLimit(2)
                 }
                 HStack(spacing: 8) {
@@ -202,7 +202,7 @@ struct SkillsPanel: View {
                     if let src = s["source"]?.stringValue { Text(src) }
                 }
                 .font(.jb(10))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(JB.ink3)
             }
             Spacer()
         }
@@ -287,7 +287,7 @@ struct SkillEditorSheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Procedure (markdown)")
                         .font(.jb(11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(JB.ink2)
                     // Fixed-height TextEditor so a long procedure scrolls inside
                     // the field instead of stretching the whole sheet.
                     TextEditor(text: $draft.procedure)
@@ -298,7 +298,7 @@ struct SkillEditorSheet: View {
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
                 }
                 if let error {
-                    Text(error).font(.jbCaption).foregroundStyle(.red)
+                    Text(error).font(.jbCaption).foregroundStyle(JB.danger)
                 }
             }
             .formStyle(.grouped)
@@ -367,9 +367,9 @@ struct GenerateSkillSheet: View {
                     .lineLimit(4...8)
                 Text("Your default model drafts the skill, then it's saved to the library.")
                     .font(.jbCaption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JB.ink2)
                 if let error {
-                    Text(error).font(.jbCaption).foregroundStyle(.red)
+                    Text(error).font(.jbCaption).foregroundStyle(JB.danger)
                 }
             }
             .formStyle(.grouped)
@@ -457,26 +457,27 @@ struct SkillRowShell<Content: View>: View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: checked ? "checkmark.circle.fill" : "circle")
                 .font(.jb(15))
-                .foregroundStyle(checked ? JB.accent : .secondary)
+                .foregroundStyle(checked ? JB.accent : JB.ink3)
                 .frame(width: 24, height: 24, alignment: .center)
                 .padding(.top, -3)
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onToggleCheck)
                 .opacity(showCheck ? 1 : 0)
-                .scaleEffect(showCheck ? 1 : 0.5)
                 .allowsHitTesting(showCheck)
             content
         }
-        .panelCard()
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(checked ? JB.accent.opacity(0.14) : .clear)
-        )
-        .scaleEffect(hovering ? 1.012 : 1)
-        .shadow(color: .black.opacity(0.10), radius: 6, y: 3)
-        .onHover { h in
-            withAnimation(.spring(duration: 0.22)) { hovering = h }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: JB.rCard, style: .continuous)
+                .fill(checked ? JB.accentSoft : hovering ? JB.hover : JB.raised)
         }
+        .overlay {
+            RoundedRectangle(cornerRadius: JB.rCard, style: .continuous)
+                .strokeBorder(checked ? JB.accent.opacity(0.4) : JB.line, lineWidth: 1)
+        }
+        .animation(JB.snap, value: checked)
+        .onHover { h in withAnimation(JB.fade) { hovering = h } }
     }
 }
 
@@ -532,7 +533,7 @@ struct LearnSkillsSheet: View {
                 }
                 Text("Your default model studies the folder's documents — exercises, analyses, structures — and saves skill(s) that teach it to do the same kind of work.")
                     .font(.jbCaption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JB.ink2)
                 if running {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
@@ -542,10 +543,10 @@ struct LearnSkillsSheet: View {
                 if !made.isEmpty {
                     Label("Learned: " + made.joined(separator: ", "), systemImage: "checkmark.circle.fill")
                         .font(.jbCaption)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(JB.live)
                 }
                 if let error {
-                    Text(error).font(.jbCaption).foregroundStyle(.red)
+                    Text(error).font(.jbCaption).foregroundStyle(JB.danger)
                 }
             }
             .formStyle(.grouped)

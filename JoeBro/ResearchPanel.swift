@@ -184,7 +184,7 @@ struct ResearchPanel: View {
                     }
                 }
                 .font(.jb(10))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(JB.ink3)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 0)
@@ -274,7 +274,7 @@ struct ResearchPanel: View {
                             ?? ""
                         if report.isEmpty {
                             Text("This report has no readable summary.")
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(JB.ink2)
                         } else {
                             MarkdownText(text: report)
                         }
@@ -282,14 +282,14 @@ struct ResearchPanel: View {
                             Divider().opacity(0.4)
                             Text("Sources (\(sources.count))")
                                 .font(.jb(12, .semibold))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(JB.ink2)
                             ForEach(Array(sources.prefix(30).enumerated()), id: \.offset) { i, s in
                                 if let url = s["url"]?.stringValue {
                                     Link(destination: URL(string: url) ?? URL(string: "about:blank")!) {
                                         HStack(spacing: 6) {
                                             Text("\(i + 1).")
                                                 .font(.jb(10.5, .bold))
-                                                .foregroundStyle(.tertiary)
+                                                .foregroundStyle(JB.ink3)
                                             Text(s["title"]?.stringValue ?? url)
                                                 .font(.jb(11.5))
                                                 .lineLimit(1)
@@ -365,7 +365,7 @@ struct ResearchProgressView: View {
                     if !run.message.isEmpty {
                         Text("· " + run.message)
                             .font(.jb(11.5))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(JB.ink2)
                             .lineLimit(1)
                     }
                 }
@@ -391,7 +391,7 @@ struct ResearchProgressView: View {
                         .font(.jb(11))
                 }
                 .font(.jb(10.5))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(JB.ink3)
             }
             .padding(.trailing, 16)
         }
