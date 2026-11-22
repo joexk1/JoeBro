@@ -49,15 +49,15 @@ struct MobileSettingsTab: View {
                     Text("This Wi-Fi network only").tag("lan")
                 }
                 Text(enabled ? "Listening on \(urls.first?.url ?? "…")" : "Off")
-                    .font(.jbCaption).foregroundStyle(.secondary)
+                    .font(.jbCaption).foregroundStyle(JB.ink2)
                 if enabled && bind != "tailscale" {
                     Text("Anyone on this network who gets the token can read your chats and run what the phone agent is allowed to run.")
-                        .font(.jbCaption).foregroundStyle(.orange)
+                        .font(.jbCaption).foregroundStyle(JB.warn)
                 }
                 Text("The phone only works while JoeBro is open and this Mac is awake.")
-                    .font(.jbCaption).foregroundStyle(.secondary)
+                    .font(.jbCaption).foregroundStyle(JB.ink2)
                 if let message {
-                    Text(message).font(.jbCaption).foregroundStyle(.red)
+                    Text(message).font(.jbCaption).foregroundStyle(JB.danger)
                 }
             }
             if enabled {
@@ -123,7 +123,7 @@ struct MobileSettingsTab: View {
                 Spacer()
             }
             if let testResult {
-                Text(testResult).font(.jbCaption).foregroundStyle(.secondary)
+                Text(testResult).font(.jbCaption).foregroundStyle(JB.ink2)
             }
         }
     }
@@ -131,16 +131,16 @@ struct MobileSettingsTab: View {
     private var devicesSection: some View {
         Section("Connected phones") {
             if devices.isEmpty {
-                Text("No phones yet.").font(.jbCaption).foregroundStyle(.secondary)
+                Text("No phones yet.").font(.jbCaption).foregroundStyle(JB.ink2)
             }
             ForEach(Array(devices.enumerated()), id: \.offset) { _, d in
                 let id = d["install_id"]?.stringValue ?? ""
                 HStack {
-                    Image(systemName: "iphone").foregroundStyle(.secondary)
+                    Image(systemName: "iphone").foregroundStyle(JB.ink2)
                     VStack(alignment: .leading) {
                         Text(d["name"]?.stringValue ?? "iPhone")
                         Text("\(relativeDate(d["last_seen"]?.stringValue)) · push \((d["enabled"]?.boolValue ?? false) ? "on" : "off")")
-                            .font(.jbCaption).foregroundStyle(.secondary)
+                            .font(.jbCaption).foregroundStyle(JB.ink2)
                     }
                     Spacer()
                     Button("Remove", role: .destructive) {
@@ -157,17 +157,17 @@ struct MobileSettingsTab: View {
             Text(pushConfigured ? "Push is set up." : "Push is not set up.")
                 .font(.jb(12, .semibold))
             if !pushBlocker.isEmpty {
-                Text(pushBlocker).font(.jbCaption).foregroundStyle(.orange)
+                Text(pushBlocker).font(.jbCaption).foregroundStyle(JB.warn)
             }
             Text("1. In your Apple developer account, create an APNs Auth Key (.p8) and note its Key ID.\n2. Copy your Team ID from the Membership page.\n3. Enter the bundle ID of the iPhone app you built.\n4. Choose the .p8 file and save. It is stored only on this Mac and used only to talk to Apple's push servers.")
-                .font(.jbCaption).foregroundStyle(.secondary)
+                .font(.jbCaption).foregroundStyle(JB.ink2)
             TextField("Team ID", text: $teamID)
             TextField("Key ID", text: $keyID)
             TextField("Bundle ID", text: $bundleID)
             HStack {
                 Button("Choose .p8 key…") { pickingKey = true }
                 Text(keyFile?.lastPathComponent ?? "No key chosen")
-                    .font(.jbCaption).foregroundStyle(.secondary)
+                    .font(.jbCaption).foregroundStyle(JB.ink2)
                 Spacer()
             }
             HStack {
@@ -185,7 +185,7 @@ struct MobileSettingsTab: View {
                 Spacer()
             }
             Text("Push is optional. Without it the phone still works, it just can't buzz you.")
-                .font(.jbCaption).foregroundStyle(.secondary)
+                .font(.jbCaption).foregroundStyle(JB.ink2)
         }
     }
 
@@ -200,7 +200,7 @@ struct MobileSettingsTab: View {
             Toggle("Use my phone's location for weather", isOn: $location)
                 .onChange(of: location) { pref("location_enabled", location) }
             Text("Weather comes from open-meteo.com and place names from nominatim.openstreetmap.org, only while this is on.")
-                .font(.jbCaption).foregroundStyle(.secondary)
+                .font(.jbCaption).foregroundStyle(JB.ink2)
             Toggle("Learn durable facts into phone memory", isOn: $museLearn)
                 .onChange(of: museLearn) { pref("muse_auto_learn", museLearn) }
             Toggle("Background checks (heartbeat)", isOn: $heartbeatOn)
@@ -215,7 +215,7 @@ struct MobileSettingsTab: View {
             Stepper("Pulse every \(pulseInterval) min", value: $pulseInterval, in: 15...480, step: 15)
                 .onChange(of: pulseInterval) { pulse(["interval_minutes": pulseInterval]) }
             Text("Anything the phone agent finds is posted into its chat. Reply there yes or no.")
-                .font(.jbCaption).foregroundStyle(.secondary)
+                .font(.jbCaption).foregroundStyle(JB.ink2)
         }
     }
 

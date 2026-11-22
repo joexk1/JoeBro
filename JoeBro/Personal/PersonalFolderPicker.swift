@@ -30,7 +30,7 @@ struct PersonalFolderPicker: View {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button { bind() } label: {
-                    if binding { ProgressView().controlSize(.small) } else { Text("Bind Folder") }
+                    if binding { JBSpinner() } else { Text("Bind Folder") }
                 }
                 .buttonStyle(.jbPrimary)
                 .tint(JB.accent)
@@ -54,7 +54,7 @@ struct PersonalFolderPicker: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if let error {
-                Text(error).font(.jbCaption).foregroundStyle(.red).padding(.bottom, 8)
+                Text(error).font(.jbCaption).foregroundStyle(JB.danger).padding(.bottom, 8)
             }
         }
         .frame(width: 520, height: 440)
@@ -72,12 +72,12 @@ struct PersonalFolderPicker: View {
                 .foregroundStyle(JB.accent)
             Text(macURL?.path ?? "Choose a folder on this Mac")
                 .font(macURL == nil ? .jb(12) : .jbMono(12))
-                .foregroundStyle(macURL == nil ? .secondary : .primary)
+                .foregroundStyle(macURL == nil ? JB.ink2 : JB.ink)
                 .multilineTextAlignment(.center).lineLimit(4)
             Button { chooseMacFolder() } label: { Label("Choose Folder…", systemImage: "folder") }
                 .buttonStyle(.jbPrimary).tint(JB.accent)
             Text("The agent works on this Mac through its bridge. The Mac must be on Tailscale and running its bridge agent.")
-                .font(.jbCaption).foregroundStyle(.secondary)
+                .font(.jbCaption).foregroundStyle(JB.ink2)
                 .multilineTextAlignment(.center).frame(maxWidth: 380)
         }
         .padding(24)
@@ -90,9 +90,9 @@ struct PersonalFolderPicker: View {
                 Button { Task { await loadPi(parentOf(piPath)) } } label: { Image(systemName: "chevron.up") }
                     .buttonStyle(.borderless).disabled(piPath.isEmpty || piPath == "/")
                 Text(piPath.isEmpty ? "~" : piPath)
-                    .font(.jbMono(11)).foregroundStyle(.secondary).lineLimit(1)
+                    .font(.jbMono(11)).foregroundStyle(JB.ink2).lineLimit(1)
                 Spacer()
-                if loading { ProgressView().controlSize(.small) }
+                if loading { JBSpinner() }
             }
             .padding(.horizontal, 14).padding(.vertical, 8)
             Divider().opacity(0.4)
@@ -101,9 +101,9 @@ struct PersonalFolderPicker: View {
                     ForEach(piEntries) { e in
                         Button { Task { await loadPi(join(piPath, e.name)) } } label: {
                             HStack(spacing: 8) {
-                                Image(systemName: "folder.fill").foregroundStyle(JB.accent.opacity(0.8))
+                                Image(systemName: "folder").foregroundStyle(JB.accent.opacity(0.8))
                                 Text(e.name).font(.jb(12.5)); Spacer()
-                                Image(systemName: "chevron.right").font(.jb(9)).foregroundStyle(.tertiary)
+                                Image(systemName: "chevron.right").font(.jb(9)).foregroundStyle(JB.ink3)
                             }
                             .padding(.horizontal, 12).padding(.vertical, 7)
                             .contentShape(Rectangle())
@@ -111,13 +111,13 @@ struct PersonalFolderPicker: View {
                         .buttonStyle(.plain)
                     }
                     if piEntries.isEmpty && !loading {
-                        Text("No sub-folders").font(.jbCaption).foregroundStyle(.tertiary).padding(.top, 20)
+                        Text("No sub-folders").font(.jbCaption).foregroundStyle(JB.ink3).padding(.top, 20)
                     }
                 }
                 .padding(8)
             }
             Text("Binds this folder on the Pi (where Nextcloud is mounted). The agent works on the Pi.")
-                .font(.jbCaption).foregroundStyle(.secondary).padding(8)
+                .font(.jbCaption).foregroundStyle(JB.ink2).padding(8)
         }
     }
 

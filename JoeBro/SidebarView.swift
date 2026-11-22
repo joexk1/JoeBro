@@ -10,7 +10,6 @@ struct SidebarView: View {
     @State private var renameTarget: ChatSessionInfo?
     @State private var renameText = ""
     @State private var showGlassTuner = false
-    @State private var showLocalInfo = false
     // Collapsed project folders, persisted across launches.
     @State private var collapsedFolders: Set<String> =
         Set(UserDefaults.standard.stringArray(forKey: "collapsedChatFolders") ?? [])
@@ -30,38 +29,44 @@ struct SidebarView: View {
     var body: some View {
         @Bindable var store = store
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Image(systemName: "sparkles")
-                    .foregroundStyle(JB.accent)
+            HStack(spacing: 8) {
+                JBIcon(.agent, size: 17)
+                    .foregroundStyle(JB.ink)
                 Text("JoeBro")
-                    .font(.jb(.title3, .bold))
+                    .font(.jb(15, .semibold))
+                    .tracking(-0.2)
+                    .foregroundStyle(JB.ink)
                 Spacer()
+                Button {
+                    NotificationCenter.default.post(name: .jbOpenPalette, object: nil)
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+                .buttonStyle(JBIconButtonStyle(size: 26))
+                .help("Command palette (⌘K)")
                 Button {
                     store.newChat()
                 } label: {
-                    Image(systemName: "square.and.pencil")
-                        .font(.jb(14, .semibold))
+                    Image(systemName: "plus")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(JBIconButtonStyle(size: 26))
                 .help("New chat (⌘N)")
             }
             .padding(.top, 14)
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 14)
             .padding(.bottom, 10)
 
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                    .font(.jb(12))
-                TextField("Search chats", text: $store.sessionSearch)
+                    .foregroundStyle(JB.ink3)
+                    .font(.jb(11))
+                TextField("Filter chats", text: $store.sessionSearch)
                     .textFieldStyle(.plain)
                     .font(.jb(13))
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(.quaternary.opacity(0.5), in: Capsule())
+            .jbField()
             .padding(.horizontal, 12)
-            .padding(.bottom, 8)
+            .padding(.bottom, 6)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
@@ -92,12 +97,7 @@ struct SidebarView: View {
                                 sessionRow(session, indented: false)
                             }
                             if grouped.ungrouped.isEmpty && !grouped.folders.isEmpty {
-                                Text("Drop here to remove from a folder")
-                                    .font(.jb(11))
-                                    .foregroundStyle(.tertiary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 10)
+                                Color.clear.frame(height: 24)
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -139,57 +139,46 @@ struct SidebarView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.bottom, 8)
-                .animation(.spring(duration: 0.28), value: workspaceExpanded)
-                .animation(.spring(duration: 0.28), value: chatsExpanded)
-                .animation(.spring(duration: 0.28), value: collapsedFolders)
-                .animation(.spring(duration: 0.28), value: pinnedFolders)
-                .animation(.spring(duration: 0.26), value: store.filteredSessions.map(\.id))
+                .animation(JB.smooth, value: workspaceExpanded)
+                .animation(JB.smooth, value: chatsExpanded)
+                .animation(JB.smooth, value: collapsedFolders)
+                .animation(JB.smooth, value: pinnedFolders)
+                .animation(JB.smooth, value: store.filteredSessions.map(\.id))
             }
 
-            Divider().opacity(0.4)
-            HStack(spacing: 8) {
-                Button {
-                    showLocalInfo.toggle()
-                } label: {
-                    Image(systemName: "lock.laptopcomputer")
-                        .font(.jb(18))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.borderless)
-                .help("Local only")
-                .popover(isPresented: $showLocalInfo, arrowEdge: .top) {
-                    Text("Local only — everything runs and stays on this Mac.")
-                        .font(.jb(12))
-                        .padding(12)
-                }
+            Rectangle().fill(JB.line).frame(height: 1)
+            HStack(spacing: 4) {
+                Image(systemName: "lock")
+                    .font(.jb(12))
+                    .foregroundStyle(JB.ink3)
+                    .frame(width: 26, height: 26)
+                    .help("Local only. Everything stays on this Mac.")
                 Spacer()
                 Button {
                     showGlassTuner.toggle()
                 } label: {
                     Image(systemName: "circle.lefthalf.filled")
-                        .font(.jb(13))
                 }
-                .buttonStyle(.borderless)
-                .help("Glass opacity")
+                .buttonStyle(JBIconButtonStyle(size: 26))
+                .help("Appearance")
                 .popover(isPresented: $showGlassTuner, arrowEdge: .top) {
                     GlassTunerPopover()
                 }
                 SettingsLink {
                     Image(systemName: "gearshape")
-                        .font(.jb(13))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(JBIconButtonStyle(size: 26))
                 .help("Settings (⌘,)")
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
         }
         .sheet(item: $renameTarget) { session in
             VStack(spacing: 14) {
                 Text("Rename Chat")
                     .font(.jb(14, .semibold))
                 TextField("Chat name", text: $renameText)
-                    .textFieldStyle(.roundedBorder)
+                    .jbField()
                     .frame(width: 280)
                     .onSubmit {
                         store.renameSession(session.id, to: renameText)
@@ -215,7 +204,7 @@ struct SidebarView: View {
                 Text("New Project Folder")
                     .font(.jb(14, .semibold))
                 TextField("Folder name", text: $newFolderText)
-                    .textFieldStyle(.roundedBorder)
+                    .jbField()
                     .frame(width: 280)
                     .onSubmit {
                         store.setFolder(session.id, folder: newFolderText)
@@ -241,7 +230,7 @@ struct SidebarView: View {
                 Text("Rename Project Folder")
                     .font(.jb(14, .semibold))
                 TextField("Folder name", text: $renameFolderText)
-                    .textFieldStyle(.roundedBorder)
+                    .jbField()
                     .frame(width: 280)
                     .onSubmit { commitFolderRename(target.name) }
                 HStack {
@@ -362,26 +351,27 @@ struct SidebarView: View {
     private func folderHeader(_ name: String, count: Int) -> some View {
         let collapsed = collapsedFolders.contains(name)
         return Button {
-            withAnimation(.spring(duration: 0.25)) { toggleFolder(name) }
+            withAnimation(JB.snap) { toggleFolder(name) }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "chevron.right")
-                    .font(.jb(8, .bold))
-                    .foregroundStyle(.tertiary)
+                    .font(.jb(8, .semibold))
+                    .foregroundStyle(JB.ink3)
                     .rotationEffect(.degrees(collapsed ? 0 : 90))
-                Image(systemName: "folder.fill")
+                Image(systemName: "folder")
                     .font(.jb(11))
-                    .foregroundStyle(JB.accent.opacity(0.8))
+                    .foregroundStyle(JB.ink2)
                 Text(name)
-                    .font(.jb(12, .semibold))
+                    .font(.jb(12, .medium))
+                    .foregroundStyle(JB.ink)
                     .lineLimit(1)
                 Text("\(count)")
-                    .font(.jb(10.5))
-                    .foregroundStyle(.tertiary)
+                    .font(.jbMono(10.5))
+                    .foregroundStyle(JB.ink3)
                 if pinnedFolders.contains(name) {
                     Image(systemName: "pin.fill")
                         .font(.jb(8))
-                        .foregroundStyle(JB.accent.opacity(0.7))
+                        .foregroundStyle(JB.accent)
                 }
                 Spacer(minLength: 0)
             }
@@ -389,7 +379,8 @@ struct SidebarView: View {
             .padding(.vertical, 6)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.plain)
+        .jbHoverRow()
         .contextMenu {
             Button("Rename Folder") {
                 renameFolderText = name
@@ -412,6 +403,7 @@ struct SidebarView: View {
                    isWorking: store.workingSessions.contains(session.id),
                    hasDocAlert: store.docAlertSessions.contains(session.id))
             .padding(.leading, indented ? 14 : 0)
+            .transition(.opacity.combined(with: .offset(y: -4)))
             .onTapGesture { store.select(session.id) }
             .contextMenu {
                 Button(session.isImportant == true ? "Unpin" : "Pin") { store.togglePin(session.id) }
@@ -460,24 +452,20 @@ struct SidebarView: View {
 
     private func sectionHeader(_ text: String, expanded: Binding<Bool>) -> some View {
         Button {
-            withAnimation(.spring(duration: 0.25)) { expanded.wrappedValue.toggle() }
+            withAnimation(JB.smooth) { expanded.wrappedValue.toggle() }
         } label: {
-            HStack(spacing: 4) {
-                Text(text)
-                    .font(.jb(10.5, .semibold))
-                    .foregroundStyle(.tertiary)
-                    .textCase(.uppercase)
+            JBSectionHeader(title: text) {
                 Image(systemName: "chevron.right")
-                    .font(.jb(7, .bold))
-                    .foregroundStyle(.tertiary)
+                    .font(.jb(8, .semibold))
+                    .foregroundStyle(JB.ink3)
                     .rotationEffect(.degrees(expanded.wrappedValue ? 90 : 0))
-                Spacer()
             }
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.plain)
         .padding(.horizontal, 10)
-        .padding(.top, 12)
-        .padding(.bottom, 3)
+        .padding(.top, 14)
+        .padding(.bottom, 4)
     }
 
     private func navRow(_ tab: WorkspaceTab) -> some View {
@@ -498,23 +486,19 @@ private struct NavRowView: View {
     var bounce = false
     var working = false
     let action: () -> Void
-    @State private var hovering = false
     @State private var bounceY: CGFloat = 0
 
     var body: some View {
         HStack(spacing: 9) {
-            Image(systemName: tab.icon)
-                .font(.jb(13))
-                .foregroundStyle(isSelected ? JB.accent : .secondary)
+            JBSymbol(name: tab.icon, size: 14)
+                .foregroundStyle(isSelected ? JB.ink : JB.ink2)
                 .frame(width: 20)
             Text(tab.title)
-                .font(.jb(13, isSelected ? .semibold : .regular))
+                .font(.jb(13, isSelected ? .medium : .regular))
+                .foregroundStyle(isSelected ? JB.ink : JB.ink2)
             Spacer()
             if working {
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(0.6)
-                    .frame(width: 12, height: 12)
+                JBSpinner()
             }
             if showDot && !working {
                 Circle()
@@ -524,28 +508,20 @@ private struct NavRowView: View {
                     .transition(.scale.combined(with: .opacity))
             }
         }
-        .animation(.spring(duration: 0.3), value: showDot)
+        .animation(JB.snap, value: showDot)
         .onChange(of: bounce, initial: true) { _, on in
             if on {
                 withAnimation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true)) {
                     bounceY = -4
                 }
             } else {
-                withAnimation(.spring(duration: 0.25)) { bounceY = 0 }
+                withAnimation(JB.snap) { bounceY = 0 }
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: 9)
-                .fill(isSelected ? AnyShapeStyle(JB.accent.opacity(0.18))
-                      : hovering ? AnyShapeStyle(.quaternary.opacity(0.55)) : AnyShapeStyle(.clear))
-        )
-        .scaleEffect(hovering ? 1.02 : 1)
-        .contentShape(RoundedRectangle(cornerRadius: 9))
-        .onHover { h in
-            withAnimation(.spring(duration: 0.22)) { hovering = h }
-        }
+        .jbHoverRow(selected: isSelected)
+        .contentShape(RoundedRectangle(cornerRadius: JB.rControl))
         .onTapGesture(perform: action)
     }
 }
@@ -562,44 +538,40 @@ struct FileTreeSection: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 Button {
-                    withAnimation(.spring(duration: 0.28)) {
+                    withAnimation(JB.smooth) {
                         filesExpanded.toggle()
                         UserDefaults.standard.set(filesExpanded, forKey: "filesExpanded")
                     }
                 } label: {
-                    HStack(spacing: 4) {
-                        Text("Files")
-                            .font(.jb(10.5, .semibold))
-                            .foregroundStyle(.tertiary)
-                            .textCase(.uppercase)
+                    JBSectionHeader(title: "Files") {
                         Image(systemName: "chevron.right")
-                            .font(.jb(7, .bold))
-                            .foregroundStyle(.tertiary)
+                            .font(.jb(8, .semibold))
+                            .foregroundStyle(JB.ink3)
                             .rotationEffect(.degrees(filesExpanded ? 90 : 0))
                     }
+                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
                 if let wd = store.workdirPath {
-                    Text("· \((wd as NSString).lastPathComponent)")
-                        .font(.jb(10.5))
-                        .foregroundStyle(.tertiary)
+                    Text((wd as NSString).lastPathComponent)
+                        .font(.jbMono(10.5))
+                        .foregroundStyle(JB.ink3)
                         .lineLimit(1)
                 }
-                Spacer()
                 if store.workdirPath != nil {
                     Button {
                         store.refreshTree()
                     } label: {
                         Image(systemName: "arrow.clockwise")
                             .font(.jb(9))
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(JB.ink3)
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 10)
-            .padding(.top, 12)
-            .padding(.bottom, 3)
+            .padding(.top, 14)
+            .padding(.bottom, 4)
 
             if filesExpanded && store.workdirPath == nil {
                 // Empty state: bind a local project folder.
@@ -610,14 +582,16 @@ struct FileTreeSection: View {
                         Image(systemName: "folder.badge.plus")
                             .font(.jb(12))
                         Text("Bind to a folder")
-                            .font(.jb(12, .medium))
+                            .font(.jb(12))
                         Spacer()
                     }
+                    .foregroundStyle(JB.ink2)
                     .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 9))
+                    .padding(.vertical, 7)
+                    .jbHoverRow()
+                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
                 .padding(.horizontal, 8)
                 .sheet(isPresented: $showBind) {
                     #if PERSONAL
@@ -664,26 +638,26 @@ private struct FileTreeRow: View {
     let entry: WorkdirEntry
     let path: String
     let depth: Int
-    @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 6) {
             if entry.isDir {
                 Image(systemName: "chevron.right")
-                    .font(.jb(7, .bold))
-                    .foregroundStyle(.tertiary)
+                    .font(.jb(7, .semibold))
+                    .foregroundStyle(JB.ink3)
                     .rotationEffect(.degrees(store.expandedDirs.contains(path) ? 90 : 0))
-                Image(systemName: "folder.fill")
+                Image(systemName: "folder")
                     .font(.jb(11))
-                    .foregroundStyle(JB.accent.opacity(0.8))
+                    .foregroundStyle(JB.ink2)
             } else {
                 Image(systemName: fileIcon)
                     .font(.jb(11))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JB.ink2)
                     .padding(.leading, 13)
             }
             Text(entry.name)
                 .font(.jb(12))
+                .foregroundStyle(JB.ink)
                 .lineLimit(1)
             Spacer(minLength: 0)
         }
@@ -691,18 +665,11 @@ private struct FileTreeRow: View {
         .padding(.leading, 10 + CGFloat(depth) * 14)
         .padding(.trailing, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(hovering ? AnyShapeStyle(.quaternary.opacity(0.5)) : AnyShapeStyle(.clear))
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 7))
-        .scaleEffect(hovering ? 1.02 : 1)
-        .onHover { h in
-            withAnimation(.spring(duration: 0.22)) { hovering = h }
-        }
+        .jbHoverRow()
+        .contentShape(RoundedRectangle(cornerRadius: JB.rControl))
         .onTapGesture {
             if entry.isDir {
-                withAnimation(.spring(duration: 0.22)) { store.toggleDir(path) }
+                withAnimation(JB.snap) { store.toggleDir(path) }
             } else {
                 store.openWorkdirFile(sub: path)
             }
@@ -734,7 +701,7 @@ private struct FileTreeRow: View {
     private var fileIcon: String {
         switch (entry.name as NSString).pathExtension.lowercased() {
         case "md", "markdown": return "doc.richtext"
-        case "pdf": return "doc.fill"
+        case "pdf": return "doc"
         case "png", "jpg", "jpeg", "webp", "gif": return "photo"
         case "py", "js", "ts", "swift", "sh", "json", "html", "css": return "chevron.left.forwardslash.chevron.right"
         default: return "doc.text"
@@ -747,26 +714,27 @@ private struct SessionRow: View {
     let isSelected: Bool
     var isWorking = false
     var hasDocAlert = false
-    @State private var hovering = false
     @State private var bounceY: CGFloat = 0
+
+    /// Compact mono timestamp: 5m, 3h, 2d, then a short date.
+    private var timeLabel: String {
+        guard let raw = session.createdAt?.value else { return "" }
+        let date: Date? = parseISO(raw) ?? Double(raw).map { Date(timeIntervalSince1970: $0 > 1e11 ? $0 / 1000 : $0) }
+        guard let date else { return "" }
+        let secs = Date().timeIntervalSince(date)
+        if secs < 60 { return "now" }
+        if secs < 3600 { return "\(Int(secs / 60))m" }
+        if secs < 86400 { return "\(Int(secs / 3600))h" }
+        if secs < 86400 * 7 { return "\(Int(secs / 86400))d" }
+        return date.formatted(.dateTime.month(.abbreviated).day())
+    }
 
     var body: some View {
         HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(session.name)
-                    .font(.jb(13, isSelected ? .semibold : .regular))
-                    .lineLimit(1)
-                if let model = session.model, !model.isEmpty {
-                    HStack(spacing: 4) {
-                        ProviderLogoView(model: model, size: 9)
-                            .foregroundStyle(.tertiary)
-                        Text(model.components(separatedBy: "/").last ?? model)
-                            .font(.jb(10.5))
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                    }
-                }
-            }
+            Text(session.name)
+                .font(.jb(13))
+                .foregroundStyle(isSelected ? JB.ink : JB.ink2)
+                .lineLimit(1)
             Spacer(minLength: 0)
             if hasDocAlert && !isWorking {
                 Circle()
@@ -774,49 +742,39 @@ private struct SessionRow: View {
                     .frame(width: 6, height: 6)
                     .offset(y: bounceY)
                     .transition(.scale.combined(with: .opacity))
-                    .help("The AI edited a document — open this chat to review")
+                    .help("The AI edited a document. Open this chat to review.")
             }
             if isWorking {
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(0.6)
-                    .frame(width: 14, height: 14)
-                    .help("Working…")
+                JBSpinner()
+                    .help("Working")
             }
             if session.isImportant == true {
                 Image(systemName: "pin.fill")
                     .font(.jb(8))
-                    .foregroundStyle(JB.accent.opacity(0.8))
+                    .foregroundStyle(JB.accent)
             }
             if session.mode == "agent" {
-                Image(systemName: "hammer.fill")
-                    .font(.jb(9))
-                    .foregroundStyle(.tertiary)
+                JBIcon(.tools, size: 11)
+                    .foregroundStyle(JB.ink3)
             }
+            Text(timeLabel)
+                .font(.jbMono(10.5))
+                .foregroundStyle(JB.ink3)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 9)
-                .fill(isSelected
-                      ? AnyShapeStyle(JB.accent.opacity(0.22))
-                      : hovering ? AnyShapeStyle(.quaternary.opacity(0.6)) : AnyShapeStyle(.clear))
-        )
-        .scaleEffect(hovering ? 1.02 : 1)
-        .contentShape(RoundedRectangle(cornerRadius: 9))
-        .animation(.spring(duration: 0.3), value: hasDocAlert)
+        .jbHoverRow(selected: isSelected)
+        .contentShape(RoundedRectangle(cornerRadius: JB.rControl))
+        .animation(JB.snap, value: hasDocAlert)
         .onChange(of: hasDocAlert, initial: true) { _, on in
             if on {
                 withAnimation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true)) {
                     bounceY = -4
                 }
             } else {
-                withAnimation(.spring(duration: 0.25)) { bounceY = 0 }
+                withAnimation(JB.snap) { bounceY = 0 }
             }
-        }
-        .onHover { h in
-            withAnimation(.spring(duration: 0.22)) { hovering = h }
         }
     }
 }
