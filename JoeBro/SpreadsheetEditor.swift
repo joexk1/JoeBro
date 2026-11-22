@@ -12,35 +12,56 @@ struct SpreadsheetEditor: View {
 
     @State private var rows: [[String]] = []
     @State private var loadedFrom = ""
+    private struct Cell: Hashable { let r: Int; let c: Int }
+    @FocusState private var focus: Cell?
 
     private var doc: EditorDoc? { store.openDocs.indices.contains(index) ? store.openDocs[index] : nil }
+
+    private static func colName(_ c: Int) -> String {
+        var n = c, s = ""
+        repeat { s = String(UnicodeScalar(65 + n % 26)!) + s; n = n / 26 - 1 } while n >= 0
+        return s
+    }
+
+    private static func isNumber(_ s: String) -> Bool {
+        let t = s.trimmingCharacters(in: CharacterSet(charactersIn: " $€£%,"))
+        return !t.isEmpty && Double(t) != nil
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             toolbar
-            Divider().opacity(0.4)
+            Rectangle().fill(JB.line).frame(height: 1)
             ScrollView([.horizontal, .vertical]) {
-                Grid(alignment: .leading, horizontalSpacing: 1, verticalSpacing: 1) {
-                    ForEach(rows.indices, id: \.self) { r in
-                        GridRow {
-                            Text("\(r + 1)")
-                                .font(.jbMono(10))
-                                .foregroundStyle(.tertiary)
-                                .frame(width: 34, alignment: .trailing)
-                            ForEach(columnRange(r), id: \.self) { c in
-                                TextField("", text: cellBinding(r, c))
-                                    .textFieldStyle(.plain)
-                                    .font(.jb(12))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 3)
-                                    .frame(width: 130, alignment: .leading)
-                                    .background(.background.opacity(0.5))
-                                    .overlay(Rectangle().stroke(.quaternary, lineWidth: 0.5))
+                LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                    Section {
+                        ForEach(rows.indices, id: \.self) { r in
+                            HStack(spacing: 0) {
+                                Text("\(r + 1)")
+                                    .font(.jbMono(10))
+                                    .foregroundStyle(focus?.r == r ? JB.accent : JB.ink3)
+                                    .frame(width: 38, height: 26, alignment: .trailing)
+                                    .padding(.trailing, 8)
+                                ForEach(columnRange(r), id: \.self) { c in
+                                    cell(r, c)
+                                }
                             }
                         }
+                    } header: {
+                        HStack(spacing: 0) {
+                            Color.clear.frame(width: 46, height: 24)
+                            ForEach(0..<columnCount, id: \.self) { c in
+                                Text(Self.colName(c))
+                                    .font(.jbMono(10, .medium))
+                                    .foregroundStyle(focus?.c == c ? JB.accent : JB.ink3)
+                                    .frame(width: 130, height: 24)
+                            }
+                        }
+                        .background(JB.surface)
+                        .overlay(alignment: .bottom) { Rectangle().fill(JB.lineStrong).frame(height: 1) }
                     }
                 }
-                .padding(8)
+                .padding(.trailing, 8)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -48,17 +69,36 @@ struct SpreadsheetEditor: View {
         .onChange(of: doc?.content ?? "") { reloadIfNeeded() }
     }
 
+    private func cell(_ r: Int, _ c: Int) -> some View {
+        let value = rows.indices.contains(r) && rows[r].indices.contains(c) ? rows[r][c] : ""
+        let numeric = Self.isNumber(value)
+        let selected = focus == Cell(r: r, c: c)
+        return TextField("", text: cellBinding(r, c))
+            .textFieldStyle(.plain)
+            .font(numeric ? .jbMono(12) : .jb(12))
+            .multilineTextAlignment(numeric ? .trailing : .leading)
+            .focused($focus, equals: Cell(r: r, c: c))
+            .onSubmit { focus = Cell(r: min(r + 1, rows.count - 1), c: c) }
+            .padding(.horizontal, 8)
+            .frame(width: 130, height: 26, alignment: numeric ? .trailing : .leading)
+            .background(selected ? JB.accentSoft : .clear)
+            .overlay(Rectangle().strokeBorder(JB.line, lineWidth: 0.5))
+            .overlay { if selected { Rectangle().strokeBorder(JB.accent, lineWidth: 1.5) } }
+            .zIndex(selected ? 1 : 0)
+    }
+
     private var toolbar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Button { addRow() } label: { Label("Row", systemImage: "plus") }
             Button { addColumn() } label: { Label("Column", systemImage: "plus") }
             Spacer()
-            if doc?.dirty == true {
-                Text("unsaved").font(.jb(10)).foregroundStyle(.secondary)
+            if let f = focus {
+                Text("\(Self.colName(f.c))\(f.r + 1)").font(.jbMono(11)).foregroundStyle(JB.ink2)
             }
+            Text("\(rows.count) × \(columnCount)").font(.jbMono(11)).foregroundStyle(JB.ink3)
         }
-        .buttonStyle(.borderless)
-        .font(.jb(11))
+        .buttonStyle(.jbGhost)
+        .controlSize(.small)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
     }
