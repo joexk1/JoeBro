@@ -14,8 +14,9 @@ struct AttachmentChipsView: View {
             ForEach(attachments.filter { $0.mime.hasPrefix("image/") }) { att in
                 AuthedUploadImage(att: att)
                 .frame(maxWidth: 320, maxHeight: 240)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .contentShape(RoundedRectangle(cornerRadius: 12))
+                .clipShape(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).strokeBorder(JB.line, lineWidth: 1))
+                .contentShape(RoundedRectangle(cornerRadius: JB.rCard))
                 .onTapGesture { open(att) }
             }
             chipRow
@@ -36,20 +37,23 @@ struct AttachmentChipsView: View {
                 } label: {
                     HStack(spacing: 5) {
                         if loadingID == att.id {
-                            ProgressView().controlSize(.mini)
+                            JBSpinner(size: 10)
                         } else {
                             Image(systemName: icon(for: att.mime))
                                 .font(.jb(11))
+                                .foregroundStyle(JB.ink3)
                         }
                         Text(att.name)
-                            .font(.jb(11.5, .medium))
+                            .font(.jbMono(11))
+                            .foregroundStyle(JB.ink2)
                             .lineLimit(1)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
                 }
-                .buttonStyle(.borderless)
-                .joeGlassCapsule()
+                .buttonStyle(.plain)
+                .jbSurface(.raised, radius: 6)
+                .jbHoverRow(radius: 6)
                 .help("Preview \(att.name)")
             }
         }
@@ -89,7 +93,8 @@ struct QuickLookSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Text(url.lastPathComponent)
-                    .font(.jb(13, .semibold))
+                    .font(.jbMono(12))
+                    .foregroundStyle(JB.ink)
                     .lineLimit(1)
                 Spacer()
                 Button {
@@ -97,19 +102,18 @@ struct QuickLookSheet: View {
                 } label: {
                     Image(systemName: "arrow.up.forward.app")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(JBIconButtonStyle(size: 26))
                 .help("Open in default app")
                 Button {
                     dismiss()
                 } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
+                    Image(systemName: "xmark")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(JBIconButtonStyle(size: 26))
                 .keyboardShortcut(.cancelAction)
             }
             .padding(12)
-            Divider()
+            Rectangle().fill(JB.line).frame(height: 1)
             QuickLookPreview(url: url)
         }
         .frame(minWidth: 640, minHeight: 520)
@@ -143,9 +147,9 @@ private struct AuthedUploadImage: View {
             if let image {
                 Image(nsImage: image).resizable().scaledToFit()
             } else if failed {
-                Label(att.name, systemImage: "photo").font(.jb(11))
+                Label(att.name, systemImage: "photo").font(.jbMono(11)).foregroundStyle(JB.ink3)
             } else {
-                ProgressView().controlSize(.small)
+                JBSpinner()
             }
         }
         .task(id: att.id) {

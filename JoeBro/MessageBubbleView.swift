@@ -1,37 +1,36 @@
 import SwiftUI
 
-/// Collapsible reasoning section — "View thinking process".
+/// Collapsible reasoning section.
 struct ThinkingSection: View {
     let thinking: String
     let inProgress: Bool
     var seconds: Double? = nil
-    var label: String = "thinking process"
+    var label: String = "thinking"
     @State private var expanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button {
-                withAnimation(.spring(duration: 0.25)) { expanded.toggle() }
+                withAnimation(JB.snap) { expanded.toggle() }
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "brain")
-                        .font(.jb(10))
-                    Text(inProgress ? "Thinking…" : (expanded ? "Hide \(label)" : "View \(label)"))
-                        .font(.jb(11, .medium))
-                    if let seconds, !inProgress {
-                        Text(String(format: "%.1fs", seconds))
-                            .font(.jb(10))
-                            .foregroundStyle(.tertiary)
-                    }
                     if inProgress {
-                        ProgressView().controlSize(.mini)
+                        JBScrambleText(text: "thinking", active: true, font: .jbMono(11.5))
                     } else {
+                        Text(label)
+                            .font(.jbMono(11.5))
+                            .foregroundStyle(JB.ink3)
+                        if let seconds {
+                            Text(String(format: "%.1fs", seconds))
+                                .font(.jbMono(11))
+                                .foregroundStyle(JB.ink3)
+                        }
                         Image(systemName: "chevron.right")
                             .font(.jb(7, .bold))
+                            .foregroundStyle(JB.ink3)
                             .rotationEffect(.degrees(expanded ? 90 : 0))
                     }
                 }
-                .foregroundStyle(.secondary)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -39,12 +38,13 @@ struct ThinkingSection: View {
             if expanded || inProgress {
                 Text(thinking)
                     .font(.jb(12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(JB.ink2)
                     .lineSpacing(2)
                     .textSelection(.enabled)
-                    .padding(10)
+                    .padding(.leading, 10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(alignment: .leading) { Rectangle().fill(JB.line).frame(width: 1) }
+                    .transition(.opacity)
             }
         }
     }
@@ -79,27 +79,20 @@ struct MessageBubbleView: View, Equatable {
 
     /// Older turns were collapsed server-side — all the user needs to know.
     private var compactedPill: some View {
-        HStack {
-            Spacer()
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.down.right.and.arrow.up.left")
-                    .font(.jb(9, .semibold))
-                Text("Compacted chat")
-                    .font(.jb(11, .medium))
-            }
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-            .joeGlassCapsule()
-            Spacer()
+        HStack(spacing: 10) {
+            Rectangle().fill(JB.line).frame(height: 1)
+            Text("compacted")
+                .font(.jbMono(11))
+                .foregroundStyle(JB.ink3)
+            Rectangle().fill(JB.line).frame(height: 1)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
     }
 
     private var userBubble: some View {
         HStack {
             Spacer(minLength: 80)
-            VStack(alignment: .trailing, spacing: 6) {
+            VStack(alignment: .trailing, spacing: 4) {
                 if !message.attachments.isEmpty {
                     AttachmentChipsView(attachments: message.attachments)
                 }
@@ -107,12 +100,13 @@ struct MessageBubbleView: View, Equatable {
                     // No .textSelection here — it installs the system text menu
                     // (Look Up / Translate / …) over our Copy/Resend/Unsend menu.
                     Text(message.content)
+                        .font(.jb(14))
+                        .foregroundStyle(JB.ink)
                         .lineSpacing(3)
-                        .padding(.horizontal, 15)
+                        .padding(.horizontal, 14)
                         .padding(.vertical, 10)
-                        .joeCard(17)
-                        .background(JB.accent.opacity(0.30), in: RoundedRectangle(cornerRadius: 17))
-                        .overlay(RoundedRectangle(cornerRadius: 17).strokeBorder(.white.opacity(0.14), lineWidth: 1))
+                        .background(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).fill(JB.raised))
+                        .overlay(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).strokeBorder(JB.line, lineWidth: 1))
                         .contextMenu {
                             Button {
                                 NSPasteboard.general.clearContents()
@@ -132,9 +126,22 @@ struct MessageBubbleView: View, Equatable {
                                 Label("Unsend", systemImage: "trash")
                             }
                         }
+                    HStack(spacing: 0) {
+                        ChatCopyButton(text: message.content)
+                        Button { store.resend(message) } label: { Image(systemName: "arrow.clockwise") }
+                            .buttonStyle(JBIconButtonStyle(size: 24))
+                            .help("Retry")
+                        Button { store.beginEdit(message) } label: { Image(systemName: "pencil") }
+                            .buttonStyle(JBIconButtonStyle(size: 24))
+                            .help("Edit")
+                    }
+                    .opacity(hovering ? 1 : 0)
+                    .animation(JB.fade, value: hovering)
                 }
             }
         }
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
     }
 
     private var assistantBubble: some View {
@@ -147,28 +154,29 @@ struct MessageBubbleView: View, Equatable {
         // does the same every frame); finalized messages are already clean.
         let renderedBody = message.isStreaming ? stripToolArtifacts(split.body) : split.body
         return VStack(alignment: .leading, spacing: 8) {
-            // Model header — provider logo + name, like the web UI
             if let model = message.modelName {
                 HStack(spacing: 6) {
-                    ProviderLogoView(model: model, size: 13)
-                        .foregroundStyle(JB.accent)
+                    ProviderLogoView(model: model, size: 11)
+                        .foregroundStyle(JB.ink3)
                     Text(model.components(separatedBy: "/").last ?? model)
-                        .font(.jb(11, .semibold))
-                        .foregroundStyle(JB.accent)
+                        .font(.jbMono(11))
+                        .foregroundStyle(JB.ink3)
                 }
             }
 
             if !split.thinking.isEmpty {
                 ThinkingSection(thinking: split.thinking,
                                 inProgress: split.inProgress && message.isStreaming,
-                                seconds: message.thinkingTime,
-                                label: "thinking process")
+                                seconds: message.thinkingTime)
             }
 
             if message.content.isEmpty && message.isStreaming && split.thinking.isEmpty {
                 ThinkingDots()
             } else if !split.body.isEmpty || split.thinking.isEmpty {
                 MarkdownText(text: renderedBody)
+                if message.isStreaming && !renderedBody.isEmpty {
+                    JBStreamCursor()
+                }
                 WorkspaceActionButtons(text: renderedBody)
             }
 
@@ -192,46 +200,40 @@ struct MessageBubbleView: View, Equatable {
                 AttachmentChipsView(attachments: message.attachments)
             }
 
-            if message.metrics != nil || message.contextPercent != nil {
+            if !message.isStreaming && !message.content.isEmpty {
                 HStack(spacing: 8) {
+                    HStack(spacing: 0) {
+                        ChatCopyButton(text: message.content)
+                    }
+                    .opacity(hovering ? 1 : 0)
+                    .animation(JB.fade, value: hovering)
                     if let metrics = message.metrics {
                         Text(metrics)
                     }
                     if let ctx = message.contextPercent {
-                        HStack(spacing: 3) {
+                        HStack(spacing: 4) {
                             ZStack {
-                                Circle()
-                                    .stroke(.quaternary, lineWidth: 1.6)
+                                Circle().stroke(JB.line, lineWidth: 1.6)
                                 Circle()
                                     .trim(from: 0, to: min(ctx / 100, 1))
-                                    .stroke(ctx > 85 ? Color.red.opacity(0.8) : Color.secondary,
+                                    .stroke(ctx > 85 ? JB.danger : JB.ink3,
                                             style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
                                     .rotationEffect(.degrees(-90))
                             }
-                            .frame(width: 11, height: 11)
+                            .frame(width: 10, height: 10)
                             Text("\(Int(ctx))%")
                         }
                         .help("Context window used")
                     }
                 }
-                .font(.jb(10.5))
-                .foregroundStyle(.tertiary)
+                .font(.jbMono(10.5))
+                .foregroundStyle(JB.ink3)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 13)
-        .joeCard(17)
-        .overlay(RoundedRectangle(cornerRadius: 17).strokeBorder(.white.opacity(0.10), lineWidth: 1))
-        // Hover copy button — reliable full-response copy. (Right-click is
-        // swallowed by the selectable text's own macOS menu over glyphs.)
-        .overlay(alignment: .topTrailing) {
-            if hovering && !message.content.isEmpty && !message.isStreaming {
-                CopyResponseButton(text: message.content).padding(8)
-            }
-        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .contentShape(RoundedRectangle(cornerRadius: 17))
         .contextMenu {
             Button {
                 NSPasteboard.general.clearContents()
@@ -280,19 +282,19 @@ struct MessageBubbleView: View, Equatable {
             HStack(spacing: 6) {
                 ForEach(Array(message.webSources.prefix(8).enumerated()), id: \.offset) { i, src in
                     Link(destination: URL(string: src.url) ?? URL(string: "about:blank")!) {
-                        HStack(spacing: 5) {
+                        HStack(spacing: 6) {
                             Text("\(i + 1)")
-                                .font(.jb(9, .bold))
-                                .frame(width: 14, height: 14)
-                                .background(JB.accent.opacity(0.25), in: Circle())
+                                .font(.jbMono(10, .medium))
+                                .foregroundStyle(JB.accent)
                             Text(src.title)
                                 .font(.jb(11))
+                                .foregroundStyle(JB.ink2)
                                 .lineLimit(1)
                                 .frame(maxWidth: 180, alignment: .leading)
                         }
                         .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(JB.panelFill, in: Capsule())
+                        .padding(.vertical, 4)
+                        .jbSurface(.raised, radius: 6)
                     }
                     .buttonStyle(.plain)
                 }
@@ -333,12 +335,14 @@ private struct WorkspaceActionButtons: View {
                             open(action.target)
                         } label: {
                             Label(action.label, systemImage: action.icon)
-                                .font(.jb(11, .medium))
+                                .font(.jbMono(11))
+                                .foregroundStyle(JB.ink2)
                         }
                         .buttonStyle(.plain)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .joeGlassCapsuleInteractive()
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .jbSurface(.raised, radius: 6)
+                        .jbHoverRow(radius: 6)
                     }
                 }
             }
@@ -393,260 +397,69 @@ private struct WorkspaceActionButtons: View {
     }
 }
 
-// MARK: - Tool row (collapsible, like the web agent thread)
-
-struct ToolRowView: View {
-    @Environment(AppStore.self) private var store
-    let message: Message
-    @State private var expanded = false
-
-    /// "Mirroir: Status" for MCP tools (resolve the server name from its id),
-    /// otherwise the normal pretty name.
-    private var toolLabel: String {
-        let raw = message.toolName ?? ""
-        if raw.hasPrefix("mcp_"), let sep = raw.range(of: "__") {
-            let serverID = String(raw[..<sep.lowerBound])
-            let tool = prettyToolName(String(raw[sep.upperBound...]))
-            if let s = store.mcpServers.first(where: { $0.id == serverID }) {
-                return "\(s.name): \(tool)"
-            }
-            return tool
-        }
-        return prettyToolName(raw)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(.spring(duration: 0.25)) { expanded.toggle() }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: toolIcon)
-                        .font(.jb(11, .medium))
-                        .foregroundStyle(JB.accent)
-                    Text((toolLabel + (message.groupedToolCount > 1 ? " (\(message.groupedToolCount))" : "")).uppercased())
-                        .font(.jb(10.5, .bold))
-                        .tracking(0.6)
-                    if message.toolDone {
-                        Text(failed ? "failed" : "done")
-                            .font(.jb(10.5))
-                            .foregroundStyle(failed ? Color.red : Color.secondary)
-                    } else {
-                        ProgressView()
-                            .controlSize(.mini)
-                    }
-                    if !expanded, let cmd = message.command, !cmd.isEmpty {
-                        Text(cmd)
-                            .font(.jbMono(10.5))
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.jb(8, .bold))
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-
-            if expanded {
-                VStack(alignment: .leading, spacing: 6) {
-                    if let cmd = message.command, !cmd.isEmpty {
-                        Text(cmd)
-                            .font(.jbMono(11))
-                            .textSelection(.enabled)
-                            .padding(8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 8))
-                    }
-                    if let out = message.toolOutput, !out.isEmpty {
-                        ScrollView {
-                            Text(message.groupedToolCount > 1 ? out : (out.count > 4000 ? String(out.prefix(4000)) + "\n…" : out))
-                                .font(.jbMono(11))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .frame(maxHeight: 220)
-                        .padding(8)
-                        .background(.black.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 10)
-            }
-        }
-        .joeCard(13)
-        .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(.white.opacity(0.10), lineWidth: 1))
-        .padding(.leading, 4)
-    }
-
-    private var failed: Bool {
-        if let code = message.exitCode, code != 0 { return true }
-        return false
-    }
-
-    private var toolIcon: String {
-        switch (message.toolName ?? "").lowercased() {
-        case "bash": return "apple.terminal"
-        case "read", "read_file": return "doc.text.magnifyingglass"
-        case "write", "write_file", "update_document", "edit_document", "create_document": return "square.and.pencil"
-        case "web_search": return "magnifyingglass"
-        case "generate_image": return "photo"
-        case let t where t.contains("email"): return "envelope"
-        case let t where t.contains("calendar") || t.contains("note"): return "calendar"
-        case let t where t.contains("memory"): return "brain.head.profile"
-        default: return "hammer"
-        }
-    }
-}
 
 struct ThinkingDots: View {
-    @State private var phase = 0
-
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(0..<3, id: \.self) { i in
-                Circle()
-                    .fill(.secondary)
-                    .frame(width: 6, height: 6)
-                    .opacity(phase == i ? 1 : 0.35)
-            }
-        }
-        .padding(.vertical, 6)
-        .task {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(280))
-                phase = (phase + 1) % 3
-            }
-        }
+        JBScrambleText(text: "thinking", active: true, font: .jbMono(11.5))
+            .padding(.vertical, 4)
     }
 }
 
-
-/// "🧠 N memories" — which Brain entries informed this reply.
-struct PluginsUsedView: View {
-    let plugins: [String]
+/// Collapsed "N things used" disclosure shared by plugins, skills, memories.
+private struct ChatUsedList: View {
+    let glyph: JBGlyph
+    let title: String
+    let items: [String]
     @State private var expanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             Button {
-                withAnimation(.spring(duration: 0.25)) { expanded.toggle() }
+                withAnimation(JB.snap) { expanded.toggle() }
             } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: "puzzlepiece.extension.fill")
-                        .font(.jb(10))
-                        .foregroundStyle(JB.accent)
-                    Text("\(plugins.count) plugin\(plugins.count == 1 ? "" : "s") used")
-                        .font(.jb(10.5, .medium))
+                    JBIcon(glyph, size: 11)
+                    Text(title)
+                        .font(.jbMono(10.5))
                     Image(systemName: "chevron.right")
                         .font(.jb(7, .bold))
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                 }
-                .foregroundStyle(.secondary)
+                .foregroundStyle(JB.ink3)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             if expanded {
-                ForEach(Array(plugins.enumerated()), id: \.offset) { _, p in
-                    HStack(alignment: .top, spacing: 5) {
-                        Image(systemName: "puzzlepiece.extension")
-                            .font(.jb(8))
-                            .foregroundStyle(JB.accent)
-                            .padding(.top, 2)
-                        Text(p)
-                            .font(.jb(11))
-                            .foregroundStyle(.secondary)
-                    }
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    Text(item)
+                        .font(.jb(11))
+                        .foregroundStyle(JB.ink2)
+                        .padding(.leading, 16)
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(.opacity)
             }
         }
+    }
+}
+
+struct PluginsUsedView: View {
+    let plugins: [String]
+    var body: some View {
+        ChatUsedList(glyph: .plugin, title: "\(plugins.count) plugin\(plugins.count == 1 ? "" : "s")", items: plugins)
     }
 }
 
 struct SkillsUsedView: View {
     let skills: [String]
-    @State private var expanded = false
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Button {
-                withAnimation(.spring(duration: 0.25)) { expanded.toggle() }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "graduationcap.fill")
-                        .font(.jb(10))
-                        .foregroundStyle(JB.accent)
-                    Text("\(skills.count) skill\(skills.count == 1 ? "" : "s") used")
-                        .font(.jb(10.5, .medium))
-                    Image(systemName: "chevron.right")
-                        .font(.jb(7, .bold))
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
-                }
-                .foregroundStyle(.secondary)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            if expanded {
-                ForEach(Array(skills.enumerated()), id: \.offset) { _, s in
-                    HStack(alignment: .top, spacing: 5) {
-                        Image(systemName: "graduationcap")
-                            .font(.jb(8))
-                            .foregroundStyle(JB.accent)
-                            .padding(.top, 2)
-                        Text(s)
-                            .font(.jb(11))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
+        ChatUsedList(glyph: .skills, title: "\(skills.count) skill\(skills.count == 1 ? "" : "s")", items: skills)
     }
 }
 
 struct MemoriesUsedView: View {
     let memories: [String]
-    @State private var expanded = false
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Button {
-                withAnimation(.spring(duration: 0.25)) { expanded.toggle() }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "brain.head.profile")
-                        .font(.jb(10))
-                    Text("\(memories.count) memor\(memories.count == 1 ? "y" : "ies") used")
-                        .font(.jb(10.5, .medium))
-                    Image(systemName: "chevron.right")
-                        .font(.jb(7, .bold))
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
-                }
-                .foregroundStyle(.secondary)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            if expanded {
-                ForEach(Array(memories.enumerated()), id: \.offset) { _, m in
-                    HStack(alignment: .top, spacing: 5) {
-                        Image(systemName: "sparkle")
-                            .font(.jb(8))
-                            .foregroundStyle(JB.accent)
-                            .padding(.top, 2)
-                        Text(m)
-                            .font(.jb(11))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
+        ChatUsedList(glyph: .memory, title: "\(memories.count) memor\(memories.count == 1 ? "y" : "ies")", items: memories)
     }
 }
 
@@ -677,9 +490,8 @@ func prettyToolName(_ raw: String?) -> String {
     return name.split(separator: "_").map { String($0).capitalized }.joined(separator: " ")
 }
 
-/// Hover-reveal "copy full response" affordance — the reliable copy path,
-/// since selectable text steals right-clicks over its glyphs on macOS.
-struct CopyResponseButton: View {
+/// Copy affordance: swaps to a check for 1.2s.
+struct ChatCopyButton: View {
     let text: String
     @State private var copied = false
 
@@ -687,26 +499,27 @@ struct CopyResponseButton: View {
         Button {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
-            withAnimation(.spring(duration: 0.25)) { copied = true }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
-                withAnimation { copied = false }
+            withAnimation(JB.snap) { copied = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                withAnimation(JB.snap) { copied = false }
             }
         } label: {
             Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                .font(.jb(11, .semibold))
-                .foregroundStyle(copied ? Color.green : Color.secondary)
-                .frame(width: 26, height: 26)
-                .background(JB.panelFill, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.white.opacity(0.12), lineWidth: 1))
-                .scaleEffect(copied ? 1.12 : 1)
+                .foregroundStyle(copied ? JB.live : JB.ink2)
+                .contentTransition(.symbolEffect(.replace))
         }
-        .buttonStyle(.plain)
-        .help("Copy full response")
+        .buttonStyle(JBIconButtonStyle(size: 24))
+        .help("Copy")
     }
 }
 
+/// Kept for callers of the old name.
+struct CopyResponseButton: View {
+    let text: String
+    var body: some View { ChatCopyButton(text: text) }
+}
 
-/// The same turn-level steps drawer as iOS and the Ctrl–Alt–J widget.
+/// Turn-level steps: one mono line with a status dot, click to expand.
 private struct ToolActivityView: View {
     let calls: [Message]
     @State private var expanded = false
@@ -736,59 +549,90 @@ private struct ToolActivityView: View {
         return rows
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Button {
-                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) { expanded.toggle() }
+                withAnimation(reduceMotion ? nil : JB.snap) { expanded.toggle() }
             } label: {
-                HStack(spacing: 10) {
-                    HStack(spacing: 6) {
-                        if running { ProgressView().controlSize(.mini) }
-                        else { Image(systemName: failed ? "exclamationmark.circle" : "wrench.and.screwdriver").font(.jb(10)) }
-                        Text("\(calls.count) \(calls.count == 1 ? "step" : "steps")").font(.jb(11, .medium))
-                        Image(systemName: "chevron.down").font(.jb(8, .semibold)).rotationEffect(.degrees(expanded ? 180 : 0))
-                    }
-                    .padding(.horizontal, 10).padding(.vertical, 6)
-                    .background(.primary.opacity(expanded ? 0.12 : 0.06), in: Capsule())
-                    Text(summary).font(.jb(12, .medium)).foregroundStyle(.primary).lineLimit(2)
+                HStack(spacing: 8) {
+                    JBStatusDot(color: failed && !running ? JB.danger : (running ? JB.live : JB.ink3), live: running, size: 6)
+                    Text(summary)
+                        .font(.jbMono(11.5))
+                        .foregroundStyle(JB.ink2)
+                        .lineLimit(1)
+                    Text("\(calls.count)")
+                        .font(.jbMono(11))
+                        .foregroundStyle(JB.ink3)
+                    Image(systemName: "chevron.right")
+                        .font(.jb(7, .bold))
+                        .foregroundStyle(JB.ink3)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
                     Spacer(minLength: 0)
-                }.foregroundStyle(.primary.opacity(0.85)).frame(maxWidth: .infinity, minHeight: 28, alignment: .leading).contentShape(Rectangle())
-            }.buttonStyle(.plain)
-                .accessibilityLabel("\(summary), \(calls.count) steps")
-                .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+                }
+                .frame(minHeight: 22, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(summary), \(calls.count) steps")
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
             if expanded {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
                     ForEach(groups) { message in ToolActivityStep(message: message) }
                 }
                 .padding(.leading, 10)
-                .overlay(alignment: .leading) { Rectangle().fill(.primary.opacity(0.12)).frame(width: 1) }
+                .overlay(alignment: .leading) { Rectangle().fill(JB.line).frame(width: 1) }
+                .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .joeCard(14)
     }
 }
 
 private struct ToolActivityStep: View {
     let message: Message
     @State private var expanded = false
+    private var failed: Bool { (message.exitCode ?? 0) != 0 }
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            VStack(alignment: .leading, spacing: 6) {
-                if let command = message.command, !command.isEmpty { Text(command).font(.jbMono(11)).textSelection(.enabled) }
-                if let output = message.toolOutput, !output.isEmpty {
-                    ScrollView { Text(output).font(.jbMono(11)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 220)
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                withAnimation(JB.snap) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    JBStatusDot(color: failed ? JB.danger : (message.toolDone ? JB.ink3 : JB.live), live: !message.toolDone, size: 5)
+                    Text(prettyToolName(message.toolName) + (message.groupedToolCount > 1 ? " (\(message.groupedToolCount))" : ""))
+                        .font(.jbMono(11.5))
+                        .foregroundStyle(JB.ink2)
+                        .lineLimit(1)
+                    if !expanded, let cmd = message.command, !cmd.isEmpty {
+                        Text(cmd)
+                            .font(.jbMono(11))
+                            .foregroundStyle(JB.ink3)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
                 }
-            }.padding(.vertical, 6)
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: !message.toolDone ? "ellipsis" : (message.exitCode ?? 0) != 0 ? "xmark" : "checkmark")
-                    .foregroundStyle((message.exitCode ?? 0) != 0 ? Color.red : Color.secondary).font(.jb(10)).frame(width: 12)
-                Text(prettyToolName(message.toolName) + (message.groupedToolCount > 1 ? " (\(message.groupedToolCount))" : ""))
-                    .font(.jb(12, .medium)).lineLimit(2)
-            }.padding(.vertical, 3)
-        }.tint(.secondary)
+                .padding(.vertical, 2)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if expanded {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let command = message.command, !command.isEmpty {
+                        Text(command).font(.jbMono(11)).foregroundStyle(JB.ink).textSelection(.enabled)
+                    }
+                    if let output = message.toolOutput, !output.isEmpty {
+                        ScrollView {
+                            Text(output).font(.jbMono(11)).foregroundStyle(JB.ink2).textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: 220)
+                    }
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .jbSurface(.raised, radius: JB.rControl)
+                .transition(.opacity)
+            }
+        }
     }
 }
 
