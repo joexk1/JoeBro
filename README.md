@@ -12,6 +12,14 @@ JoeBro is a native AI workspace for macOS and iOS. It is for people who already 
 
 **Website:** [joebro.pages.dev](https://joebro.pages.dev/) · **iPhone app:** [JoeBro Mobile](https://github.com/joexk1/JoeBro-Mobile) · **Plugins:** [joebro-plugins](https://github.com/joexk1/joebro-plugins)
 
+### Install everything with one command
+
+```bash
+curl -fsSL https://joebro.pages.dev/install.sh | bash
+```
+
+This is the all-in-one install from [joebro.pages.dev](https://joebro.pages.dev/). It downloads the signed Mac app and checks it, plugs JoeBro into Claude Code, Codex and OpenCode (hooks and the MCP server), links them up, and then offers to set up the iPhone app. You can [read the script](https://joebro.pages.dev/install.sh) first. It needs macOS 26 or later.
+
 ---
 
 ## What's in it
@@ -108,6 +116,14 @@ The iPhone app has the same look and the same pool of chats, with your coding ag
 ### Mac
 
 Requirements: **macOS 26 (Tahoe)** or later on Apple Silicon. Python 3 is used by the bundled backend. The system `python3` is fine, and there is nothing to `pip install`.
+
+The quickest way is the one-command install from [joebro.pages.dev](https://joebro.pages.dev/), which sets up the app, your coding agents and, if you want it, the iPhone app:
+
+```bash
+curl -fsSL https://joebro.pages.dev/install.sh | bash
+```
+
+Or install by hand:
 
 1. Download the latest **JoeBro.dmg** from the [Releases page](https://github.com/joexk1/joebro/releases) and drag **JoeBro** into Applications.
 2. Open it. JoeBro is signed with an Apple Developer ID and notarised, so it opens with a plain double-click.
