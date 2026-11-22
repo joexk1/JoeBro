@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// Scheduled tasks — local LLM prompts on a schedule.
+/// Scheduled tasks: a model prompt on a schedule, or a coding agent started on a schedule (or now) through Night Shift.
 struct TasksPanel: View {
     @Environment(AppStore.self) private var store
     @State private var tasks: Loadable<[TaskItem]> = .loading
+    @State private var hosts: [NightHost] = []
     @State private var showNew = false
     @State private var editing: TaskItem?
     @State private var selection: Set<String> = []
@@ -12,118 +13,79 @@ struct TasksPanel: View {
     @State private var search = ""
     @State private var searchOpen = false
     @State private var phoneScope = false
+    @State private var note: String?
 
     var body: some View {
-        PanelChrome(title: "Tasks", icon: "clock.badge.checkmark") {
-            Picker("", selection: $phoneScope) {
-                Text("Tasks").tag(false)
-                Text("Phone agent").tag(true)
+        ExtrasShell(title: "Tasks", glyph: .tasks) {
+            HStack(spacing: 2) {
+                Button("Tasks") { phoneScope = false }.buttonStyle(JBButtonStyle(kind: phoneScope ? .ghost : .secondary, compact: true))
+                Button("Phone agent") { phoneScope = true }.buttonStyle(JBButtonStyle(kind: phoneScope ? .secondary : .ghost, compact: true))
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 190)
             if phoneScope {
                 Menu {
                     Button("Morning briefing") { addStarter("morning") }
                     Button("Evening wrap-up") { addStarter("evening") }
-                } label: {
-                    Image(systemName: "sparkles")
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .help("Starter tasks")
+                } label: { JBIcon(.spark, size: 14) }
+                .menuStyle(.borderlessButton).fixedSize().help("Starter tasks")
             }
             PanelSearchField(text: $search, open: $searchOpen, placeholder: "Search tasks")
-            Button {
-                Task { await load() }
-            } label: {
-                Image(systemName: "arrow.clockwise")
-            }
-            .buttonStyle(.borderless)
-            Button {
-                showNew = true
-            } label: {
-                Image(systemName: "plus")
-            }
-            .buttonStyle(.borderless)
-            .help("New task")
+            ExtrasIconButton(symbol: "arrow.clockwise", help: "Refresh") { Task { await load() } }
+            ExtrasIconButton(symbol: "plus", help: "New task") { showNew = true }
         } content: {
-            VStack(spacing: 10) {
-                if !phoneScope {
-                    QuickAddBar(placeholder: "Describe a new task…", busy: generating) { generateTask($0) }
-                }
-                if let genError {
-                    Text(genError)
-                        .font(.jb(11))
-                        .foregroundStyle(.red)
-                }
-
-            ZStack {
-                switch tasks {
-                case .loading:
-                    ProgressView()
-                case .failed(let e):
-                    ContentUnavailableView("Couldn't load tasks", systemImage: "clock.badge.exclamationmark", description: Text(e))
-                case .loaded(let list) where list.isEmpty:
-                    ContentUnavailableView(phoneScope ? "No phone-agent tasks" : "No scheduled tasks", systemImage: "clock",
-                                           description: phoneScope ? Text("Use the starter menu or the + button.") : nil)
-                case .loaded(let list):
-                    let shown = filtered(list)
-                    VStack(spacing: 0) {
-                        if !selection.isEmpty {
-                            SelectionBar(total: shown.count, allIDs: shown.map(\.id), selection: $selection) { ids in
-                                Task {
-                                    for id in ids { await APIClient.shared.deleteTask(id) }
-                                    await load()
+            VStack(spacing: JB.s3) {
+                if !phoneScope { QuickAddBar(placeholder: "Describe a new task", actionIcon: "arrow.up", busy: generating) { generateTask($0) } }
+                if let m = genError ?? note { Text(m).font(.jbMono(11)).foregroundStyle(JB.danger) }
+                ZStack {
+                    switch tasks {
+                    case .loading:
+                        JBSpinner()
+                    case .failed(let e):
+                        JBEmptyState(art: .plug, text: e)
+                    case .loaded(let list) where list.isEmpty:
+                        JBEmptyState(art: .inbox, text: phoneScope ? "No phone-agent tasks" : "No tasks")
+                    case .loaded(let list):
+                        let shown = filtered(list)
+                        VStack(spacing: 0) {
+                            if !selection.isEmpty {
+                                SelectionBar(total: shown.count, allIDs: shown.map(\.id), selection: $selection) { ids in
+                                    Task {
+                                        for id in ids { await APIClient.shared.deleteTask(id) }
+                                        await load()
+                                    }
                                 }
                             }
-                        }
-                        ScrollView {
-                            LazyVStack(spacing: 8) {
-                                ForEach(shown) { t in
-                                    taskRow(t)
+                            ScrollView {
+                                LazyVStack(spacing: JB.s2) {
+                                    ForEach(shown) { t in taskRow(t).transition(.opacity.combined(with: .move(edge: .top))) }
                                 }
+                                .padding(JB.s3)
+                                .animation(JB.smooth, value: shown.map(\.id))
                             }
-                            .padding(12)
                         }
+                        .animation(JB.snap, value: selection.isEmpty)
                     }
-                    .animation(.spring(duration: 0.25), value: selection.isEmpty)
                 }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .joeGlassRect(16)
-                if phoneScope {
-                    Text("Runs silently, tells your phone only when there is something to say.")
-                        .font(.jb(10.5))
-                        .foregroundStyle(.tertiary)
-                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .jbSurface(.panel)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .task { await load() }
         .onChange(of: phoneScope) { selection = []; tasks = .loading; Task { await load() } }
-        .sheet(isPresented: $showNew) {
-            NewTaskSheet(personal: phoneScope) { await load() }
-        }
-        .sheet(item: $editing) { t in
-            EditTaskSheet(task: t) { await load() }
-        }
+        .sheet(isPresented: $showNew) { NewTaskSheet(personal: phoneScope, hosts: hosts) { await load() } }
+        .sheet(item: $editing) { t in EditTaskSheet(task: t, hosts: hosts) { await load() } }
     }
 
     private func filtered(_ list: [TaskItem]) -> [TaskItem] {
         let q = search.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return list }
-        return list.filter { t in
-            let name = t.name ?? ""
-            let prompt = t.prompt ?? ""
-            return (name + " " + prompt).localizedCaseInsensitiveContains(q)
-        }
+        return list.filter { t in ((t.name ?? "") + " " + (t.prompt ?? "")).localizedCaseInsensitiveContains(q) }
     }
 
     private func load() async {
         do {
-            tasks = .loaded(phoneScope ? try await APIClient.shared.personalTasks()
-                                       : try await APIClient.shared.tasks())
+            tasks = .loaded(phoneScope ? try await APIClient.shared.personalTasks() : try await APIClient.shared.tasks())
+            if !phoneScope, hosts.isEmpty { hosts = await APIClient.shared.nightHosts() }
         } catch { tasks = .failed(error.localizedDescription) }
     }
 
@@ -135,66 +97,59 @@ struct TasksPanel: View {
         }
     }
 
-
+    private func run(_ t: TaskItem) {
+        guard t.isCoding else { store.runTask(t); return }
+        Task {
+            do { note = try await APIClient.shared.runTask(t.id); try? await Task.sleep(for: .seconds(2)); await load() }
+            catch { note = error.localizedDescription }
+        }
+    }
 
     private func taskRow(_ t: TaskItem) -> some View {
         let paused = t.status == "paused"
-        return SkillRowShell(id: t.id, checked: selection.contains(t.id),
-                             selecting: !selection.isEmpty,
+        return SkillRowShell(id: t.id, checked: selection.contains(t.id), selecting: !selection.isEmpty,
                              onToggleCheck: { toggleSelection(t.id, in: &selection) }) {
-            Image(systemName: paused ? "pause.circle" : "clock.arrow.circlepath")
-                .font(.jb(14))
-                .foregroundStyle(paused ? Color.secondary : JB.accent)
-                .frame(width: 24)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(t.name ?? "Task")
-                    .font(.jb(13, .medium))
-                    .lineLimit(1)
+            Group {
+                if t.isCoding { JBIcon(.coding, size: 15) } else { JBIcon(.tasks, size: 15) }
+            }
+            .foregroundStyle(paused ? JB.ink3 : JB.accent).frame(width: 22)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(t.name ?? "Task").font(.jb(13, .medium)).foregroundStyle(JB.ink).lineLimit(1)
                 HStack(spacing: 8) {
-                    if let s = t.schedule {
-                        Label("\(s)\(t.scheduledTime.map { " @ \($0)" } ?? "")", systemImage: "calendar")
-                    }
-                    if let next = t.nextRun, let d = parseISO(next) {
-                        Text("next \(d.formatted(.relative(presentation: .named)))")
-                    }
+                    if let s = t.schedule, !s.isEmpty { Text("\(s)\(t.scheduledTime.map { " " + $0 } ?? "")") }
+                    if let next = t.nextRun, let d = parseISO(next) { Text("next \(d.formatted(.relative(presentation: .named)))") }
+                    if t.isCoding { Text([t.codingAgent == "any" ? "any agent" : t.codingAgent, hostLabel(t)].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")) }
                 }
-                .font(.jb(10.5))
-                .foregroundStyle(.tertiary)
-                if let p = t.prompt, !p.isEmpty {
-                    Text(p)
-                        .font(.jb(11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
+                .font(.jbMono(11)).foregroundStyle(JB.ink3)
+                if let p = t.prompt, !p.isEmpty { Text(p).font(.jb(11.5)).foregroundStyle(JB.ink2).lineLimit(2) }
             }
             Spacer()
-            if paused {
-                Text("paused")
-                    .font(.jb(10))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(.quaternary.opacity(0.6), in: Capsule())
-            }
+            if let c = t.codingStatus, !c.isEmpty { codingChip(c) }
+            if paused { JBChip(text: "paused") }
         }
         .opacity(paused ? 0.55 : 1)
         .contentShape(Rectangle())
         .contextMenu {
-            Button("Run now", systemImage: "play.fill") {
-                store.runTask(t)
-            }
-            Button("Edit…") { editing = t }
+            Button("Run now") { run(t) }
+            Button("Edit") { editing = t }
             Button(paused ? "Resume" : "Pause") {
-                Task {
-                    await APIClient.shared.taskAction(t.id, paused ? "resume" : "pause")
-                    await load()
-                }
+                Task { await APIClient.shared.taskAction(t.id, paused ? "resume" : "pause"); await load() }
             }
-            Button("Delete", role: .destructive) {
-                Task {
-                    await APIClient.shared.deleteTask(t.id)
-                    await load()
-                }
-            }
+            Button("Delete", role: .destructive) { Task { await APIClient.shared.deleteTask(t.id); await load() } }
+        }
+        .onTapGesture(count: 2) { editing = t }
+    }
+
+    private func hostLabel(_ t: TaskItem) -> String? {
+        guard hosts.count > 1, let h = t.codingHost, !h.isEmpty else { return nil }
+        return hosts.first { $0.id == h }?.label ?? h
+    }
+
+    private func codingChip(_ status: String) -> some View {
+        let tint: Color = switch status { case "running": JB.live; case "review": JB.accent; case "failed": JB.danger; default: JB.ink2 }
+        return HStack(spacing: 5) {
+            if status == "running" { JBStatusDot(live: true, size: 6) }
+            JBChip(text: status, tint: tint)
         }
     }
 
@@ -254,8 +209,62 @@ struct TasksPanel: View {
     }
 }
 
+struct TaskFields: View {
+    @Binding var name: String
+    @Binding var prompt: String
+    @Binding var schedule: String
+    @Binding var time: String
+    @Binding var repeatDay: Int
+    @Binding var mode: String
+    @Binding var coding: Bool
+    @Binding var agent: String
+    @Binding var model: String
+    @Binding var host: String
+    @Binding var repo: String
+    var hosts: [NightHost]
+    var allowCoding = true
+    @FocusState private var focus: Int?
+    private static let days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: JB.s3) {
+            if allowCoding {
+                HStack(spacing: 2) {
+                    Button("AI task") { coding = false }.buttonStyle(JBButtonStyle(kind: coding ? .ghost : .secondary, compact: true))
+                    Button("Coding agent") { coding = true }.buttonStyle(JBButtonStyle(kind: coding ? .secondary : .ghost, compact: true))
+                }
+            }
+            TextField("Name", text: $name).focused($focus, equals: 0).jbField(focused: focus == 0)
+            TextField(coding ? "What should the agent do?" : "What should JoeBro do?", text: $prompt, axis: .vertical)
+                .lineLimit(3...6).focused($focus, equals: 1).jbField(focused: focus == 1)
+            HStack(spacing: JB.s3) {
+                ExtrasField(label: "Repeat") {
+                    Picker("", selection: $schedule) { Text("Daily").tag("daily"); Text("Weekly").tag("weekly"); Text("Monthly").tag("monthly") }.labelsHidden()
+                }
+                if schedule == "weekly" {
+                    ExtrasField(label: "On") { Picker("", selection: $repeatDay) { ForEach(0..<7, id: \.self) { Text(Self.days[$0]).tag($0) } }.labelsHidden() }
+                }
+                ExtrasField(label: "Time") { TextField("09:00", text: $time).font(.jbMono(13)).focused($focus, equals: 2).jbField(focused: focus == 2).frame(width: 80) }
+            }
+            if coding {
+                CodingTargetFields(agent: $agent, model: $model, host: $host, repo: $repo, hosts: hosts)
+            } else {
+                ExtrasField(label: "File access") {
+                    Picker("", selection: $mode) { Text("Bound folder").tag("sandbox"); Text("Read-only").tag("readonly"); Text("Full access").tag("full") }.labelsHidden()
+                }
+            }
+        }
+    }
+    var codingBody: [String: Any] {
+        coding ? ["coding_agent": agent, "coding_repo": repo, "coding_host": host, "coding_model": model]
+               : ["coding_agent": "", "coding_repo": "", "coding_host": "", "coding_model": ""]
+    }
+    var canSave: Bool { !prompt.isEmpty && (!coding || !repo.isEmpty) }
+}
+
 struct NewTaskSheet: View {
     var personal = false
+    var hosts: [NightHost] = []
     let onSaved: () async -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
@@ -264,82 +273,50 @@ struct NewTaskSheet: View {
     @State private var time = "09:00"
     @State private var repeatDay = 0
     @State private var mode = "sandbox"
+    @State private var coding = false
+    @State private var agent = "claude"
+    @State private var model = ""
+    @State private var host = ""
+    @State private var repo = ""
     @State private var error: String?
     @State private var saving = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("New Task").font(.jb(14, .semibold))
-                Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button { create() } label: {
-                    if saving { ProgressView().controlSize(.small) } else { Text("Create") }
-                }
-                .buttonStyle(.jbPrimary)
-                .tint(JB.accent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(saving || prompt.isEmpty)
+        let f = TaskFields(name: $name, prompt: $prompt, schedule: $schedule, time: $time, repeatDay: $repeatDay, mode: $mode, coding: $coding,
+                           agent: $agent, model: $model, host: $host, repo: $repo, hosts: hosts, allowCoding: !personal)
+        return VStack(spacing: 0) {
+            ExtrasSheetHeader(title: "New task") {
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).buttonStyle(JBButtonStyle(kind: .ghost, compact: true))
+                Button { create(f.codingBody) } label: { if saving { JBSpinner() } else { Text("Create") } }
+                    .buttonStyle(JBButtonStyle(kind: .primary, compact: true)).keyboardShortcut(.defaultAction).disabled(saving || !f.canSave)
             }
-            .padding(14)
-            Divider()
-            Form {
-                TextField("Name", text: $name)
-                TextField("What should JoeBro do?", text: $prompt, axis: .vertical)
-                    .lineLimit(3...6)
-                Picker("Repeat", selection: $schedule) {
-                    Text("Daily").tag("daily")
-                    Text("Weekly").tag("weekly")
-                    Text("Monthly").tag("monthly")
-                }
-                if schedule == "weekly" {
-                    Picker("On", selection: $repeatDay) {
-                        Text("Monday").tag(0)
-                        Text("Tuesday").tag(1)
-                        Text("Wednesday").tag(2)
-                        Text("Thursday").tag(3)
-                        Text("Friday").tag(4)
-                        Text("Saturday").tag(5)
-                        Text("Sunday").tag(6)
-                    }
-                }
-                TextField("Time (HH:MM)", text: $time)
-                Picker("Agent access", selection: $mode) {
-                    Text("Bound folder").tag("sandbox")
-                    Text("Read-only").tag("readonly")
-                    Text("Full access").tag("full")
-                }
-                Text("Tasks run as an agent. This sets how much of your files it can touch when it runs.")
-                    .font(.jbCaption).foregroundStyle(.secondary)
-                if let error {
-                    Text(error).font(.jbCaption).foregroundStyle(.red)
-                }
-            }
-            .formStyle(.grouped)
+            VStack(alignment: .leading, spacing: JB.s3) {
+                f
+                if let error { Text(error).font(.jbMono(11)).foregroundStyle(JB.danger) }
+            }.padding(JB.s4)
         }
-        .frame(width: 420, height: 440)
+        .frame(width: 500).background(JB.surface)
     }
 
-    private func create() {
+    private func create(_ codingBody: [String: Any]) {
         saving = true
         Task {
             defer { saving = false }   // a second click while in flight made two tasks
             do {
                 try await APIClient.shared.createTask(
                     name: name.isEmpty ? String(prompt.prefix(40)) : name,
-                    prompt: prompt, schedule: schedule, time: time, permissionMode: mode, repeatDay: repeatDay, personal: personal)
+                    prompt: prompt, schedule: schedule, time: time, permissionMode: mode, repeatDay: repeatDay, personal: personal,
+                    coding: coding ? codingBody : [:])
                 await onSaved()
                 dismiss()
-            } catch {
-                self.error = error.localizedDescription
-            }
+            } catch { self.error = error.localizedDescription }
         }
     }
 }
 
-
 struct EditTaskSheet: View {
     let task: TaskItem
+    var hosts: [NightHost] = []
     let onSaved: () async -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
@@ -348,60 +325,29 @@ struct EditTaskSheet: View {
     @State private var time = "09:00"
     @State private var mode = "sandbox"
     @State private var repeatDay = 0
+    @State private var coding = false
+    @State private var agent = "claude"
+    @State private var model = ""
+    @State private var host = ""
+    @State private var repo = ""
     @State private var error: String?
     @State private var saving = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Edit Task").font(.jb(14, .semibold))
-                Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button { save() } label: {
-                    if saving { ProgressView().controlSize(.small) } else { Text("Save") }
-                }
-                .buttonStyle(.jbPrimary)
-                .tint(JB.accent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(saving || prompt.isEmpty)
+        let f = TaskFields(name: $name, prompt: $prompt, schedule: $schedule, time: $time, repeatDay: $repeatDay, mode: $mode, coding: $coding,
+                           agent: $agent, model: $model, host: $host, repo: $repo, hosts: hosts, allowCoding: task.id.hasPrefix("ptask_") == false)
+        return VStack(spacing: 0) {
+            ExtrasSheetHeader(title: "Edit task") {
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).buttonStyle(JBButtonStyle(kind: .ghost, compact: true))
+                Button { save(f.codingBody) } label: { if saving { JBSpinner() } else { Text("Save") } }
+                    .buttonStyle(JBButtonStyle(kind: .primary, compact: true)).keyboardShortcut(.defaultAction).disabled(saving || !f.canSave)
             }
-            .padding(14)
-            Divider()
-            Form {
-                TextField("Name", text: $name)
-                TextField("Prompt", text: $prompt, axis: .vertical)
-                    .lineLimit(3...6)
-                Picker("Repeat", selection: $schedule) {
-                    Text("Daily").tag("daily")
-                    Text("Weekly").tag("weekly")
-                    Text("Monthly").tag("monthly")
-                }
-                if schedule == "weekly" {
-                    Picker("On", selection: $repeatDay) {
-                        Text("Monday").tag(0)
-                        Text("Tuesday").tag(1)
-                        Text("Wednesday").tag(2)
-                        Text("Thursday").tag(3)
-                        Text("Friday").tag(4)
-                        Text("Saturday").tag(5)
-                        Text("Sunday").tag(6)
-                    }
-                }
-                TextField("Time (HH:MM)", text: $time)
-                Picker("Agent access", selection: $mode) {
-                    Text("Bound folder").tag("sandbox")
-                    Text("Read-only").tag("readonly")
-                    Text("Full access").tag("full")
-                }
-                Text("Tasks run as an agent. This sets how much of your files it can touch when it runs.")
-                    .font(.jbCaption).foregroundStyle(.secondary)
-                if let error {
-                    Text(error).font(.jbCaption).foregroundStyle(.red)
-                }
-            }
-            .formStyle(.grouped)
+            VStack(alignment: .leading, spacing: JB.s3) {
+                f
+                if let error { Text(error).font(.jbMono(11)).foregroundStyle(JB.danger) }
+            }.padding(JB.s4)
         }
-        .frame(width: 420, height: 410)
+        .frame(width: 500).background(JB.surface)
         .onAppear {
             name = task.name ?? ""
             prompt = task.prompt ?? ""
@@ -409,21 +355,25 @@ struct EditTaskSheet: View {
             time = task.scheduledTime ?? "09:00"
             mode = task.permissionMode ?? "sandbox"
             repeatDay = task.repeatDay ?? 0
+            coding = task.isCoding
+            agent = task.isCoding ? (task.codingAgent ?? "claude") : "claude"
+            model = task.codingModel ?? ""
+            host = task.codingHost ?? ""
+            repo = task.codingRepo ?? ""
         }
     }
 
-    private func save() {
+    private func save(_ codingBody: [String: Any]) {
         saving = true
         Task {
             defer { saving = false }
             do {
                 try await APIClient.shared.updateTask(
-                    id: task.id, name: name, prompt: prompt, schedule: schedule, time: time, permissionMode: mode, repeatDay: repeatDay)
+                    id: task.id, name: name, prompt: prompt, schedule: schedule, time: time, permissionMode: mode, repeatDay: repeatDay,
+                    coding: task.id.hasPrefix("ptask_") ? [:] : codingBody)
                 await onSaved()
                 dismiss()
-            } catch {
-                self.error = error.localizedDescription
-            }
+            } catch { self.error = error.localizedDescription }
         }
     }
 }

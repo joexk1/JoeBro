@@ -31,12 +31,14 @@ struct NightTask: Decodable, Identifiable, Hashable {
     let status: String?, branch: String?, error: String?
     let windowStart: String?, windowEnd: String?, testCommand: String?, onApprove: String?
     let maxMinutes: Int?, position: Int?
+    let taskRef: String?, startedAt: String?
     let followups: [NightFollowup]?
     let result: NightResult?
     enum CodingKeys: String, CodingKey {
         case id, title, repo, prompt, agent, model, host, status, branch, error, position, followups, result
         case repoName = "repo_name", windowStart = "window_start", windowEnd = "window_end"
         case testCommand = "test_command", onApprove = "on_approve", maxMinutes = "max_minutes"
+        case taskRef = "task_ref", startedAt = "started_at"
     }
     var name: String { (title?.isEmpty == false ? title : nil) ?? String((prompt ?? "Task").prefix(48)) }
     var state: String { status ?? "queued" }
@@ -45,6 +47,13 @@ struct NightTask: Decodable, Identifiable, Hashable {
     var agentLabel: String {
         switch agent ?? "any" { case "claude": "Claude Code"; case "codex": "Codex"; case "opencode": "OpenCode"; default: "Any agent" }
     }
+}
+
+/// A computer a Night Shift task can run on (the backend itself, or a linked node). The picker shows only when there is more than one.
+struct NightHost: Decodable, Identifiable, Hashable {
+    let id: String, name: String?
+    let local: Bool?, up: Bool?
+    var label: String { (name?.isEmpty == false ? name : nil) ?? (id.isEmpty ? "This computer" : id) }
 }
 
 struct NightConfig: Decodable, Hashable {
@@ -115,16 +124,17 @@ extension APIClient {
     /// Route that resumes a coding session on a linked machine (start_coding_session).
     /// Not in reports/feature-api.md yet: change this one constant when the backend names it.
 
-    private struct TasksEnv: Decodable { let tasks: [NightTask]; let config: NightConfig? }
+    private struct TasksEnv: Decodable { let tasks: [NightTask]; let config: NightConfig?; let hosts: [NightHost]? }
     private struct DiffEnv: Decodable { let diff: String? }
     private struct FactsEnv: Decodable { let facts: [MemFact] }
     private struct ProjectsEnv: Decodable { let projects: [MemProject] }
     private struct HistoryEnv: Decodable { let history: [MemFact]? }
     private func seg(_ id: String) -> String { id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/?#%"))) ?? id }
 
-    func nightShift() async throws -> (tasks: [NightTask], config: NightConfig?) {
-        let r: TasksEnv = try await getJSON("api/night-shift"); return (r.tasks, r.config)
+    func nightShift() async throws -> (tasks: [NightTask], config: NightConfig?, hosts: [NightHost]) {
+        let r: TasksEnv = try await getJSON("api/night-shift"); return (r.tasks, r.config, r.hosts ?? [])
     }
+    func nightHosts() async -> [NightHost] { (try? await nightShift().hosts) ?? [] }
     func nightAdd(_ body: [String: Any]) async throws { _ = try await sendJSON("api/night-shift", body: body) }
     func nightReorder(_ ids: [String]) async throws { _ = try await sendJSON("api/night-shift/reorder", body: ["ids": ids]) }
     func nightCancel(_ id: String) async throws { _ = try await sendJSON("api/night-shift/\(seg(id))/cancel", body: [:]) }

@@ -381,7 +381,7 @@ final class APIClient {
         return r.tasks
     }
 
-    func createTask(name: String, prompt: String, schedule: String, time: String, permissionMode: String = "sandbox", repeatDay: Int = 0, personal: Bool = false) async throws {
+    func createTask(name: String, prompt: String, schedule: String, time: String, permissionMode: String = "sandbox", repeatDay: Int = 0, personal: Bool = false, coding: [String: Any] = [:]) async throws {
         var body: [String: Any] = [
             "name": name,
             "prompt": prompt,
@@ -394,16 +394,16 @@ final class APIClient {
             "output_target": "session",
         ]
         if personal { body["scope"] = "personal" }
-        try await sendJSON("api/tasks", body: body)
+        try await sendJSON("api/tasks", body: body.merging(coding) { $1 })
     }
 
-    func updateTask(id: String, name: String, prompt: String, schedule: String, time: String, permissionMode: String = "sandbox", repeatDay: Int = 0) async throws {
+    func updateTask(id: String, name: String, prompt: String, schedule: String, time: String, permissionMode: String = "sandbox", repeatDay: Int = 0, coding: [String: Any] = [:]) async throws {
         try await sendJSON("api/tasks/\(id)", method: "PUT", body: [
             "name": name, "prompt": prompt,
             "schedule": schedule, "scheduled_time": time,
             "permission_mode": permissionMode,
             "repeat_day": repeatDay,
-        ])
+        ].merging(coding) { $1 })
     }
 
     func taskAction(_ id: String, _ action: String) async {
