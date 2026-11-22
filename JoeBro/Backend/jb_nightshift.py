@@ -698,7 +698,7 @@ class NightShiftMixin:
         if not repo:
             return "I don't know where that project lives. Give me the repo path."
         try:
-            r = self.night_add({"repo": repo, "prompt": args.get("prompt") or ("Continue where you left off." if resume_id else ""), "agent": agent or "any",
+            r = self.night_add({"repo": repo, "prompt": args.get("prompt") or "",   # resuming just reopens it; you say what's next "agent": agent or "any",
                                 "host": host, "permission": str(args.get("permission") or ""), "title": (args.get("title") or "Session: " + str(args.get("prompt") or ""))[:60]},
                                kind="session", run_now=True, resume_id=resume_id)
             for _, t in self.night_tick():

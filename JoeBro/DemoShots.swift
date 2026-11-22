@@ -1,6 +1,7 @@
 #if DEBUG
 import SwiftUI
 import AppKit
+import WebKit
 
 /// Marketing screenshots without Screen Recording or an unlocked screen.
 /// `-JoeBroDemo -JoeBroShots <dir>` opens the main window at 1440x900, walks the
@@ -25,13 +26,65 @@ import AppKit
         NSApp.windows.first { $0.isVisible && $0.contentView != nil && $0.canBecomeMain }
     }
 
-    private static func write(_ window: NSWindow, to path: String) {
+    private static func webViews(in v: NSView) -> [WKWebView] {
+        (v as? WKWebView).map { [$0] } ?? v.subviews.flatMap { webViews(in: $0) }
+    }
+
+    /// The window as a PNG. cacheDisplay can't see WKWebView content (animated
+    /// backdrops), so each web view is snapshotted and drawn underneath.
+    private static func write(_ window: NSWindow, to path: String) async {
         guard let view = window.contentView?.superview ?? window.contentView else { return }
         view.layoutSubtreeIfNeeded()
         guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
         view.cacheDisplay(in: view.bounds, to: rep)
-        if let png = rep.representation(using: .png, properties: [:]) {
+        var layers: [(NSImage, NSRect)] = []
+        for wv in webViews(in: view) where !wv.isHidden && wv.bounds.width > 10 {
+            let cfg = WKSnapshotConfiguration()
+            if let img = try? await wv.takeSnapshot(configuration: cfg) {
+                layers.append((img, wv.convert(wv.bounds, to: view)))
+            }
+        }
+        var out = rep
+        if !layers.isEmpty, let full = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: rep.pixelsWide, pixelsHigh: rep.pixelsHigh,
+                                                        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) {
+            full.size = view.bounds.size
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: full)
+            for (img, r) in layers {
+                let flipped = view.isFlipped ? NSRect(x: r.minX, y: view.bounds.height - r.maxY, width: r.width, height: r.height) : r
+                img.draw(in: flipped)
+            }
+            rep.draw(in: NSRect(origin: .zero, size: view.bounds.size), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: false, hints: nil)
+            NSGraphicsContext.restoreGraphicsState()
+            out = full
+        }
+        if let png = out.representation(using: .png, properties: [:]) {
             try? png.write(to: URL(fileURLWithPath: path))
+        }
+    }
+
+    /// `-JoeBroShotsExternal`: instead of drawing the window into a bitmap (which
+    /// misses WKWebView/animated backdrops), each shot writes "<name> <windowNumber>"
+    /// to `<dir>/.pending` and waits until a capturer (screencapture -l) deletes it.
+    private static var external: Bool { ProcessInfo.processInfo.arguments.contains("-JoeBroShotsExternal") }
+
+    private static func shoot(_ window: NSWindow, _ path: String) async {
+        guard external else { await write(window, to: path); return }
+        let pending = (dir ?? "/tmp") + "/.pending"
+        try? "\((path as NSString).lastPathComponent) \(window.windowNumber)".write(toFile: pending, atomically: true, encoding: .utf8)
+        for _ in 0..<150 where FileManager.default.fileExists(atPath: pending) { await wait(0.2) }
+    }
+
+    /// A look: appearance + accent + background. Default set covers every kind.
+    private struct Look { let mode: String, palette: String, backdrop: String, scene: String
+        var name: String { "\(mode)-\(backdrop == "scene" ? scene : backdrop)-\(palette)" } }
+    private static var looks: [Look] {
+        let raw = option("-JoeBroShotsLooks")
+            ?? "dark:auto:scene:misty-forest,light:auto:scene:alpine-dawn,dark:ember:palette:-,light:cobalt:palette:-,dark:violet:scene:tokyo-rain,light:moss:scene:cloud-sea,dark:mono:palette:-,dark:auto:scene:aurora-fjord"
+        return raw.split(separator: ",").compactMap { l in
+            let f = l.split(separator: ":").map(String.init)
+            return f.count == 4 ? Look(mode: f[0], palette: f[1], backdrop: f[2], scene: f[3]) : nil
         }
     }
 
@@ -46,41 +99,51 @@ import AppKit
         window.setContentSize(NSSize(width: 1440, height: 900))
         window.center()
         await wait(1.5)
-        let palettes = (option("-JoeBroShotsPalettes") ?? JBAppearance.shared.palette.rawValue).split(separator: ",").map(String.init)
-        for (pi, palette) in palettes.enumerated() {
-            if let p = JBPalette(rawValue: palette) { JBAppearance.shared.palette = p }
-            for mode in ["dark", "light"] {
-                NSApp.appearance = NSAppearance(named: mode == "dark" ? .darkAqua : .aqua)
-                await wait(1.2)
-                let full = pi == 0
-                func snap(_ name: String) async {
-                    await wait(2.2)
-                    write(window, to: "\(dir)/mac_\(name)_\(mode)_\(palette).png")
-                }
-                // Empty chat with the wordmark.
+        let only = option("-JoeBroShotsOnly").map { Set($0.split(separator: ",").map(String.init)) }
+        let ap = JBAppearance.shared
+        for (li, look) in looks.enumerated() {
+            NSApp.appearance = NSAppearance(named: look.mode == "dark" ? .darkAqua : .aqua)
+            if look.backdrop == "scene" { ap.sceneID = look.scene; ap.backdrop = .scene; ap.solidity = 0.72 }
+            else { ap.backdrop = .palette; ap.solidity = 1 }
+            if let p = JBPalette(rawValue: look.palette) { ap.palette = p }
+            await wait(look.backdrop == "scene" ? 4 : 1.5)
+            let full = li == 0 || li == 1
+            func snap(_ name: String, settle: Double = 2.2) async {
+                if let only, !only.contains(name) { return }
+                await wait(settle)
+                await shoot(window, "\(dir)/mac_\(name)_\(look.name).png")
+            }
+            store.activeTab = .chat
+            AgentNav.shared.close()
+            if let first = store.sessions.first { store.select(first.id); await wait(1.5); await snap("chat") }
+            // A coding agent as a chat (Claude Code / Codex / OpenCode under one roof).
+            await AgentNav.shared.refresh()
+            if let agent = AgentNav.shared.runs.first(where: { $0.live }) ?? AgentNav.shared.runs.first {
+                AgentNav.shared.open(agent.id); await snap("coding-agent", settle: 3)
+                AgentNav.shared.close()
+            }
+            if full {
                 store.newChat(); await snap("chat-empty")
-                // Chat with messages.
-                if let first = store.sessions.first { store.select(first.id); await wait(1.5); await snap("chat") }
-                if full, let first = store.sessions.first {
+                if let first = store.sessions.first {
                     store.select(first.id); await wait(1)
                     NotificationCenter.default.post(name: .chatFillComposer, object: "/")
                     await snap("slash")
                     NotificationCenter.default.post(name: .chatFillComposer, object: "")
                 }
-                let tabs: [(String, WorkspaceTab, Bool)] = [
-                    ("calendar", .calendar, true), ("memory", .memory, true), ("agents", .agents, true),
-                    ("night-shift", .nightShift, true), ("tasks", .tasks, true), ("skills", .skills, full),
-                    ("tools", .tools, true), ("email", .email, true), ("inbox", .inbox, true), ("research", .research, true),
-                ]
-                for (name, tab, on) in tabs where on { store.activeTab = tab; await snap(name) }
-                // Command palette.
-                if full {
-                    store.activeTab = .chat
-                    await wait(1)
-                    NotificationCenter.default.post(name: .jbOpenPalette, object: nil)
-                    await snap("palette")
-                    NotificationCenter.default.post(name: .jbOpenPalette, object: nil)
-                }
+                store.openDocumentByID("d1"); await snap("editor", settle: 3); store.editorVisible = false
+            }
+            let tabs: [(String, WorkspaceTab, Bool)] = [
+                ("agents", .agents, true), ("memory", .memory, true), ("night-shift", .nightShift, full),
+                ("calendar", .calendar, full), ("skills", .skills, full), ("tools", .tools, full),
+                ("notifications", .inbox, full), ("tasks", .tasks, full), ("research", .research, full),
+            ]
+            for (name, tab, on) in tabs where on { store.activeTab = tab; await snap(name) }
+            if full {
+                store.activeTab = .chat
+                await wait(1)
+                NotificationCenter.default.post(name: .jbOpenPalette, object: nil)
+                await snap("palette")
+                NotificationCenter.default.post(name: .jbOpenPalette, object: nil)
             }
         }
         // Settings (separate window): appearance tab.
@@ -90,7 +153,7 @@ import AppKit
             for mode in ["dark", "light"] {
                 NSApp.appearance = NSAppearance(named: mode == "dark" ? .darkAqua : .aqua)
                 await wait(1.5)
-                write(settings, to: "\(dir)/mac_settings_\(mode).png")
+                await shoot(settings, "\(dir)/mac_settings_\(mode).png")
             }
         }
         print("DemoShots: done")

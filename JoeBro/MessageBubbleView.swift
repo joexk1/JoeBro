@@ -53,13 +53,18 @@ struct ThinkingSection: View {
 struct MessageBubbleView: View, Equatable {
     @Environment(AppStore.self) private var store
     let message: Message
+    /// Layout hints from the transcript builder (part of equality so rows refresh).
+    var showFooter = true       // copy/metrics line: only the closing reply of a turn
+    var showModel = true        // model label: only the first reply of a turn
+    var thinkingLive = false    // merged turn-level reasoning is still streaming
     @State private var hovering = false
 
     // Equatable conformance lets SwiftUI skip re-rendering the (potentially
     // hundreds of) unchanged rows on every streaming flush — only the row
     // whose Message actually changed re-evaluates.
     static func == (lhs: MessageBubbleView, rhs: MessageBubbleView) -> Bool {
-        lhs.message == rhs.message
+        lhs.message == rhs.message && lhs.showFooter == rhs.showFooter
+            && lhs.showModel == rhs.showModel && lhs.thinkingLive == rhs.thinkingLive
     }
 
     var body: some View {
@@ -146,8 +151,8 @@ struct MessageBubbleView: View, Equatable {
     }
 
     private var assistantBubble: some View {
-        let liveThinking = message.isStreaming
-            && message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let liveThinking = thinkingLive || (message.isStreaming
+            && message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         let split = message.thinking.map {
             ThinkingSplit(thinking: $0, body: message.content, inProgress: liveThinking)
         } ?? extractThinking(message.content)
@@ -155,7 +160,7 @@ struct MessageBubbleView: View, Equatable {
         // does the same every frame); finalized messages are already clean.
         let renderedBody = message.isStreaming ? stripToolArtifacts(split.body) : split.body
         return VStack(alignment: .leading, spacing: 8) {
-            if let model = message.modelName {
+            if showModel, let model = message.modelName {
                 HStack(spacing: 6) {
                     ProviderLogoView(model: model, size: 11)
                         .foregroundStyle(JB.ink3)
@@ -167,7 +172,7 @@ struct MessageBubbleView: View, Equatable {
 
             if !split.thinking.isEmpty {
                 ThinkingSection(thinking: split.thinking,
-                                inProgress: split.inProgress && message.isStreaming,
+                                inProgress: thinkingLive || (split.inProgress && message.isStreaming),
                                 seconds: message.thinkingTime)
             }
 
@@ -201,7 +206,7 @@ struct MessageBubbleView: View, Equatable {
                 AttachmentChipsView(attachments: message.attachments)
             }
 
-            if !message.isStreaming && !message.content.isEmpty {
+            if showFooter && !message.isStreaming && !message.content.isEmpty {
                 HStack(spacing: 8) {
                     HStack(spacing: 0) {
                         ChatCopyButton(text: message.content)
@@ -232,7 +237,6 @@ struct MessageBubbleView: View, Equatable {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 4)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .jbContextMenu {

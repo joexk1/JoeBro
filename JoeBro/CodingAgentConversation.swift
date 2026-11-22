@@ -28,7 +28,7 @@ final class AgentNav {
         guard let env = try? await APIClient.shared.agents(kind: "coding") else { return }
         let dayAgo = Date().addingTimeInterval(-24 * 3600)
         runs = env.agents.filter { r in
-            r.live || r.status == "waiting" || r.status == "idle" && (parseISO(r.startedAt.isEmpty ? r.createdAt : r.startedAt) ?? .distantPast) > dayAgo
+            r.parentID.isEmpty && r.kind != "subagent" && (r.live || r.status == "waiting" || (r.status == "idle" || r.status == "limited") && (parseISO(r.startedAt.isEmpty ? r.createdAt : r.startedAt) ?? .distantPast) > dayAgo)
         }
     }
 }
@@ -90,10 +90,10 @@ struct CodingAgentConversation: View {
 
     private func statusChip(_ r: AgentRun) -> some View {
         let waiting = r.status == "waiting"
-        let color = waiting ? JB.warn : r.live ? JB.live : JB.ink3
+        let color = waiting || r.status == "limited" ? JB.warn : r.live ? JB.live : JB.ink3
         return HStack(spacing: 5) {
             JBStatusDot(color: color, live: r.live, size: 6)
-            Text(waiting ? "Needs you" : r.live ? "Working" : r.status.capitalized)
+            Text(waiting ? "Needs you" : r.live ? "Working" : r.status == "limited" ? "Hit usage limit" : r.status.capitalized)
                 .font(.jb(12, .medium)).foregroundStyle(color)
         }
     }

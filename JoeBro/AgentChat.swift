@@ -51,6 +51,7 @@ struct AgentApprovalButtons: View {
 /// tool calls as one mono line, and a composer that talks to the agent.
 struct AgentChatThread: View {
     let run: AgentRun
+    var readOnly = false        // a finished session's overview: read it, then Resume
     var onChanged: () async -> Void = {}
     @State private var draft = ""
     @State private var mic = MicRecorder()
@@ -78,7 +79,9 @@ struct AgentChatThread: View {
     @State private var error: String?
     @State private var showScreen = false
     @State private var screen = ""
-    @FocusState private var focused: Bool
+    @State private var inputFocused = false
+    @State private var inputHeight: CGFloat = 22
+    private var focused: Bool { inputFocused }
 
     private var messages: [AgentMessage] { run.messages ?? [] }
 
@@ -87,29 +90,29 @@ struct AgentChatThread: View {
     private var items: [Item] {
         var out: [Item] = []
         for m in messages {
-            if !["user", "assistant", "approval"].contains(m.role) {
+            if !["user", "assistant", "approval", "notice", "event"].contains(m.role) {
                 if case .tools(let l) = out.last { out[out.count - 1] = .tools(l + [m.content]) } else { out.append(.tools([m.content])) }
             } else { out.append(.message(m)) }
         }
         return out
     }
-    private var canSend: Bool { run.kind == "coding" && run.status != "ended" }
+    private var canSend: Bool { !readOnly && run.kind == "coding" && run.status != "ended" }
     private var working: Bool { run.live && run.status != "waiting" }
 
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 2) {
                         ForEach(Array(items.enumerated()), id: \.offset) { i, item in
                             switch item {
-                            case .message(let m): bubble(m, last: i == items.count - 1)
+                            case .message(let m): bubble(m, last: i == items.count - 1).padding(.vertical, 7)
                             case .tools(let lines): AgentToolGroup(lines: lines, running: working && i == items.count - 1)
                             }
                         }
                         // Local echo only until the agent's own feed shows the message (no duplicates).
-                        ForEach(Array(echoes.enumerated()).filter { e in !messages.contains { $0.content.contains(e.element.text) } },
-                                id: \.offset) { _, e in userCard(e.text, tag: e.via) }
+                        ForEach(Array(echoes.enumerated()).filter { e in !messages.contains { $0.role == "user" && sameMessage($0.content, e.element.text) } },
+                                id: \.offset) { _, e in userCard(e.text, tag: e.via).padding(.vertical, 7) }
                         if working {
                             HStack(spacing: 6) { JBSpinner(); JBStreamCursor() }
                         }
@@ -148,6 +151,22 @@ struct AgentChatThread: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .modifier(AgentReplyCard())
         case "approval": approvalCard(m.content, active: last && run.status == "waiting")
+        case "notice":   // usage limit / API error: the agent stopped and why
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill").font(.jb(11)).foregroundStyle(JB.warn)
+                Text(m.content).font(.jb(12.5, .medium)).foregroundStyle(JB.ink)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: JB.rControl, style: .continuous).fill(JB.warn.opacity(0.12)))
+            .overlay(RoundedRectangle(cornerRadius: JB.rControl, style: .continuous).strokeBorder(JB.warn.opacity(0.35), lineWidth: 1))
+            .frame(maxWidth: .infinity, alignment: .leading)
+        case "event":    // harness happenings (background task done, /command, compacted): a quiet centred line
+            HStack(spacing: 8) {
+                Rectangle().fill(JB.line).frame(height: 1)
+                Text(m.content).font(.jb(11.5)).foregroundStyle(JB.ink3).lineLimit(1).fixedSize()
+                Rectangle().fill(JB.line).frame(height: 1)
+            }
+            .frame(maxWidth: .infinity)
         default:
             HStack(spacing: 6) {
                 JBStatusDot(color: JB.ink3, size: 5)
@@ -223,17 +242,18 @@ struct AgentChatThread: View {
     private var composer: some View {
         VStack(alignment: .leading, spacing: 6) {
             VStack(alignment: .leading, spacing: 8) {
-                TextField("Message \(run.title.isEmpty ? "agent" : run.title)", text: $draft, axis: .vertical)
-                    .textFieldStyle(.plain).font(.jb(14)).lineLimit(1...8)
-                    .focused($focused)
-                    .onSubmit {
-                        let items = slashItems
-                        if !items.isEmpty, draft.dropFirst() != Substring(items[min(slashIndex, items.count - 1)].name) {
-                            draft = "/" + items[min(slashIndex, items.count - 1)].name + " "
-                        } else { submit() }
+                // The JoeBro composer's own text view: ⇧↩ new line, ↑ recalls your last message, slash keys.
+                ZStack(alignment: .topLeading) {
+                    if draft.isEmpty {
+                        Text("Message \(run.title.isEmpty ? "agent" : run.title)")
+                            .font(.jb(14)).foregroundStyle(JB.ink3)
+                            .padding(.top, 2).padding(.leading, 7)
+                            .allowsHitTesting(false)
                     }
-                    .onKeyPress(.upArrow) { guard !slashItems.isEmpty else { return .ignored }; slashIndex = max(0, slashIndex - 1); return .handled }
-                    .onKeyPress(.downArrow) { guard !slashItems.isEmpty else { return .ignored }; slashIndex = min(slashItems.count - 1, slashIndex + 1); return .handled }
+                    ChatInputTextView(text: $draft, height: $inputHeight, focused: $inputFocused,
+                                      onKey: agentKey, onSend: submit)
+                        .frame(height: inputHeight)
+                }
                 HStack(spacing: 6) {
                     if run.title.hasPrefix("Claude") { agentModelMenu }
                     Spacer()
@@ -279,6 +299,25 @@ struct AgentChatThread: View {
         .frame(maxWidth: 860)
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 24).padding(.bottom, 12)
+    }
+
+    private func agentKey(_ key: ChatKey) -> Bool {
+        let items = slashItems
+        if !items.isEmpty {
+            let i = min(slashIndex, items.count - 1)
+            switch key {
+            case .up: slashIndex = (i - 1 + items.count) % items.count; return true
+            case .down: slashIndex = (i + 1) % items.count; return true
+            case .enter, .tab: draft = "/" + items[i].name + " "; return true
+            case .escape: draft = ""; return true
+            }
+        }
+        if key == .up, draft.isEmpty {
+            // Recall the last thing you sent this agent.
+            let last = echoes.last?.text ?? messages.last(where: { $0.role == "user" }).map { handoverStripped($0.content) }
+            if let last { draft = last; return true }
+        }
+        return false
     }
 
     /// Clears the box in the same event as Return (no select-all flash), then sends.
@@ -375,4 +414,14 @@ func handoverStripped(_ s: String) -> String {
     var t = s.replacingOccurrences(of: "[from app] ", with: "")
     if let r = t.range(of: #"^Message from [^:\n]{1,40}: "#, options: .regularExpression) { t.removeSubrange(r) }
     return t
+}
+
+
+/// Delivered-yet check: the feed collapses whitespace and clips long text, so compare normalised prefixes.
+func sameMessage(_ feed: String, _ sent: String) -> Bool {
+    func norm(_ s: String) -> String { handoverStripped(s).split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased() }
+    let a = norm(feed), b = norm(sent)
+    guard !a.isEmpty, !b.isEmpty else { return false }
+    let n = min(80, a.count, b.count)
+    return a.contains(b.prefix(n)) || b.hasPrefix(a.prefix(n))
 }

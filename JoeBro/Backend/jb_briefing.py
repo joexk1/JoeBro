@@ -171,7 +171,7 @@ class BriefingMixin:
             return f"{r.get('name')} ({r['source']} on {r['host']}, {r.get('tool_calls') or 0} tool calls): {last[:180]}"
         waiting = [r for r in rows if r["status"] == "waiting"]
         quiet = [r for r in rows if r["status"] == "running" and now - r["last_activity"] > 25 * 60]
-        done = [r for r in rows if r["status"] in ("idle", "ended")]
+        done = [r for r in rows if r["status"] in ("idle", "ended", "limited")]
         busy = [r for r in rows if r["status"] == "running" and r not in quiet]
         bits = []
         for label, group in (("WAITING ON HIM (approval)", waiting), ("Went quiet mid-task", quiet),

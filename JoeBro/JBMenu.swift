@@ -13,6 +13,7 @@ struct JBMenu<Content: View, MenuLabel: View>: View {
     var openOn: Notification.Name? = nil      // e.g. /model opens the model picker
     var closesOnPick = true                   // false for panels with sliders (appearance)
     @State private var anchor = JBMenuAnchor()
+    @Environment(\.jbMenuLevel) private var level   // nil outside a menu; else the panel's depth
 
     init(openOn: Notification.Name? = nil, closesOnPick: Bool = true, @ViewBuilder content: @escaping () -> Content, @ViewBuilder label: @escaping () -> MenuLabel) {
         self.openOn = openOn
@@ -22,12 +23,28 @@ struct JBMenu<Content: View, MenuLabel: View>: View {
     }
 
     var body: some View {
+        if let level { submenuRow(level) } else { control }
+    }
+
+    private var control: some View {
         Button { anchor.closesOnPick = closesOnPick; anchor.toggle { panel } } label: { label().contentShape(Rectangle()) }
             .buttonStyle(.plain)
             .background(JBMenuAnchorView(anchor: anchor))
             .onReceive(NotificationCenter.default.publisher(for: openOn ?? Notification.Name("JoeBro.never"))) { _ in
                 anchor.open(at: nil) { panel }
             }
+    }
+
+    /// Inside a menu: a row that opens its submenu on hover (or click), like a system menu.
+    private func submenuRow(_ level: Int) -> some View {
+        SubmenuRow(open: {
+            JBMenuAnchor.closeDeeper(than: level)
+            anchor.closesOnPick = closesOnPick
+            if !anchor.isOpen { anchor.open(at: nil) { panel } }
+        }, click: {
+            JBMenuAnchor.keepOpenForThisClick = true
+        }) { label() }
+        .background(JBMenuAnchorView(anchor: anchor))
     }
 
     private var panel: some View {
@@ -51,6 +68,26 @@ extension JBMenu where MenuLabel == JBMenuTextLabel {
     }
 }
 
+private struct SubmenuRow<L: View>: View {
+    let open: () -> Void
+    let click: () -> Void
+    @ViewBuilder let label: () -> L
+    @State private var hover = false
+    @State private var pending: Task<Void, Never>?
+    var body: some View {
+        label()
+            .background(RoundedRectangle(cornerRadius: JB.rControl - 2, style: .continuous)
+                .fill(hover ? JB.hover : .clear))
+            .contentShape(Rectangle())
+            .onHover { h in
+                hover = h
+                pending?.cancel()
+                if h { pending = Task { try? await Task.sleep(for: .milliseconds(120)); if !Task.isCancelled { open() } } }
+            }
+            .onTapGesture { click(); pending?.cancel(); open() }
+    }
+}
+
 struct JBMenuTextLabel: View {
     let title: String
     var body: some View {
@@ -69,6 +106,7 @@ struct JBMenuRowStyle: ButtonStyle {
     private struct Row: View {
         let configuration: ButtonStyleConfiguration
         @Environment(\.isEnabled) private var enabled
+        @Environment(\.jbMenuLevel) private var level
         @State private var hover = false
         var body: some View {
             configuration.label
@@ -80,8 +118,19 @@ struct JBMenuRowStyle: ButtonStyle {
                     .fill(configuration.isPressed ? JB.pressed : hover && enabled ? JB.hover : .clear))
                 .opacity(enabled ? 1 : 0.4)
                 .contentShape(Rectangle())
-                .onHover { hover = $0 }
+                .onHover { h in
+                    hover = h
+                    if h, let level { JBMenuAnchor.closeDeeper(than: level) }
+                }
         }
+    }
+}
+
+private struct JBMenuLevelKey: EnvironmentKey { static let defaultValue: Int? = nil }
+extension EnvironmentValues {
+    var jbMenuLevel: Int? {
+        get { self[JBMenuLevelKey.self] }
+        set { self[JBMenuLevelKey.self] = newValue }
     }
 }
 
@@ -118,6 +167,14 @@ final class JBMenuAnchor {
     /// Open menus, outermost first (nested menus stay open while you use them).
     private static var stack: [JBMenuAnchor] = []
     private static let margin: CGFloat = 28   // room for the shadow
+    /// Set by a submenu row's click so the pick-closes-menu tap doesn't close everything.
+    static var keepOpenForThisClick = false
+    var isOpen: Bool { panel != nil }
+
+    /// Closes submenus opened from panels deeper than `level`.
+    static func closeDeeper(than level: Int) {
+        while stack.count > level + 1, let top = stack.last { top.close() }
+    }
 
     func toggle<V: View>(@ViewBuilder _ content: () -> V) {
         if panel != nil { close(); return }
@@ -130,8 +187,16 @@ final class JBMenuAnchor {
         guard let view, let window = view.window else { return }
         let close = { [weak self] in Self.closeAll(); _ = self }
         let picks = closesOnPick
+        let level = Self.stack.count
         let root = content()
-            .simultaneousGesture(TapGesture().onEnded { if picks { DispatchQueue.main.async { close() } } })
+            .environment(\.jbMenuLevel, level)
+            .simultaneousGesture(TapGesture().onEnded {
+                guard picks else { return }
+                DispatchQueue.main.async {
+                    if Self.keepOpenForThisClick { Self.keepOpenForThisClick = false; return }
+                    close()
+                }
+            })
             .onExitCommand { close() }
             .padding(Self.margin)
         let host = NSHostingView(rootView: root)
@@ -172,9 +237,7 @@ final class JBMenuAnchor {
                 return e
             }
             if let w = e.window, Self.stack.contains(where: { $0.panel === w }) {
-                // Clicked inside an outer menu: close the ones above it.
-                while let top = Self.stack.last, top.panel !== w { top.close() }
-                return e
+                return e   // inside one of our menus; hover already closed stray submenus
             }
             if point == nil, e.window === self.view?.window, let v = self.view,
                v.bounds.contains(v.convert(e.locationInWindow, from: nil)) {
@@ -245,47 +308,51 @@ extension View {
 private struct JBContextMenuModifier<C: View>: ViewModifier {
     let content: () -> C
     @State private var anchor = JBMenuAnchor()
-    @State private var monitor = JBRightClickMonitor()
 
     func body(content view: Content) -> some View {
-        view
-            .background(JBMenuAnchorView(anchor: anchor))
-            .onAppear {
-                monitor.start(anchor: anchor) {
-                    VStack(alignment: .leading, spacing: 1) { content() }
-                        .buttonStyle(JBMenuRowStyle())
-                        .labelStyle(JBMenuLabelStyle())
-                        .toggleStyle(JBMenuToggleStyle())
-                        .font(.jb(13))
-                        .foregroundStyle(JB.ink)
-                        .padding(5)
-                        .frame(minWidth: 190, alignment: .leading)
-                        .fixedSize()
-                        .jbFloating()
-                }
-            }
-            .onDisappear { monitor.stop() }
+        // An overlay NSView that ONLY takes right-clicks (left clicks fall through to SwiftUI).
+        // AppKit's own hit-testing picks the row under the cursor, so a click can never reach another row.
+        view.overlay(JBRightClickCatcher(anchor: anchor) {
+            VStack(alignment: .leading, spacing: 1) { content() }
+                .buttonStyle(JBMenuRowStyle())
+                .labelStyle(JBMenuLabelStyle())
+                .toggleStyle(JBMenuToggleStyle())
+                .font(.jb(13))
+                .foregroundStyle(JB.ink)
+                .padding(5)
+                .frame(minWidth: 190, alignment: .leading)
+                .fixedSize()
+                .jbFloating()
+        })
     }
 }
 
-@MainActor
-private final class JBRightClickMonitor {
-    private var token: Any?
-    func start<V: View>(anchor: JBMenuAnchor, content: @escaping () -> V) {
-        stop()
-        token = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { [weak anchor] e in
-            guard let anchor, let v = anchor.view, let w = v.window, e.window === w,
-                  !v.isHiddenOrHasHiddenAncestor else { return e }
-            let p = v.convert(e.locationInWindow, from: nil)
-            guard v.visibleRect.contains(p) else { return e }
-            // Innermost row wins when rows are nested: skip if a smaller registered view also contains the click.
-            if JBRightClickMonitor.claimed == e.timestamp { return nil }
-            JBRightClickMonitor.claimed = e.timestamp
-            let screen = w.convertPoint(toScreen: e.locationInWindow)
-            anchor.open(at: screen, content)
-            return nil
+private struct JBRightClickCatcher<V: View>: NSViewRepresentable {
+    let anchor: JBMenuAnchor
+    let menu: () -> V
+
+    final class CatcherView: NSView {
+        var onRightClick: ((NSEvent) -> Void)?
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            guard let e = NSApp.currentEvent, e.type == .rightMouseDown || e.type == .rightMouseUp else { return nil }
+            return super.hitTest(point)
+        }
+        override func rightMouseDown(with event: NSEvent) { onRightClick?(event) }
+        override func menu(for event: NSEvent) -> NSMenu? { nil }
+    }
+
+    func makeNSView(context: Context) -> CatcherView {
+        let v = CatcherView()
+        anchor.view = v
+        return v
+    }
+
+    func updateNSView(_ v: CatcherView, context: Context) {
+        anchor.view = v
+        let anchor = anchor, menu = menu
+        v.onRightClick = { [weak v] e in
+            guard let w = v?.window else { return }
+            anchor.open(at: w.convertPoint(toScreen: e.locationInWindow), menu)
         }
     }
-    func stop() { if let token { NSEvent.removeMonitor(token) }; token = nil }
-    static var claimed: TimeInterval = 0
 }

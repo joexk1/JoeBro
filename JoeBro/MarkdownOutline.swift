@@ -7,6 +7,7 @@ final class DocOutlineModel {
     var headings: [MDHeading] = []
     var active: Int? = nil
     var stats = ""
+    @ObservationIgnored private var lastOffset = 0
     @ObservationIgnored private var task: Task<Void, Never>?
 
     func refresh(text: String, markdown: Bool, immediately: Bool = false) {
@@ -22,12 +23,13 @@ final class DocOutlineModel {
             guard !Task.isCancelled, let self else { return }
             headings = result.0
             stats = result.1
-            if let a = active, a >= headings.count { active = nil }
+            track(offset: lastOffset)
         }
     }
 
     /// Active section for the first visible UTF-16 offset.
     func track(offset: Int) {
+        lastOffset = offset
         let id = headings.last(where: { $0.offset <= offset })?.id ?? headings.first?.id
         if id != active { active = id }
     }
@@ -43,7 +45,6 @@ struct DocOutlineView: View {
             HStack {
                 Text("Outline").jbEyebrow()
                 Spacer()
-                JBKbd("⌥⌘O")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
@@ -76,7 +77,7 @@ struct DocOutlineView: View {
         return Button { onSelect(h) } label: {
             Text(h.title.isEmpty ? "—" : h.title)
                 .font(.jb(12, h.level <= 2 ? .medium : .regular))
-                .foregroundStyle(selected ? JB.ink : (h.level <= 2 ? JB.ink2 : JB.ink3))
+                .foregroundStyle(selected ? JB.accent : (h.level <= 2 ? JB.ink2 : JB.ink3))
                 .lineLimit(1)
                 .padding(.leading, CGFloat(max(0, h.level - 1)) * 10 + 8)
                 .padding(.trailing, 8)

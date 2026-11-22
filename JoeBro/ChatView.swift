@@ -320,7 +320,18 @@ struct ChatView: View {
         }
     }
 
-    private var groupedMessages: [Message] {
+    private struct TranscriptRow: Identifiable {
+        var message: Message
+        var gap: CGFloat = 0
+        var showFooter = true
+        var showModel = true
+        var thinkingLive = false
+        var id: UUID { message.id }
+    }
+
+    private func isReply(_ m: Message) -> Bool { m.kind == .text && !m.isUser }
+
+    private var groupedMessages: [TranscriptRow] {
         var rows: [Message] = []
         var activityIndex: Int?
         for message in store.messages {
@@ -336,7 +347,75 @@ struct ChatView: View {
                 }
             } else { rows.append(message) }
         }
-        return rows
+
+        // One reasoning disclosure per turn: pull every reply's thinking
+        // (metadata or inline <think> tags) into the first one that has any.
+        var liveTurn = Set<Int>()          // row indexes hosting a still-streaming merge
+        var turnStart = 0
+        func mergeTurn(_ end: Int) {
+            guard turnStart < end else { return }
+            var parts: [String] = [], time = 0.0, hasTime = false, live = false
+            var target: Int?
+            for i in turnStart..<end where isReply(rows[i]) {
+                if rows[i].thinking == nil, rows[i].content.contains("<think") || rows[i].content.contains("<｜think｜>") {
+                    let split = extractThinking(rows[i].content)
+                    if !split.thinking.isEmpty {
+                        rows[i].thinking = split.thinking
+                        rows[i].content = split.body
+                        if split.inProgress && rows[i].isStreaming { live = true }
+                    }
+                }
+                guard let t = rows[i].thinking, !t.isEmpty else { continue }
+                if target == nil { target = i }
+                parts.append(t)
+                if let s = rows[i].thinkingTime { time += s; hasTime = true }
+                if rows[i].isStreaming && rows[i].content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { live = true }
+                rows[i].thinking = nil
+                rows[i].thinkingTime = nil
+            }
+            guard let target else { return }
+            rows[target].thinking = parts.joined(separator: "\n\n")
+            rows[target].thinkingTime = hasTime ? time : nil
+            if live { liveTurn.insert(target) }
+        }
+        for i in rows.indices {
+            if rows[i].isUser || rows[i].kind == .compacted { mergeTurn(i); turnStart = i + 1 }
+        }
+        mergeTurn(rows.count)
+
+        // Drop placeholder replies that would only add blank space.
+        var out: [Message] = []
+        var liveFlags: [Bool] = []
+        for (i, m) in rows.enumerated() {
+            if isReply(m),
+               m.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               (m.thinking ?? "").isEmpty, m.webSources.isEmpty, m.attachments.isEmpty,
+               m.memoriesUsed.isEmpty, m.pluginsUsed.isEmpty, m.skillsUsed.isEmpty {
+                // A streaming blank only earns its dots when nothing else is showing.
+                if !m.isStreaming || !liveTurn.isEmpty { continue }
+            }
+            out.append(m)
+            liveFlags.append(liveTurn.contains(i))
+        }
+
+        var result: [TranscriptRow] = []
+        var seenReplyInTurn = false
+        for (i, m) in out.enumerated() {
+            var row = TranscriptRow(message: m, thinkingLive: liveFlags[i])
+            if m.isUser || m.kind == .compacted { seenReplyInTurn = false }
+            if isReply(m) {
+                row.showModel = !seenReplyInTurn
+                seenReplyInTurn = true
+                let next = i + 1 < out.count ? out[i + 1] : nil
+                row.showFooter = next == nil || next!.isUser || next!.kind == .compacted
+            }
+            if let prev = result.last?.message {
+                let mixed = (prev.kind == .tool && isReply(m)) || (m.kind == .tool && isReply(prev))
+                row.gap = mixed ? JB.s2 : 17
+            }
+            result.append(row)
+        }
+        return result
     }
 
     private var messageList: some View {
@@ -346,7 +425,7 @@ struct ChatView: View {
                 // Eager VStack: LazyVStack + defaultScrollAnchor(.bottom)
                 // left the viewport empty until first scroll (rows above the
                 // anchor never materialized). Equatable rows keep it cheap.
-                VStack(spacing: 12) {
+                VStack(spacing: 0) {
                     // Big chats render only the recent tail — eager-rendering
                     // hundreds of markdown bubbles at once was the open-chat lag.
                     if rows.count > visibleCount {
@@ -361,10 +440,12 @@ struct ChatView: View {
                         .buttonStyle(.plain)
                         .padding(.top, 6)
                     }
-                    ForEach(rows.suffix(visibleCount)) { message in
-                        MessageBubbleView(message: message)
+                    ForEach(rows.suffix(visibleCount)) { row in
+                        MessageBubbleView(message: row.message, showFooter: row.showFooter,
+                                          showModel: row.showModel, thinkingLive: row.thinkingLive)
                             .equatable()
-                            .id(message.id)
+                            .padding(.top, row.gap)
+                            .id(row.message.id)
                             .transition(.opacity.combined(with: .offset(y: 6)))
                     }
                     Color.clear.frame(height: 1).id("bottom")

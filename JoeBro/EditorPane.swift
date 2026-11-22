@@ -17,7 +17,6 @@ struct EditorPane: View {
     @State private var richExtraSaveTask: Task<Void, Never>?
     @State private var outline = DocOutlineModel()
     @State private var paneWidth: CGFloat = 1000
-    @AppStorage("editorOutlineVisible") private var outlineVisible = true
     @State private var previewProxy: ScrollViewProxy?
 
     /// The ~20 families that cover the overwhelming majority of Word / Google
@@ -60,11 +59,6 @@ struct EditorPane: View {
                 ContentUnavailableView("No document open", systemImage: "doc.text")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-        }
-        .background {
-            Button("") { withAnimation(JB.snap) { outlineVisible.toggle() } }
-                .keyboardShortcut("o", modifiers: [.command, .option])
-                .opacity(0).allowsHitTesting(false)
         }
         .joeGlassRect(18)
     }
@@ -163,13 +157,6 @@ struct EditorPane: View {
                 }
             }
             Spacer(minLength: 4)
-            if let i = store.docIndex(store.activeDocID), isMarkdownDoc(store.openDocs[i]) {
-                Button {
-                    withAnimation(JB.snap) { outlineVisible.toggle() }
-                } label: { Image(systemName: "list.bullet.indent") }
-                .buttonStyle(JBIconButtonStyle(size: 26, active: outlineVisible))
-                .help("Outline (⌥⌘O)")
-            }
             if !store.editorDetached {
                 Button { openWindow(id: "editor") } label: { Image(systemName: "macwindow.on.rectangle") }
                     .buttonStyle(JBIconButtonStyle(size: 26))
@@ -481,7 +468,7 @@ struct EditorPane: View {
                         suggestionsView(doc)
                     }
                 }
-                if md && outlineVisible && !outline.headings.isEmpty {
+                if md && !outline.headings.isEmpty {
                     if paneWidth >= 760 {
                         DocOutlineView(model: outline, onSelect: selectHeading)
                             .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -493,7 +480,6 @@ struct EditorPane: View {
             }
             .background(GeometryReader { g in Color.clear.onAppear { paneWidth = g.size.width }
                 .onChange(of: g.size.width) { _, w in paneWidth = w } })
-            .animation(JB.smooth, value: outlineVisible)
 
             Rectangle().fill(JB.line).frame(height: 1)
             footer(doc)
@@ -543,6 +529,12 @@ struct EditorPane: View {
                         .padding(.vertical, 20)
                 }
                 .onAppear { previewProxy = proxy }
+                .onScrollGeometryChange(for: Double.self) { g in
+                    let range = g.contentSize.height - g.containerSize.height
+                    return range > 1 ? min(1, max(0, g.contentOffset.y / range)) : 0
+                } action: { _, f in
+                    outline.track(offset: Int(f * Double((doc.content as NSString).length)))
+                }
             }
         case "html":
             HTMLView(html: doc.content)

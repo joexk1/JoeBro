@@ -25,6 +25,17 @@ class Chat(unittest.TestCase):
         d = f.coding_agent_detail(aid)
         self.assertEqual(d["messages"][-1]["role"], "assistant"); self.assertFalse(d["waiting"])
 
+    def test_limit_notice(self):
+        f = F(); b = {"source": "codex", "host": "mac", "session_id": "s2"}
+        aid = f.coding_event(dict(b, event="prompt", text="go"))["id"]
+        f.coding_event(dict(b, event="stop", text="", notice="Usage limit reached \u2014 resets 3pm"))
+        d = f.coding_agent_detail(aid)
+        self.assertEqual(d["status"], "limited"); self.assertFalse(d["live"])
+        self.assertEqual(d["messages"][-1], dict(d["messages"][-1], role="notice", content="Usage limit reached \u2014 resets 3pm"))
+        self.assertTrue(d["result"].endswith("\u26a0 Usage limit reached \u2014 resets 3pm"))
+        f.coding_event(dict(b, event="prompt", text="retry"))
+        self.assertEqual(f.coding_agent_detail(aid)["status"], "running")
+
     def test_send_queues_for_running_agent(self):
         f = F(); b = {"source": "claude", "host": "mac", "session_id": "s1"}
         aid = f.coding_event(dict(b, event="prompt", text="go"))["id"]

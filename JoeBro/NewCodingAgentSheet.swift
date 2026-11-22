@@ -34,7 +34,11 @@ struct NewCodingAgentSheet: View {
         let q = query.trimmingCharacters(in: .whitespaces)
         return (q.hasPrefix("/") || q.hasPrefix("~")) && !folders.contains(q) ? q : nil
     }
-    private var resumable: [Session] { sessions.filter { $0.host == host && $0.repo == folder && !$0.resumeID.isEmpty } }
+    /// Sessions recorded in the chosen (or pasted) folder, newest first.
+    private var resumable: [Session] {
+        func norm(_ p: String) -> String { p.count > 1 && p.hasSuffix("/") ? String(p.dropLast()) : p }
+        return sessions.filter { $0.host == host && norm($0.repo) == norm(folder) && !$0.resumeID.isEmpty }
+    }
 
     @State private var permission = "edits"
     @State private var prompt = ""
@@ -201,6 +205,19 @@ struct NewCodingAgentSheet: View {
                         summary: s["summary"]?.stringValue ?? "", branch: s["branch"]?.stringValue ?? "",
                         at: s["at"]?.stringValue ?? "", resumeID: s["resume_id"]?.stringValue ?? "")
             }
+        }
+        // Coding sessions JoeBro watched (hook-fed) are resumable too, by their folder.
+        if let v: JSONValue = try? await APIClient.shared.getJSON("api/agents", query: ["include": "coding", "kind": "coding"]) {
+            let known = Set(sessions.map(\.resumeID))
+            for a in v["agents"]?.arrayValue ?? [] {
+                guard let id = a["id"]?.stringValue, let cwd = a["cwd"]?.stringValue, !cwd.isEmpty,
+                      (a["parent_id"]?.stringValue ?? "").isEmpty,
+                      let sid = a["session_id"]?.stringValue, !known.contains(sid) else { continue }
+                sessions.append(Session(id: id, repo: cwd, host: a["host"]?.stringValue ?? "", agent: a["source"]?.stringValue ?? "",
+                                        summary: a["title"]?.stringValue ?? "", branch: "",
+                                        at: a["started_at"]?.stringValue ?? a["created_at"]?.stringValue ?? "", resumeID: id))
+            }
+            sessions.sort { $0.at > $1.at }
         }
         // Default to the computer you used last.
         host = sessions.first(where: { s in hosts.contains { $0.id == s.host } })?.host ?? hosts.first { $0.label == "Mac" }?.id ?? hosts.first?.id ?? ""

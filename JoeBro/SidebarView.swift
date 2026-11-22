@@ -422,7 +422,9 @@ struct SidebarView: View {
                 if let folder = session.folder, !folder.isEmpty {
                     Button("Remove from Folder") { store.setFolder(session.id, folder: "") }
                 }
-                Button("Delete", role: .destructive) { store.deleteSession(session.id) }
+                Button("Delete", role: .destructive) {
+                    if JBConfirm.delete("chat", session.name) { store.deleteSession(session.id) }
+                }
             }
             .opacity(dragging == session.id ? 0.4 : 1)
             .overlay(alignment: .top) {
@@ -678,7 +680,7 @@ private struct FileTreeRow: View {
         .jbContextMenu {
             Button("Rename…") { promptRename() }
             Button("Delete", role: .destructive) {
-                store.deleteWorkdirFile(sub: path)
+                if JBConfirm.delete(entry.isDir ? "folder" : "file", entry.name) { store.deleteWorkdirFile(sub: path) }
             }
         }
     }

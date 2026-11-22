@@ -212,7 +212,8 @@ final class AppStore {
     private var autosaveTask: Task<Void, Never>?
 
     // Bound folder (workdir) file tree — shown in the sidebar
-    var workdirPath: String?
+    var workdirPath: String? { didSet { if workdirPath != oldValue { rewatchWorkdir() } } }
+    @ObservationIgnored private var workdirWatcher: WorkdirWatcher?
     var workdirRemote = false   // bound folder lives on the Pi/another host (list via backend)
     var treeEntries: [String: [WorkdirEntry]] = [:]   // sub-path → entries
     var expandedDirs: Set<String> = []
@@ -1366,6 +1367,7 @@ final class AppStore {
                             messages[i].exitCode = exitCode
                             messages[i].toolDone = true
                         }
+                        if workdirRemote { refreshTree() }   // files the tool made show up straight away
                         // The AI's create_event tool resolves the date/time and
                         // returns the event JSON; write it into the real macOS
                         // Calendar via EventKit (backend only stores it locally).
@@ -1983,6 +1985,16 @@ final class AppStore {
     // mode controls whether file tools stay inside it.
 
     private var workdirAccessURL: URL?   // held open while a folder is bound
+
+    /// New files show in the sidebar straight away: FSEvents for local folders;
+    /// remote folders refresh after each tool call (see toolOutput).
+    private func rewatchWorkdir() {
+        workdirWatcher = nil
+        guard let path = workdirPath else { return }
+        workdirWatcher = WorkdirWatcher(path: path) { [weak self] in
+            MainActor.assumeIsolated { if self?.workdirRemote == false { self?.refreshTree() } }
+        }
+    }
 
     /// Persist a security-scoped bookmark so access survives relaunches.
     func saveWorkdirBookmark(for url: URL) {

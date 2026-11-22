@@ -248,7 +248,7 @@ class Sessions(Base):
         os.remove(rec)
         out = h.start_coding_session_tool({"resume": "code:mac:claude:sess-1", "session_id": "", "title": "x"})
         self.assertIn("Resumed Claude Code", out)
-        self.assertEqual(json.load(open(rec))[-3:-1], ["--resume", "sess-1"])
+        self.assertEqual(json.load(open(rec))[-2:], ["--resume", "sess-1"])   # no auto-prompt: resuming just reopens it
         self.assertIn("No recorded session", h.start_coding_session_tool({"resume": "code:mac:claude:nope"}))
         self.assertIn("start_coding_session", WRITE_SIDE_EFFECT_TOOLS)              # hidden from read-only chats
 

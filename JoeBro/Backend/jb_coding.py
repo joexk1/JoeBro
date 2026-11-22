@@ -96,7 +96,11 @@ class CodingAgentsMixin:
         tool = _clip(ev.get("tool"), 60)
         said = _clip(ev.get("said"), 4000)          # text the agent wrote before this tool call
         if said and ("✓ " + said) not in detail[-3:]:
-            detail.append("✓ " + said)
+            # Text picked up just after its tool started belongs before that tool line.
+            if kind == "tool_done" and detail and not detail[-1].startswith(("✓ ", "› ", "⏸ ")):
+                detail.insert(len(detail) - 1, "✓ " + said)
+            else:
+                detail.append("✓ " + said)
         if is_sub:
             if kind in ("subagent_stop", "stop", "end"):
                 status = "done"
@@ -128,12 +132,17 @@ class CodingAgentsMixin:
             status = "idle"
             if text and ("✓ " + text) not in detail[-3:] and text.strip() not in (said or ""):
                 detail.append("✓ " + text)
+            notice = _clip(ev.get("notice"), 300)
+            if notice:                      # usage/rate limit or API error: the agent stopped, not finished
+                status = "limited"
+                if ("⚠ " + notice) not in detail[-3:]:
+                    detail.append("⚠ " + notice)
         elif kind == "end":
             status = "ended"
         elif kind in ("subagent_start", "subagent_stop"):
             pass
         # Keep the conversation: replies and prompts survive; tool lines are trimmed first.
-        talk = [i for i, d in enumerate(detail) if d[:1] in ("›", "✓", "⏸")]
+        talk = [i for i, d in enumerate(detail) if d[:1] in ("›", "✓", "⏸", "⚠")]
         if len(detail) > 60:
             keep = set(talk[-30:]) | set(range(len(detail) - 20, len(detail)))
             detail = [d for i, d in enumerate(detail) if i in keep][-60:]
@@ -211,10 +220,10 @@ class CodingAgentsMixin:
             if status == "waiting" and age > STALE_WAITING:
                 status = "idle"
             if (status == "ended" and r["id"] not in working_parents) or (is_sub and status == "done" and age > SUB_DONE_SHOW) or \
-                    (is_sub and status in ("stale", "idle") and age > SUB_DONE_SHOW):
+                    (is_sub and status in ("stale", "idle", "limited") and age > SUB_DONE_SHOW):
                 hidden.add(r["id"])
                 continue
-            if not is_sub and status in ("idle", "stale") and r["id"] not in working_parents and (age > SHOW_IDLE or not include_idle):
+            if not is_sub and status in ("idle", "stale", "limited") and r["id"] not in working_parents and (age > SHOW_IDLE or not include_idle):
                 hidden.add(r["id"])
                 continue
             detail = json.loads(r["detail_json"] or "[]")
@@ -257,7 +266,7 @@ class CodingAgentsMixin:
                 "id": n["id"], "kind": n["kind"], "title": ("%s · %s" % (label, n["name"])) if not sub else n["name"],
                 "agent_type": n["agent_type"], "children": n["children"],
                 "subagent_count": n["subagents"]["total"], "subagent_live": n["subagents"]["live"],
-                "status": n["status"] if n["status"] != "idle" else "done", "live": live,
+                "status": n["status"] if n["status"] != "idle" else "done", "limited": n["status"] == "limited", "live": live,
                 "progress": ("Needs you — " if n["waiting"] else "") + (n["detail"][-1] if n["detail"] else _where(n["host"]).strip()),
                 "session_id": "", "model": n["model"], "ref_id": "", "parent_id": n["parent"] or "",
                 "created_at": n["started"], "started_at": n["started"],
@@ -273,7 +282,7 @@ class CodingAgentsMixin:
         node = next(n for n in self.coding_nodes() if n["id"] == aid)
         rec["result"] = "\n".join(node["detail"])
         rec["child_agents"] = [r for r in self.coding_agent_records() if r["parent_id"] == aid]
-        rec["messages"] = [self._detail_message(line, node["last_activity"]) for line in node["detail"]]
+        rec["messages"] = [m for m in (self._detail_message(line, node["last_activity"]) for line in node["detail"]) if m]
         rec["waiting"] = bool(node["waiting"])
         rec["can_send"] = node["status"] != "ended"
         pending = next((d[2:] for d in reversed(node["detail"]) if d.startswith("⏸")), "") if node["waiting"] else ""
@@ -284,8 +293,15 @@ class CodingAgentsMixin:
     def _detail_message(line, when):
         """One hook-reported line as a chat message: user prompt, assistant reply, approval request or tool call."""
         mark = line[:1]
-        role = {"›": "user", "✓": "assistant", "⏸": "approval"}.get(mark, "tool")
+        role = {"›": "user", "✓": "assistant", "⏸": "approval", "⚠": "notice"}.get(mark, "tool")
         content = line[2:] if role != "tool" else line
+        if role == "user":
+            event = _harness_event(content)
+            if event is not None:
+                return {"role": "event", "content": event, "created_at": when} if event else None
+            content = _clean_prompt(content)
+            if not content:
+                return None
         return {"role": role, "content": content, "created_at": when}
 
     def coding_agents_tool(self, body):
@@ -747,3 +763,49 @@ def island_loop(server):
             pass
         jb_push.WAKE.wait(2)
         jb_push.WAKE.clear()
+
+
+def _harness_event(text):
+    """Prompts the agent's own harness injected (not typed by a person) as a short
+    event line; "" means hide it; None means it's a real message."""
+    t = (text or "").strip()
+    low = t.lower()
+    if t.startswith("<task-notification>"):
+        summ = re.search(r"<summary>(.*?)</summary>", t, re.S)
+        status = re.search(r"<status>(.*?)</status>", t, re.S)
+        what = (summ.group(1).strip() if summ else "Background task").replace('"', "")
+        what = re.sub(r"^Agent (.+?) (finished|completed|failed)$", r"\1", what)
+        st = status.group(1).strip() if status else "completed"
+        return "%s %s" % (what, "finished" if st in ("completed", "done") else st)
+    if t.startswith(("<system-reminder>", "<local-command-stdout>", "<local-command-caveat>", "Caveat: The messages below")):
+        return ""
+    cmd = re.match(r"<command-name>\s*(/?[\w:-]+)", t)
+    if cmd:
+        return "Ran " + cmd.group(1)
+    if t.startswith("[Request interrupted"):
+        return "Interrupted"
+    if "usage limit has reset" in low:
+        return "Usage limit reset — carrying on"
+    if t.startswith("This session is being continued from a previous conversation"):
+        return "Conversation compacted — carrying on"
+    if t.startswith("<"):
+        tag = re.match(r"<([a-z][\w-]*)>", t)
+        if tag and t.rstrip().endswith("</%s>" % tag.group(1)):
+            return ""     # other harness-only blocks
+    return None
+
+
+def _clean_prompt(text):
+    """A typed prompt as a person reads it: harness wrappers around pastes and
+    attachments become plain text and short placeholders."""
+    t = text or ""
+    # <pasted_content id=…>…</pasted_content> (and similar wrapper tags): keep what was pasted.
+    t = re.sub(r"</?pasted_content[^>]*>", "", t)
+    t = re.sub(r"</?(?:system-reminder|user-prompt-submit-hook)[^>]*>.*?(?:</(?:system-reminder|user-prompt-submit-hook)>|$)", "", t, flags=re.S)
+    # Claude Code's collapsed pastes / attachments.
+    t = re.sub(r"\[Pasted text #\d+(?: \+\d+ lines)?\]", "[pasted text]", t)
+    t = re.sub(r"\[Image(?: #\d+)?(?:: [^\]]*)?\]", "[image]", t)
+    t = re.sub(r"<image[^>]*>.*?</image>|<image[^>]*/>", "[image]", t, flags=re.S)
+    t = re.sub(r"(?m)^\s*\[Image: source: [^\]]+\]\s*$", "[image]", t)
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()

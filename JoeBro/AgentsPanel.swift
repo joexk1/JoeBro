@@ -20,6 +20,8 @@ struct AgentsPanel: View {
     private let kinds = [("", "All"), ("research", "Research"), ("chat", "Chats"), ("task", "Tasks"), ("subagent", "Subagents"), ("coding", "Coding")]
 
     @State private var showNewAgent = false
+    @State private var resuming = false
+    @State private var resumeNote: String?
 
     private var liveCount: Int { if case .loaded(let l) = runs { return l.filter(\.live).count } else { return 0 } }
 
@@ -113,8 +115,8 @@ struct AgentsPanel: View {
     private func row(_ run: AgentRun, all: [AgentRun]) -> some View {
         let isSelected = selectedID == run.id
         return Button {
-            if run.kind == "coding" {
-                // Coding agents are conversations: open it in the chat area (no second chat pane here).
+            if run.kind == "coding" && Self.isOpenSession(run) {
+                // A running session is a conversation: open it in the chat area (no second chat pane here).
                 AgentNav.shared.open(run.id)
                 store.activeTab = .chat
                 return
@@ -178,7 +180,8 @@ struct AgentsPanel: View {
                 header(run).padding(JB.s4)
                 Rectangle().fill(JB.line).frame(height: 1)
                 if run.kind == "coding" {
-                    AgentChatThread(run: run) { await load(); await loadDetail(run.id, quiet: true) }
+                    // Finished: an overview (read-only transcript); Resume brings it back as a live chat.
+                    AgentChatThread(run: run, readOnly: !Self.isOpenSession(run)) { await load(); await loadDetail(run.id, quiet: true) }
                         .id(run.id)
                 } else {
                     ScrollView {
@@ -235,7 +238,18 @@ struct AgentsPanel: View {
                     Button { Task { await cancel(run) } } label: { Text("Stop") }
                         .buttonStyle(.jbSecondary).help("Ask this agent to stop")
                 }
-                if !run.sessionID.isEmpty {
+                if run.kind == "coding" && run.parentID.isEmpty && !Self.isOpenSession(run) {
+                    if let resumeNote { Text(resumeNote).font(.jb(11.5)).foregroundStyle(JB.ink2) }
+                    Button { Task { await resume(run) } } label: {
+                        Label(resuming ? "Resuming…" : "Resume chat", systemImage: "arrow.uturn.forward")
+                    }
+                    .buttonStyle(.jbPrimary).disabled(resuming)
+                    .help("Carry this session on, on the computer it ran on")
+                } else if run.kind == "coding" && Self.isOpenSession(run) {
+                    Button { AgentNav.shared.open(run.id); store.activeTab = .chat } label: { Text("Open chat") }
+                        .buttonStyle(.jbSecondary)
+                }
+                if !run.sessionID.isEmpty && run.kind != "coding" {
                     Button { store.select(run.sessionID) } label: { Text("Open chat") }
                         .buttonStyle(.jbSecondary).help("Open this agent's chat")
                 }
@@ -254,6 +268,33 @@ struct AgentsPanel: View {
     }
 
     // MARK: data
+
+    /// Still a conversation you can type into (running, waiting on you, or open between turns).
+    static func isOpenSession(_ r: AgentRun) -> Bool { r.live || r.status == "waiting" || r.status == "idle" }
+
+    /// Resume a finished session where it ran, then open it as a chat once it's back.
+    private func resume(_ run: AgentRun) async {
+        resuming = true; resumeNote = nil
+        defer { resuming = false }
+        do {
+            let r = try await APIClient.shared.sendJSON("api/coding-agents/start", body: ["resume": run.id])
+            guard (r["ok"] as? Bool) == true else { resumeNote = r["detail"] as? String ?? "Couldn't resume"; return }
+            if (r["started"] as? Bool) != true { resumeNote = "Queued — it starts when that computer is online"; return }
+            // Claude keeps the session id on --resume; others may report a new one in the same folder.
+            for _ in 0..<10 {
+                await AgentNav.shared.refresh()
+                if let back = AgentNav.shared.runs.first(where: { $0.id == run.id && Self.isOpenSession($0) })
+                    ?? AgentNav.shared.runs.first(where: { $0.live && (parseISO($0.startedAt) ?? .distantPast) > Date().addingTimeInterval(-60) }) {
+                    AgentNav.shared.open(back.id); store.activeTab = .chat
+                    return
+                }
+                try? await Task.sleep(for: .seconds(1.5))
+            }
+            AgentNav.shared.open(run.id); store.activeTab = .chat
+        } catch {
+            resumeNote = error.localizedDescription
+        }
+    }
 
     /// Name of the agent/session that spawned `run`, falling back to a short id.
     private func parentName(_ run: AgentRun, in all: [AgentRun]) -> String {
