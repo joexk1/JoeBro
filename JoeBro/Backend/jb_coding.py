@@ -126,7 +126,7 @@ class CodingAgentsMixin:
             detail.append("⏸ " + (text or "needs your approval"))
         elif kind == "stop":
             status = "idle"
-            if text and ("✓ " + text) not in detail[-3:]:
+            if text and ("✓ " + text) not in detail[-3:] and text.strip() not in (said or ""):
                 detail.append("✓ " + text)
         elif kind == "end":
             status = "ended"
@@ -438,8 +438,9 @@ class CodingAgentsMixin:
             raise ValueError("text is empty")
         self._coding_inbox_table()
         live = row["status"] in ("running", "waiting")
-        # Claude Code and Codex accept typed input mid-turn (it queues and shows as a normal message),
-        # so a controllable terminal gets it typed in even while the agent works. Approvals still wait.
+        # A controllable terminal gets it typed in, exactly as if you typed it (Claude Code/Codex queue it
+        # themselves while busy). Nothing is logged here: the agent's own prompt hook reports it when it
+        # actually takes it, so the feed order and "queued" stay true. Waiting on an approval: never typed.
         typeable = not live or (row["source"] in ("claude", "codex") and row["status"] == "running")
         if mode in ("auto", "terminal") and typeable:
             try:

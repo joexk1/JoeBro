@@ -111,7 +111,7 @@ struct SidebarView: View {
 
                     // Bound project folder — visible on fresh chats too, so
                     // you can bind a folder before the first message
-                    if store.activeTab == .chat {
+                    if store.activeTab == .chat && AgentNav.shared.openID == nil {   // a coding agent has no JoeBro chat files
                         FileTreeSection()
                     }
 

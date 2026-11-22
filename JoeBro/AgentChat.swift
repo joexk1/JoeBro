@@ -4,8 +4,8 @@ import SwiftUI
 
 extension APIClient {
     /// Type an instruction into a coding agent (terminal now, or queued for its next turn).
-    func codingSend(id: String, text: String) async throws -> String {
-        let out = try await sendJSON("api/coding-agents/\(id)/send", body: ["text": text, "sender": "app"])
+    func codingSend(id: String, text: String, mode: String = "auto") async throws -> String {
+        let out = try await sendJSON("api/coding-agents/\(id)/send", body: ["text": text, "sender": "app", "mode": mode])
         return (out["delivered"] as? String) ?? "queued"
     }
 
@@ -54,6 +54,25 @@ struct AgentChatThread: View {
     var onChanged: () async -> Void = {}
     @State private var draft = ""
     @State private var mic = MicRecorder()
+    @State private var slashIndex = 0
+    private let slash = ChatSlashSource.shared
+
+    /// Claude Code's own commands (typed into the agent like any message) plus your skills.
+    private static let agentCommands: [ChatSlashItem] = [
+        .init(name: "compact", label: "summarise the conversation so far"),
+        .init(name: "clear", label: "start fresh"),
+        .init(name: "model", label: "switch model"),
+        .init(name: "review", label: "review the current changes"),
+        .init(name: "cost", label: "token usage"),
+        .init(name: "memory", label: "edit memory files"),
+        .init(name: "init", label: "write a CLAUDE.md for this repo"),
+    ]
+    private var slashItems: [ChatSlashItem] {
+        guard draft.hasPrefix("/"), !draft.contains(" "), !draft.contains(where: \.isNewline) else { return [] }
+        let q = String(draft.dropFirst()).lowercased()
+        let cmds = Self.agentCommands.filter { q.isEmpty || $0.name.hasPrefix(q) }
+        return cmds + slash.matches(q).filter { $0.kind == .skill }
+    }
     @State private var sending = false
     @State private var echoes: [(text: String, via: String)] = []
     @State private var error: String?
@@ -122,7 +141,7 @@ struct AgentChatThread: View {
 
     @ViewBuilder private func bubble(_ m: AgentMessage, last: Bool) -> some View {
         switch m.role {
-        case "user": userCard(m.content.replacingOccurrences(of: "[from app] ", with: ""), tag: nil)
+        case "user": userCard(handoverStripped(m.content), tag: nil)
         case "assistant":
             // Same as a JoeBro reply: plain text, a readable card over photos/scenes.
             MarkdownText(text: m.content).textSelection(.enabled).foregroundStyle(JB.ink)
@@ -149,7 +168,7 @@ struct AgentChatThread: View {
                     .background(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).fill(JB.panelFill)
                         .overlay(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).fill(JB.raised)))
                     .overlay(RoundedRectangle(cornerRadius: JB.rCard, style: .continuous).strokeBorder(JB.line, lineWidth: 1))
-                if let tag { Text(tag.capitalized).font(.jb(11)).foregroundStyle(JB.ink3) }
+                if let tag { Text(tag.capitalized).font(.jb(11, .medium)).foregroundStyle(JB.ink2) }
             }
         }
     }
@@ -173,6 +192,33 @@ struct AgentChatThread: View {
             .padding(JB.s3).jbSurface(.raised, radius: JB.rCard)
     }
 
+    /// Claude Code's /model, typed into its terminal (works when it's in a Kitty/tmux terminal).
+    private var agentModelMenu: some View {
+        JBMenu {
+            ForEach([("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku"), ("default", "Default")], id: \.0) { m in
+                Button {
+                    Task {
+                        do { _ = try await APIClient.shared.codingSend(id: run.id, text: "/model " + m.0, mode: "terminal"); error = nil; await onChanged() }
+                        catch { self.error = "Model change needs the agent idle in a Kitty/tmux terminal: " + error.localizedDescription }
+                    }
+                } label: {
+                    HStack {
+                        Text(m.1)
+                        Spacer(minLength: 16)
+                        if run.model.lowercased().contains(m.0) { Image(systemName: "checkmark").font(.jb(11, .semibold)).foregroundStyle(JB.accent) }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                ProviderLogoView(model: "claude", size: 11)
+                Text(run.model.isEmpty ? "Model" : run.model).font(.jb(11.5)).foregroundStyle(JB.ink2).lineLimit(1)
+                Image(systemName: "chevron.down").font(.jb(8, .semibold)).foregroundStyle(JB.ink3)
+            }
+            .padding(.horizontal, 6).padding(.vertical, 4)
+        }
+    }
+
     /// Same look as the JoeBro composer.
     private var composer: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -180,8 +226,16 @@ struct AgentChatThread: View {
                 TextField("Message \(run.title.isEmpty ? "agent" : run.title)", text: $draft, axis: .vertical)
                     .textFieldStyle(.plain).font(.jb(14)).lineLimit(1...8)
                     .focused($focused)
-                    .onSubmit { Task { await send() } }
+                    .onSubmit {
+                        let items = slashItems
+                        if !items.isEmpty, draft.dropFirst() != Substring(items[min(slashIndex, items.count - 1)].name) {
+                            draft = "/" + items[min(slashIndex, items.count - 1)].name + " "
+                        } else { submit() }
+                    }
+                    .onKeyPress(.upArrow) { guard !slashItems.isEmpty else { return .ignored }; slashIndex = max(0, slashIndex - 1); return .handled }
+                    .onKeyPress(.downArrow) { guard !slashItems.isEmpty else { return .ignored }; slashIndex = min(slashItems.count - 1, slashIndex + 1); return .handled }
                 HStack(spacing: 6) {
+                    if run.title.hasPrefix("Claude") { agentModelMenu }
                     Spacer()
                     Button {
                         mic.toggle { t in draft = draft.isEmpty ? t : draft + " " + t }
@@ -196,7 +250,7 @@ struct AgentChatThread: View {
                     }
                     .buttonStyle(JBIconButtonStyle(size: 26))
                     .help(mic.isRecording ? "Stop recording" : "Voice input")
-                    Button { Task { await send() } } label: { Image(systemName: "arrow.up") }
+                    Button { submit() } label: { Image(systemName: "arrow.up") }
                         .buttonStyle(JBIconButtonStyle(size: 30, active: !draft.isEmpty))
                         .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || sending)
                         .keyboardShortcut(.return, modifiers: .command)
@@ -209,6 +263,17 @@ struct AgentChatThread: View {
                         .strokeBorder(focused ? JB.accent.opacity(0.7) : JB.line, lineWidth: 1))
             }
             .animation(JB.fade, value: focused)
+            .overlay(alignment: .topLeading) {
+                let items = slashItems
+                if !items.isEmpty {
+                    ChatSlashPopover(items: items, selected: min(slashIndex, items.count - 1),
+                                     onHover: { slashIndex = $0 }, onPick: { draft = "/" + $0.name + " " })
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(height: 0, alignment: .bottom)
+                        .offset(y: -8)
+                }
+            }
+            .onChange(of: draft) { slashIndex = 0; if draft.hasPrefix("/") { slash.refresh() } }
             if let error { Text(error).font(.jb(11)).foregroundStyle(JB.danger) }
         }
         .frame(maxWidth: 860)
@@ -216,11 +281,17 @@ struct AgentChatThread: View {
         .padding(.horizontal, 24).padding(.bottom, 12)
     }
 
-    private func send() async {
+    /// Clears the box in the same event as Return (no select-all flash), then sends.
+    private func submit() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !sending else { return }
+        draft = ""
+        Task { await send(text) }
+    }
+
+    private func send(_ text: String) async {
+        guard !sending else { return }
         sending = true
-        draft = ""          // clear at once: no selected-text flash, no double send
         // Shown immediately, labelled the same way the terminal shows it: queued while the agent works.
         echoes.append((text, working ? "queued" : "sending"))
         let idx = echoes.count - 1
@@ -296,4 +367,12 @@ struct AgentToolGroup: View {
         .modifier(ToolCard())
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
+
+
+/// "Message from app via JoeBro: hi" / "[from app] hi" -> "hi" (how a delivered message is logged).
+func handoverStripped(_ s: String) -> String {
+    var t = s.replacingOccurrences(of: "[from app] ", with: "")
+    if let r = t.range(of: #"^Message from [^:\n]{1,40}: "#, options: .regularExpression) { t.removeSubrange(r) }
+    return t
 }
