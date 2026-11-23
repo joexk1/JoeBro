@@ -6,6 +6,15 @@
 
 <p align="center">The local-first Mac workspace for your agents. Your files, your models, your machine.</p>
 
+<p align="center">
+  <a href="https://github.com/joexk1/JoeBro/stargazers"><img src="https://img.shields.io/github/stars/joexk1/JoeBro?style=flat&logo=github&label=stars" alt="GitHub stars"></a>
+  <a href="https://github.com/joexk1/JoeBro/releases"><img src="https://img.shields.io/github/downloads/joexk1/JoeBro/total?style=flat&label=downloads" alt="Downloads"></a>
+  <a href="https://github.com/joexk1/JoeBro/releases/latest"><img src="https://img.shields.io/github/v/release/joexk1/JoeBro?style=flat&label=release" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20iOS-lightgrey?style=flat&logo=apple" alt="Platform: macOS and iOS">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/joexk1/JoeBro?style=flat" alt="License: GPLv3"></a>
+  <a href="https://github.com/joexk1/JoeBro/commits/main"><img src="https://img.shields.io/github/last-commit/joexk1/JoeBro/main?style=flat&label=last%20commit" alt="Last commit"></a>
+</p>
+
 ![JoeBro on the Mac, with a Codex session asking for approval](assets/readme/hero.png)
 
 JoeBro is a free, open-source, local-first Mac workspace for your AI agents. Your files, your chats, your memory and your keys stay on your own Mac. There is no account, no JoeBro server and no telemetry, and nothing leaves your machine unless you choose a cloud model. Run a local model and nothing leaves at all.
