@@ -900,7 +900,7 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
                 return self.json(self.plugin_call(ident, b.get("tool"), b.get("arguments") or {}))
             except (PluginError, ValueError) as exc:
                 return self.json({"ok": False, "detail": str(exc)}, 400)
-        if path.startswith("/api/coding-agents/") and path.rsplit("/", 1)[-1] in ("send", "keys", "reconcile", "decide", "answer") \
+        if path.startswith("/api/coding-agents/") and path.rsplit("/", 1)[-1] in ("send", "keys", "reconcile", "decide", "answer", "model") \
                 or path == "/api/coding-agents/launch":
             try:
                 b = self._json_body() or {}
@@ -915,6 +915,8 @@ class Handler(*jb_ext.mixins(), PersonalUpdatesMixin, BriefingMixin, AutonomyMix
                     return self.json(self.coding_decide(aid, b.get("decision")))
                 if path.endswith("/answer"):
                     return self.json(self.coding_answer(aid, b.get("key"), b.get("text")))
+                if path.endswith("/model"):
+                    return self.json(self.coding_set_model(aid, b.get("model")))
                 return self.json(self.coding_keys(aid, b.get("keys")))
             except ValueError as exc:
                 return self.json({"ok": False, "detail": str(exc)}, 400)

@@ -9,6 +9,18 @@ extension APIClient {
         return (out["delivered"] as? String) ?? "queued"
     }
 
+    /// Switch the active model on any coding agent. Uses the dedicated backend route when available,
+    /// falling back to `/model <model>` in the agent's terminal on older backends.
+    func codingSetModel(id: String, model: String, harness: String = "") async throws -> String {
+        do {
+            let out = try await sendJSON("api/coding-agents/\(id)/model", body: ["model": model])
+            return (out["delivered"] as? String) ?? "terminal"
+        } catch {
+            let mode = harness == "opencode" ? "queue" : "terminal"
+            return try await codingSend(id: id, text: "/model " + model, mode: mode)
+        }
+    }
+
     /// The agent's terminal screen (or its last hook lines when it has no controllable terminal).
     func codingScreen(id: String, lines: Int = 40) async throws -> String {
         let out = try await sendJSON("api/coding-agents/\(id)/screen?lines=\(lines)", method: "GET")
@@ -145,23 +157,56 @@ struct AgentChatThread: View {
     @State private var slashIndex = 0
     private let slash = ChatSlashSource.shared
 
-    /// Claude Code's own commands (typed into the agent like any message) plus your skills.
-    private static let agentCommands: [ChatSlashItem] = [
-        .init(name: "compact", label: "summarise the conversation so far"),
-        .init(name: "clear", label: "start fresh"),
-        .init(name: "model", label: "switch model"),
-        .init(name: "review", label: "review the current changes"),
-        .init(name: "cost", label: "token usage"),
-        .init(name: "memory", label: "edit memory files"),
-        .init(name: "init", label: "write a CLAUDE.md for this repo"),
-    ]
+    /// Harness slash commands (typed into the agent like any message) plus your skills.
+    private var agentCommands: [ChatSlashItem] {
+        switch run.harness {
+        case "agy":
+            return [
+                .init(name: "model", label: "switch model"),
+                .init(name: "effort", label: "set reasoning effort (low|medium|high|xhigh)"),
+                .init(name: "compact", label: "summarise the conversation so far"),
+                .init(name: "plan", label: "draft an implementation plan"),
+                .init(name: "diff", label: "view current changes"),
+                .init(name: "learn", label: "capture rules or skills from this session"),
+                .init(name: "usage", label: "display model quota usage"),
+            ]
+        case "codex":
+            return [
+                .init(name: "model", label: "switch model"),
+                .init(name: "compact", label: "summarise the conversation so far"),
+                .init(name: "review", label: "review the current changes"),
+                .init(name: "diff", label: "view current diff"),
+                .init(name: "new", label: "start a new session"),
+            ]
+        case "opencode":
+            return [
+                .init(name: "models", label: "choose model"),
+                .init(name: "compact", label: "summarise the conversation so far"),
+                .init(name: "new", label: "start a new session"),
+            ]
+        default:
+            return [
+                .init(name: "compact", label: "summarise the conversation so far"),
+                .init(name: "clear", label: "start fresh"),
+                .init(name: "model", label: "switch model"),
+                .init(name: "review", label: "review the current changes"),
+                .init(name: "cost", label: "token usage"),
+                .init(name: "memory", label: "edit memory files"),
+                .init(name: "init", label: "write a CLAUDE.md for this repo"),
+            ]
+        }
+    }
     private var slashItems: [ChatSlashItem] {
         guard draft.hasPrefix("/"), !draft.contains(" "), !draft.contains(where: \.isNewline) else { return [] }
         let q = String(draft.dropFirst()).lowercased()
-        let cmds = Self.agentCommands.filter { q.isEmpty || $0.name.hasPrefix(q) }
+        let cmds = agentCommands.filter { q.isEmpty || $0.name.hasPrefix(q) }
         return cmds + slash.matches(q).filter { $0.kind == .skill }
     }
     @State private var sending = false
+    @State private var switchingModel = false
+    @State private var pickedModel: String?
+    @State private var customModelOpen = false
+    @State private var customModelText = ""
     @State private var echoes: [(text: String, via: String)] = []
     @State private var error: String?
     @State private var showScreen = false
@@ -304,30 +349,68 @@ struct AgentChatThread: View {
             .padding(JB.s3).jbSurface(.raised, radius: JB.rCard)
     }
 
-    /// Claude Code's /model, typed into its terminal (works when it's in a Kitty/tmux terminal).
+    private var activeModel: String { pickedModel ?? run.model }
+
+    private var modelOptions: [CodingModelOption] {
+        CodingAgentModelPresets.options(for: run.harness, current: activeModel, server: run.availableModels)
+    }
+
+    private func isCurrentModel(_ id: String) -> Bool {
+        let cur = activeModel.lowercased()
+        guard !cur.isEmpty else { return false }
+        return cur == id.lowercased() || cur.contains(id.lowercased())
+    }
+
+    private func switchModel(to model: String) async {
+        switchingModel = true
+        defer { switchingModel = false }
+        do {
+            _ = try await APIClient.shared.codingSetModel(id: run.id, model: model, harness: run.harness)
+            pickedModel = model
+            error = nil
+            await onChanged()
+        } catch {
+            self.error = "Model change needs the agent idle in a Kitty/tmux terminal: " + error.localizedDescription
+        }
+    }
+
+    /// Model picker for every linked coding agent (Claude Code, Antigravity, Codex, OpenCode).
     private var agentModelMenu: some View {
         JBMenu {
-            ForEach([("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku"), ("default", "Default")], id: \.0) { m in
-                Button {
-                    Task {
-                        do { _ = try await APIClient.shared.codingSend(id: run.id, text: "/model " + m.0, mode: "terminal"); error = nil; await onChanged() }
-                        catch { self.error = "Model change needs the agent idle in a Kitty/tmux terminal: " + error.localizedDescription }
-                    }
-                } label: {
+            ForEach(modelOptions) { m in
+                Button { Task { await switchModel(to: m.id) } } label: {
                     HStack {
-                        Text(m.1)
+                        Text(m.label)
                         Spacer(minLength: 16)
-                        if run.model.lowercased().contains(m.0) { Image(systemName: "checkmark").font(.jb(11, .semibold)).foregroundStyle(JB.accent) }
+                        if isCurrentModel(m.id) { Image(systemName: "checkmark").font(.jb(11, .semibold)).foregroundStyle(JB.accent) }
                     }
                 }
             }
+            Divider()
+            Button("Custom model…") {
+                customModelText = activeModel
+                customModelOpen = true
+            }
         } label: {
             HStack(spacing: 5) {
-                ProviderLogoView(model: "claude", size: 11)
-                Text(run.model.isEmpty ? "Model" : run.model).font(.jb(11.5)).foregroundStyle(JB.ink2).lineLimit(1)
+                ProviderLogoView(model: activeModel.isEmpty ? run.harness : activeModel, size: 11)
+                if switchingModel { JBSpinner() }
+                Text(CodingAgentModelPresets.displayLabel(activeModel, in: modelOptions))
+                    .font(.jb(11.5)).foregroundStyle(JB.ink2).lineLimit(1)
                 Image(systemName: "chevron.down").font(.jb(8, .semibold)).foregroundStyle(JB.ink3)
             }
             .padding(.horizontal, 6).padding(.vertical, 4)
+        }
+        .disabled(switchingModel)
+        .alert("Switch model", isPresented: $customModelOpen) {
+            TextField("Model id (e.g. provider/model)", text: $customModelText)
+            Button("Switch") {
+                let m = customModelText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !m.isEmpty { Task { await switchModel(to: m) } }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Enter the model slug to pass to /model.")
         }
     }
 
@@ -348,7 +431,7 @@ struct AgentChatThread: View {
                         .frame(height: inputHeight)
                 }
                 HStack(spacing: 6) {
-                    if run.title.hasPrefix("Claude") { agentModelMenu }
+                    if !run.harness.isEmpty { agentModelMenu }
                     Spacer()
                     Button {
                         mic.toggle { t in draft = draft.isEmpty ? t : draft + " " + t }
@@ -501,6 +584,63 @@ struct AgentToolGroup: View {
     }
 }
 
+
+/// Default model presets per coding-agent harness, merged with any server-reported options and the active model.
+enum CodingAgentModelPresets {
+    static let defaults: [String: [CodingModelOption]] = [
+        "claude": [
+            .init(id: "opus", label: "Opus"),
+            .init(id: "sonnet", label: "Sonnet"),
+            .init(id: "haiku", label: "Haiku"),
+            .init(id: "default", label: "Default"),
+        ],
+        "agy": [
+            .init(id: "gemini-4-neon-high", label: "Gemini 4 Neon (High)"),
+            .init(id: "gemini-4-neon-medium", label: "Gemini 4 Neon (Medium)"),
+            .init(id: "gemini-4-carbon-high", label: "Gemini 4 Carbon (High)"),
+            .init(id: "gemini-4-hydrogen-high", label: "Gemini 4 Hydrogen (High)"),
+            .init(id: "gemini-pro-orchestrator-neon", label: "Orchestrator (Neon)"),
+            .init(id: "claude-opus-5-5-high", label: "Claude Opus 5.5 (High)"),
+            .init(id: "claude-sonnet-5-5-high", label: "Claude Sonnet 5.5 (High)"),
+        ],
+        "codex": [
+            .init(id: "gpt-6.2-sol", label: "GPT-6.2 Sol"),
+            .init(id: "gpt-6.2-astra", label: "GPT-6.2 Astra"),
+            .init(id: "gpt-6.1-terra", label: "GPT-6.1 Terra"),
+            .init(id: "gpt-5-codex", label: "GPT-5 Codex"),
+            .init(id: "gpt-5", label: "GPT-5"),
+        ],
+        "opencode": [
+            .init(id: "qwen3-coder:30b", label: "Qwen3 Coder 30B"),
+            .init(id: "llama3.3:70b", label: "Llama 3.3 70B"),
+            .init(id: "deepseek-v3.2", label: "DeepSeek V3.2"),
+        ],
+    ]
+
+    static func options(for harness: String, current: String, server: [CodingModelOption]?) -> [CodingModelOption] {
+        var seen = Set<String>()
+        var out: [CodingModelOption] = []
+        func add(_ m: CodingModelOption) {
+            let k = m.id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !k.isEmpty, seen.insert(k).inserted else { return }
+            out.append(m)
+        }
+        let cur = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cur.isEmpty {
+            let preset = (server ?? defaults[harness] ?? []).first { $0.id.lowercased() == cur.lowercased() }
+            add(preset ?? CodingModelOption(id: cur))
+        }
+        for m in server ?? [] { add(m) }
+        for m in defaults[harness] ?? [] { add(m) }
+        return out
+    }
+
+    static func displayLabel(_ model: String, in options: [CodingModelOption]) -> String {
+        guard !model.isEmpty else { return "Model" }
+        if let hit = options.first(where: { $0.id.lowercased() == model.lowercased() }) { return hit.label }
+        return model.components(separatedBy: "/").last ?? model
+    }
+}
 
 /// "Message from app via JoeBro: hi" / "[from app] hi" -> "hi" (how a delivered message is logged).
 func handoverStripped(_ s: String) -> String {

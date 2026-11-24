@@ -558,6 +558,23 @@ struct AgentPrompt: Decodable, Hashable {
     enum CodingKeys: String, CodingKey { case question, header, options }
 }
 
+struct CodingModelOption: Decodable, Hashable, Identifiable {
+    let id: String
+    let label: String
+    init(id: String, label: String? = nil) {
+        self.id = id
+        self.label = label?.isEmpty == false ? label! : (id.components(separatedBy: "/").last ?? id)
+    }
+    enum CodingKeys: String, CodingKey { case id, label }
+    init(from decoder: Decoder) throws {
+        if let s = try? String(from: decoder) { self.init(id: s); return }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let id = (try? c.decode(String.self, forKey: .id)) ?? ""
+        let label = try? c.decode(String.self, forKey: .label)
+        self.init(id: id, label: label)
+    }
+}
+
 struct AgentRun: Decodable, Identifiable, Hashable {
     var id: String
     var kind: String
@@ -565,9 +582,13 @@ struct AgentRun: Decodable, Identifiable, Hashable {
     var status: String
     var live: Bool
     var open = false            // coding: still a conversation in its terminal (backend's one rule for "as a chat")
+    var source = ""             // coding: claude | codex | opencode | agy
+    var host = ""               // coding: linked computer slug
+    var cwd = ""                // coding: working folder
     var progress: String
     var sessionID: String
     var model: String
+    var availableModels: [CodingModelOption]?
     var refID: String
     var parentID: String
     var createdAt: String
@@ -581,7 +602,8 @@ struct AgentRun: Decodable, Identifiable, Hashable {
     var prompt: AgentPrompt?    // coding: the question / menu on its screen while it waits on you
 
     enum CodingKeys: String, CodingKey {
-        case id, kind, title, status, live, open, progress, model, error, result, messages, prompt
+        case id, kind, title, status, live, open, source, host, cwd, progress, model, error, result, messages, prompt
+        case availableModels = "available_models"
         case sessionID = "session_id", refID = "ref_id", parentID = "parent_id"
         case createdAt = "created_at", startedAt = "started_at", finishedAt = "finished_at"
         case resultChars = "result_chars", resultTruncated = "result_truncated"
@@ -597,9 +619,13 @@ struct AgentRun: Decodable, Identifiable, Hashable {
         status = (try? c.decode(String.self, forKey: .status)) ?? "queued"
         live = (try? c.decode(Bool.self, forKey: .live)) ?? false
         open = (try? c.decode(Bool.self, forKey: .open)) ?? false
+        source = (try? c.decode(String.self, forKey: .source)) ?? ""
+        host = (try? c.decode(String.self, forKey: .host)) ?? ""
+        cwd = (try? c.decode(String.self, forKey: .cwd)) ?? ""
         progress = (try? c.decode(String.self, forKey: .progress)) ?? ""
         sessionID = (try? c.decode(String.self, forKey: .sessionID)) ?? ""
         model = (try? c.decode(String.self, forKey: .model)) ?? ""
+        availableModels = try? c.decode([CodingModelOption].self, forKey: .availableModels)
         refID = (try? c.decode(String.self, forKey: .refID)) ?? ""
         parentID = (try? c.decode(String.self, forKey: .parentID)) ?? ""
         createdAt = (try? c.decode(String.self, forKey: .createdAt)) ?? ""
@@ -611,6 +637,19 @@ struct AgentRun: Decodable, Identifiable, Hashable {
         resultTruncated = (try? c.decode(Bool.self, forKey: .resultTruncated)) ?? false
         messages = try? c.decode([AgentMessage].self, forKey: .messages)
         prompt = try? c.decode(AgentPrompt.self, forKey: .prompt)
+    }
+
+    /// Harness slug for a coding agent ("claude", "codex", "opencode", "agy"), works even on older backends.
+    var harness: String {
+        if !source.isEmpty { return source.lowercased() }
+        let parts = id.split(separator: ":")
+        if parts.first == "code", parts.count >= 3 { return String(parts[2]).lowercased() }
+        let t = title.lowercased()
+        if t.hasPrefix("claude") { return "claude" }
+        if t.hasPrefix("codex") { return "codex" }
+        if t.hasPrefix("opencode") { return "opencode" }
+        if t.hasPrefix("agy") || t.hasPrefix("antigravity") { return "agy" }
+        return ""
     }
 
     var kindLabel: String {

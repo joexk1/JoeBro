@@ -61,7 +61,34 @@ struct CodingAgentConversation: View {
     }
 
     private func load() async {
-        if let r = try? await APIClient.shared.agentDetail(id: agentID) { run = r }
+        let target = run?.id ?? agentID
+        if let r = try? await APIClient.shared.agentDetail(id: target) {
+            run = r
+            if r.id != agentID { AgentNav.shared.open(r.id) }
+            return
+        }
+        // If an adopted pid* placeholder was replaced by its real session id, follow it cleanly.
+        await AgentNav.shared.refresh()
+        let parts = target.split(separator: ":")
+        let wantHost = run?.host.isEmpty == false ? run!.host : (parts.first == "code" && parts.count >= 2 ? String(parts[1]) : "")
+        let wantHarness = run?.harness.isEmpty == false ? run!.harness : (parts.first == "code" && parts.count >= 3 ? String(parts[2]) : "")
+        let candidates = AgentNav.shared.runs.filter { r in
+            r.id != target && (wantHarness.isEmpty || r.harness == wantHarness) && (wantHost.isEmpty || r.host.isEmpty || r.host == wantHost)
+        }
+        let replacement: AgentRun?
+        if let cwd = run?.cwd, !cwd.isEmpty {
+            let sameDir = candidates.filter { $0.cwd == cwd }
+            replacement = sameDir.count == 1 ? sameDir[0] : nil
+        } else if let title = run?.title, !title.isEmpty {
+            let sameTitle = candidates.filter { $0.title == title }
+            replacement = sameTitle.count == 1 ? sameTitle[0] : nil
+        } else {
+            replacement = nil
+        }
+        if let replacement {
+            AgentNav.shared.open(replacement.id)
+            run = (try? await APIClient.shared.agentDetail(id: replacement.id)) ?? replacement
+        }
     }
 
     private var header: some View {

@@ -16,6 +16,16 @@ from datetime import datetime, timezone
 
 UTC = timezone.utc
 SOURCES = {"claude": "Claude Code", "codex": "Codex", "opencode": "OpenCode", "agy": "Antigravity"}
+DEFAULT_MODELS = {
+    "claude": [("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku"), ("default", "Default")],
+    "agy": [("gemini-4-neon-high", "Gemini 4 Neon (High)"), ("gemini-4-neon-medium", "Gemini 4 Neon (Medium)"),
+            ("gemini-4-carbon-high", "Gemini 4 Carbon (High)"), ("gemini-4-hydrogen-high", "Gemini 4 Hydrogen (High)"),
+            ("gemini-pro-orchestrator-neon", "Orchestrator (Neon)"),
+            ("claude-opus-5-5-high", "Claude Opus 5.5 (High)"), ("claude-sonnet-5-5-high", "Claude Sonnet 5.5 (High)")],
+    "codex": [("gpt-6.2-sol", "GPT-6.2 Sol"), ("gpt-6.2-astra", "GPT-6.2 Astra"),
+              ("gpt-6.1-terra", "GPT-6.1 Terra"), ("gpt-5-codex", "GPT-5 Codex"), ("gpt-5", "GPT-5")],
+    "opencode": [("qwen3-coder:30b", "Qwen3 Coder 30B"), ("llama3.3:70b", "Llama 3.3 70B"), ("deepseek-v3.2", "DeepSeek V3.2")],
+}
 HOST_RX = re.compile(r"^[a-z0-9][a-z0-9-]{0,29}$")   # the computer name each link reports as
 EVENTS = {"start", "prompt", "tool", "tool_done", "waiting", "stop", "end", "subagent_start", "subagent_stop"}
 STALE_RUNNING = 25 * 60     # running with no event this long -> assume it died
@@ -280,7 +290,59 @@ class CodingAgentsMixin:
                 "result": "\n".join(n["detail"][-6:]), "tool_calls": n["tool_calls"]})
         return recs
 
+    def _resolve_coding_id(self, aid):
+        """Follow a retired pid-placeholder id (code:host:source:pidN) to the real hook-fed
+        session that replaced it, so an app tapping a stale card doesn't hit 'no such agent'."""
+        self._coding_table()
+        row = self.store.one("SELECT * FROM coding_agents WHERE id=?", (aid,))
+        if row and row["status"] != "ended":
+            return aid
+        parts = str(aid or "").split(":", 3)
+        if len(parts) == 4 and parts[0] == "code":
+            _, host, source, sid = parts
+            pid = (row or {}).get("pid")
+            if not pid and sid.startswith("pid") and sid[3:].isdigit():
+                pid = int(sid[3:])
+            if pid:
+                hit = self.store.one(
+                    "SELECT id FROM coding_agents WHERE host=? AND source=? AND pid=? AND kind='coding' AND status<>'ended' ORDER BY last_activity DESC LIMIT 1",
+                    (host, source, pid))
+                if hit:
+                    return hit["id"]
+            cwd = (row or {}).get("cwd") or ""
+            if cwd:
+                hits = self.store.rows(
+                    "SELECT id FROM coding_agents WHERE host=? AND source=? AND cwd=? AND kind='coding' AND status<>'ended' ORDER BY last_activity DESC LIMIT 2",
+                    (host, source, cwd))
+                if len(hits) == 1:
+                    return hits[0]["id"]
+        return aid
+
+    def coding_models_for(self, source, current=""):
+        """Model choices for one coding-agent harness: presets + any models recently seen for it."""
+        seen, out = set(), []
+        def add(mid, label=""):
+            mid = str(mid or "").strip()
+            if not mid or mid.lower() in seen:
+                return
+            seen.add(mid.lower())
+            out.append({"id": mid, "label": label or mid.split("/")[-1]})
+        if current:
+            preset_label = dict(DEFAULT_MODELS.get(source, ())).get(current, "")
+            add(current, preset_label)
+        for mid, label in DEFAULT_MODELS.get(source, ()):
+            add(mid, label)
+        try:
+            self._coding_table()
+            for r in self.store.rows(
+                    "SELECT DISTINCT model FROM coding_agents WHERE source=? AND model<>'' ORDER BY last_activity DESC LIMIT 12", (source,)):
+                add(r["model"])
+        except Exception:
+            pass
+        return out
+
     def coding_agent_detail(self, aid):
+        aid = self._resolve_coding_id(aid)
         rec = next((r for r in self.coding_agent_records() if r["id"] == aid), None)
         if not rec:
             return None
@@ -291,6 +353,7 @@ class CodingAgentsMixin:
                                                bool(node["waiting"]))
         rec["waiting"] = bool(node["waiting"])
         rec["can_send"] = node["status"] != "ended"
+        rec["available_models"] = self.coding_models_for(node["source"], node.get("model") or "")
         pending = next((d[2:] for d in reversed(node["detail"]) if d.startswith("⏸")), "") if node["waiting"] else ""
         rec["pending_approval"] = pending or ("needs your approval" if node["waiting"] else "")
         # A question or menu on its screen: the apps show it as buttons (only looked for while it waits on you).
@@ -361,32 +424,20 @@ class CodingAgentsMixin:
         Agent Control (interrupts the turn, like the user pressing Esc; it never
         closes the window). Refuses rather than guessing when the terminal
         can't be matched exactly."""
+        aid = self._resolve_coding_id(aid)
         self._coding_table()
         row = self.store.one("SELECT * FROM coding_agents WHERE id=?", (aid,))
         if not row:
             return {"ok": False, "detail": "no such coding agent"}, 404
-        mcp = next((r for r in self.store.rows("SELECT * FROM mcp_servers WHERE enabled=1")
-                    if "agent_control" in str(r.get("args") or "") or str(r.get("name") or "").lower() == "agent control"), None)
-        if not mcp:
-            return {"ok": False, "detail": "Agent Control is not enabled"}, 409
-        listed = self.run_mcp_tool(mcp, "agent_list_sessions", {"host": row["host"], "filter_type": "all"})
         try:
-            sessions = json.loads(listed.get("output") or "{}").get("sessions") or []
-        except ValueError:
-            sessions = []
-        term = json.loads(row.get("terminal_json") or "{}")
-        sock = str(term.get("kitty_listen_on") or "").replace("unix:", "")
-        match = [s for s in sessions if s.get("controllable") and (
-            (row["source"] == "claude" and s.get("claude_session_id") == row["session_id"]) or
-            (sock and str(s.get("socket")) == sock and str(s.get("window_id")) == str(term.get("kitty_window_id"))) or
-            (term.get("tmux_pane") and s.get("kind") == "tmux" and
-             s.get("session_id") == "tmux:" + str(term["tmux_pane"]) and
-             s.get("agent_type") == row["source"]))]
-        if len(match) != 1:
+            term = self._coding_terminal(row)
+        except ValueError as exc:
+            return {"ok": False, "detail": str(exc)}, 409
+        if not term:
             return {"ok": False, "detail": "Couldn't match that agent to exactly one controllable terminal (it must run in Kitty or tmux)."}, 409
-        sent = self.run_mcp_tool(mcp, "agent_send_keys", {"session_id": match[0]["session_id"], "host": row["host"], "keys": "escape"})
-        if sent.get("exit_code"):
-            return {"ok": False, "detail": str(sent.get("output") or "interrupt failed")[:300]}, 502
+        sent = self._agent_control("agent_send_keys", {"session_id": term["session_id"], "host": row["host"], "keys": "escape"})
+        if sent.get("error"):
+            return {"ok": False, "detail": str(sent["error"])[:300]}, 502
         self.coding_event({"source": row["source"], "host": row["host"], "session_id": row["session_id"],
                            "event": "stop", "text": "interrupted from JoeBro"})
         return {"ok": True, "detail": "Interrupted"}, 200
@@ -407,13 +458,22 @@ class CodingAgentsMixin:
         return data
 
     @staticmethod
-    def _session_matches(row, s):
-        term = json.loads(row.get("terminal_json") or "{}")
-        sock = str(term.get("kitty_listen_on") or "").replace("unix:", "")
+    def _exact_match(row, s):
         if row["source"] == "claude" and s.get("claude_session_id") == row["session_id"]:
             return True
         if row.get("pid") and str(s.get("pid")) == str(row["pid"]):
             return True
+        return False
+
+    @staticmethod
+    def _session_matches(row, s):
+        if CodingAgentsMixin._exact_match(row, s):
+            return True
+        term = json.loads(row.get("terminal_json") or "{}")
+        if term.get("tmux_pane") and s.get("kind") == "tmux" and s.get("session_id") == "tmux:" + str(term["tmux_pane"]) \
+                and s.get("agent_type") == row["source"]:
+            return True
+        sock = str(term.get("kitty_listen_on") or "").replace("unix:", "")
         return bool(sock and str(s.get("socket")) == sock and str(s.get("window_id")) == str(term.get("kitty_window_id"))
                     and s.get("agent_type") == row["source"])
 
@@ -430,14 +490,27 @@ class CodingAgentsMixin:
         errs = data.get("host_errors") or []
         down = {str(e.get("host") if isinstance(e, dict) else e).split(":")[0].lower() for e in errs} \
             if isinstance(errs, list) else {str(k).lower() for k in errs}
-        rows = self.store.rows("SELECT * FROM coding_agents WHERE status<>'ended'")
+        rows = self.store.rows("SELECT * FROM coding_agents WHERE status<>'ended' AND kind='coding' ORDER BY last_activity DESC")
+        # Real hook-fed rows claim their terminal before pid-placeholder rows and exited nested runs.
+        rows.sort(key=lambda r: (str(r.get("session_id") or "").startswith("pid"), -(r.get("last_activity") or 0)))
         ended = adopted = 0
-        claimed = set()
+        claimed, matched_rows = set(), set()
+        # Pass 1: exact matches (claude_session_id or PID) so one live terminal never keeps exited child runs alive.
         for row in rows:
             if row["host"] in down:
                 continue
-            hit = next((s for s in sessions if s.get("host") == row["host"] and self._session_matches(row, s)), None) \
-                or next(iter(self._same_folder(row, [s for s in sessions if s.get("host") == row["host"] and id(s) not in claimed])), None)
+            hit = next((s for s in sessions if id(s) not in claimed and s.get("host") == row["host"]
+                        and self._exact_match(row, s)), None)
+            if hit:
+                claimed.add(id(hit))
+                matched_rows.add(row["id"])
+        # Pass 2: unclaimed rows match only unclaimed terminals (tmux pane, Kitty window, or unique folder).
+        for row in rows:
+            if row["host"] in down or row["id"] in matched_rows:
+                continue
+            avail = [s for s in sessions if id(s) not in claimed and s.get("host") == row["host"]]
+            hit = next((s for s in avail if self._session_matches(row, s)), None) \
+                or next(iter(self._same_folder(row, avail)), None)
             if hit:
                 claimed.add(id(hit))
             else:
@@ -464,6 +537,7 @@ class CodingAgentsMixin:
 
     # ------------------------------------------------------------------ command & control
     def _coding_row(self, aid):
+        aid = self._resolve_coding_id(aid)
         self._coding_table()
         row = self.store.one("SELECT * FROM coding_agents WHERE id=?", (aid,))
         if not row or row["status"] == "ended":
@@ -474,9 +548,9 @@ class CodingAgentsMixin:
         """The exact Agent Control session for this agent, or None."""
         data = self._agent_control("agent_list_sessions", {"host": row["host"], "filter_type": "all"})
         sessions = [s for s in data.get("sessions") or [] if s.get("controllable")]
-        # An exact Claude session id beats everything (a tmux agent can inherit another
-        # terminal's Kitty variables, which must never send its input elsewhere).
+        # Prefer exact session/PID match before Kitty window or folder fallback.
         match = [s for s in sessions if row["source"] == "claude" and s.get("claude_session_id") == row["session_id"]] \
+            or [s for s in sessions if row.get("pid") and str(s.get("pid")) == str(row["pid"])] \
             or [s for s in sessions if self._session_matches(row, s)]
         if not match:
             match = self._same_folder(row, sessions)
@@ -540,6 +614,22 @@ class CodingAgentsMixin:
         for r in rows:
             self.store.exec("UPDATE coding_inbox SET delivered_at=?, via=? WHERE id=?", (time.time(), str(q.get("via") or "hook")[:20], r["id"]))
         return {"ok": True, "messages": [{"from": r["sender"], "text": r["text"]} for r in rows]}
+
+    def coding_set_model(self, aid, model):
+        """Switch the active model of a running/idle coding agent (Claude Code, Codex, OpenCode, Antigravity)."""
+        row = self._coding_row(aid)
+        model = re.sub(r"[\r\n]+", " ", str(model or "")).strip()[:120]
+        if not model:
+            raise ValueError("model is required")
+        src = row["source"]
+        if src == "opencode":
+            # OpenCode's plugin applies a queued /model directive on its next prompt (and reports back).
+            res = self.coding_send(row["id"], "/model " + model, sender="app", mode="queue")
+        else:
+            # Claude Code, Codex, and Antigravity take `/model <model>` in their idle Kitty/tmux terminal.
+            res = self.coding_send(row["id"], "/model " + model, sender="app", mode="terminal")
+        self.store.exec("UPDATE coding_agents SET model=? WHERE id=?", (model, row["id"]))
+        return dict(res, model=model, id=row["id"])
 
     def coding_keys(self, aid, keys):
         row = self._coding_row(aid)
@@ -775,7 +865,7 @@ class CodingAgentsMixin:
                         (aid, decision, time.time()))
         return self.coding_apply_decision(aid)
 
-    APPROVAL_RX = re.compile(r"Do you want|Would you like|Allow (once|always|this)|Yes, proceed|approv|\(y/n\)|\[y/N\]|Permission required", re.I)
+    APPROVAL_RX = re.compile(r"Do you want|Would you like|Allow (once|always|this)|Yes, proceed|Approve|Run command|approv|\(y/n\)|\[y/N\]|Permission required", re.I)
 
     def coding_apply_decision(self, aid):
         self._coding_decisions_table()

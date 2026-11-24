@@ -228,6 +228,44 @@ class CodingControl(unittest.TestCase):
         self.assertEqual(f.coding_inbox_pull({"host": "pc", "source": "claude", "session_id": "aaa"})["messages"], [])
         with self.assertRaises(ValueError): f.coding_keys("code:pc:claude:aaa", "rm -rf")
 
+    def test_retired_pid_placeholder_resolves_and_nested_runs_do_not_zombie(self):
+        f = self.f
+        self.sessions = [{"session_id": "kitty:s/1", "host": "pc", "agent_type": "agy", "pid": 500, "cwd": "/w/app",
+                          "window_id": "1", "socket": "/tmp/kitty-1", "controllable": True}]
+        f.coding_reconcile_open()
+        self.assertEqual([n["id"] for n in f.coding_nodes()], ["code:pc:agy:pid500"])
+        # Real hook arrives for PID 500 -> retires pid500; old id still resolves cleanly for mobile/Mac detail & send!
+        f.coding_event({"source": "agy", "host": "pc", "session_id": "conv-1", "event": "stop", "pid": 500,
+                        "cwd": "/w/app", "kitty_window_id": "1", "kitty_listen_on": "unix:/tmp/kitty-1", "model": "gemini-4-neon-high"})
+        det = f.coding_agent_detail("code:pc:agy:pid500")
+        self.assertIsNotNone(det)
+        self.assertEqual(det["id"], "code:pc:agy:conv-1")
+        self.assertIn("gemini-4-neon-high", [m["id"] for m in det["available_models"]])
+        # Exited nested print run that inherited the same Kitty window must NOT stay alive on reconcile.
+        f.coding_event({"source": "agy", "host": "pc", "session_id": "tmp-child", "event": "stop", "pid": 999,
+                        "cwd": "/tmp/x", "kitty_window_id": "1", "kitty_listen_on": "unix:/tmp/kitty-1"})
+        f.coding_reconcile_open()
+        self.assertEqual([n["id"] for n in f.coding_nodes()], ["code:pc:agy:conv-1"])
+
+    def test_coding_set_model_for_all_harnesses(self):
+        f = self.f
+        self.sessions = [
+            {"session_id": "kitty:s/1", "host": "pc", "agent_type": "agy", "pid": 501, "cwd": "/w/a", "controllable": True},
+            {"session_id": "kitty:s/2", "host": "pc", "agent_type": "codex", "pid": 502, "cwd": "/w/b", "controllable": True},
+        ]
+        f.coding_event({"source": "agy", "host": "pc", "session_id": "a1", "event": "stop", "pid": 501, "cwd": "/w/a"})
+        f.coding_event({"source": "codex", "host": "pc", "session_id": "c1", "event": "stop", "pid": 502, "cwd": "/w/b"})
+        f.coding_event({"source": "opencode", "host": "pc", "session_id": "o1", "event": "stop", "pid": 503, "cwd": "/w/c"})
+        r_agy = f.coding_set_model("code:pc:agy:a1", "gemini-4-carbon-high")
+        self.assertEqual((r_agy["delivered"], r_agy["model"]), ("terminal", "gemini-4-carbon-high"))
+        r_codex = f.coding_set_model("code:pc:codex:c1", "gpt-6.2-sol")
+        self.assertEqual((r_codex["delivered"], r_codex["model"]), ("terminal", "gpt-6.2-sol"))
+        r_oc = f.coding_set_model("code:pc:opencode:o1", "muse/muse-4b")
+        self.assertEqual((r_oc["delivered"], r_oc["model"]), ("queued", "muse/muse-4b"))
+        pulled = f.coding_inbox_pull({"host": "pc", "source": "opencode", "session_id": "o1"})
+        self.assertEqual([m["text"] for m in pulled["messages"]], ["/model muse/muse-4b"])
+        self.assertEqual(f.coding_agent_detail("code:pc:agy:a1")["model"], "gemini-4-carbon-high")
+
 
 class CodingPingTests(unittest.TestCase):
     def test_ping_delivers_rate_limits_and_caps(self):
