@@ -30,7 +30,7 @@ AI is becoming where people think, write and build. That shouldn't depend on som
 - **Your models, your choice.** Local models run fully offline. Hosted models use your own keys and go straight to the provider you picked, with Cloak Mode masking secrets first.
 - **No account, no telemetry, no lock-in.** Open source under the GPLv3, so you can read exactly what it does, change it, and keep it running for as long as you like.
 
-**Website:** [joebro.pages.dev](https://joebro.pages.dev/) · **iPhone app:** [JoeBro Mobile](https://github.com/joexk1/JoeBro-Mobile) · **Plugins:** [joebro-plugins](https://github.com/joexk1/joebro-plugins) · **Comparing tools?** [How JoeBro compares](https://joebro.pages.dev/mac-app-for-claude-code-codex-opencode/)
+**Website:** [joebro.pages.dev](https://joebro.pages.dev/) · **Windows and Linux:** [JoeBro Desktop](https://github.com/joexk1/JoeBro-Desktop) · **iPhone app:** [JoeBro Mobile](https://github.com/joexk1/JoeBro-Mobile) · **Plugins:** [joebro-plugins](https://github.com/joexk1/joebro-plugins) · **Comparing tools?** [How JoeBro compares](https://joebro.pages.dev/mac-app-for-claude-code-codex-opencode/)
 
 ### Install everything with one command
 
@@ -130,6 +130,12 @@ The iPhone app has the same look and the same pool of chats, with your coding ag
 ![JoeBro on iPhone](assets/readme/ios-row.png)
 
 ---
+
+## Windows and Linux
+
+JoeBro also runs on Windows and Linux as **[JoeBro Desktop](https://github.com/joexk1/JoeBro-Desktop)**, a native Rust app with the same look, panels and coding-agent support. It runs the same backend on your own computer, or connects to the one in your JoeBro Mac app. The one command on [joebro.pages.dev](https://joebro.pages.dev/) picks the right download for your system.
+
+![JoeBro Desktop on Windows and Linux](https://raw.githubusercontent.com/joexk1/JoeBro-Desktop/main/assets/readme/hero.png)
 
 ## Get started
 
