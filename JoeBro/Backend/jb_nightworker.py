@@ -16,17 +16,18 @@ import time
 
 BRANCH_PREFIX = "joebro/night/"
 SHOT = os.path.join(".joebro", "night", "screenshot.png")
-NAMES = {"claude": "Claude Code", "codex": "Codex", "opencode": "OpenCode"}
+NAMES = {"claude": "Claude Code", "codex": "Codex", "opencode": "OpenCode", "agy": "Antigravity"}
 # Headless commands of the agents' own CLIs (the user's subscriptions; no JoeBro model calls).
 COMMANDS = {
     "claude": ["claude", "-p", "{prompt}", "--output-format", "json", "--permission-mode", "acceptEdits"],
     "codex": ["codex", "exec", "-s", "workspace-write", "{prompt}"],   # --full-auto was removed in codex 0.167
     "opencode": ["opencode", "run", "{prompt}"],
+    "agy": ["agy", "-p", "{prompt}", "--output-format", "json", "--mode", "accept-edits"],
 }
-MODEL_FLAG = {"claude": "--model", "codex": "-m", "opencode": "-m"}
+MODEL_FLAG = {"claude": "--model", "codex": "-m", "opencode": "-m", "agy": "--model"}
 BUDGET_FLAG = {"claude": "--max-budget-usd"}
-RESUME = {"claude": ["--resume", "{id}"], "codex": ["resume", "{id}"], "opencode": ["--session", "{id}"]}
-INTERACTIVE = {"claude": ["claude"], "codex": ["codex"], "opencode": ["opencode"]}
+RESUME = {"claude": ["--resume", "{id}"], "codex": ["resume", "{id}"], "opencode": ["--session", "{id}"], "agy": ["--resume", "{id}"]}
+INTERACTIVE = {"claude": ["claude"], "codex": ["codex"], "opencode": ["opencode"], "agy": ["agy"]}
 
 
 def no_push_env():
@@ -82,7 +83,7 @@ def agent_argv(agent, prompt, model="", budget=0, commands=None, resume_id=""):
             argv += [MODEL_FLAG[agent], model]
         if budget and agent in BUDGET_FLAG:
             argv += [BUDGET_FLAG[agent], str(budget)]
-        if resume_id and agent == "claude":
+        if resume_id and agent in ("claude", "agy"):
             argv += ["--resume", resume_id]
         elif resume_id and agent == "opencode":
             argv += ["--session", resume_id]
@@ -94,6 +95,7 @@ PERMISSIONS = ("", "ask", "edits", "full")
 PERMISSION_FLAGS = {
     "claude": {"edits": ["--permission-mode", "acceptEdits"], "full": ["--dangerously-skip-permissions"]},
     "codex": {"edits": ["--full-auto"], "full": ["--dangerously-bypass-approvals-and-sandbox"]},
+    "agy": {"edits": ["--mode", "accept-edits"], "full": ["--dangerously-skip-permissions"]},
 }
 
 
@@ -108,7 +110,12 @@ def session_argv(agent, prompt="", model="", resume_id="", commands=None, permis
     if model and agent in MODEL_FLAG:
         argv += [MODEL_FLAG[agent], model]
     if prompt:
-        argv += (["--prompt", prompt] if agent == "opencode" else [prompt])
+        if agent == "opencode":
+            argv += ["--prompt", prompt]
+        elif agent == "agy":
+            argv += ["--prompt-interactive", prompt]
+        else:
+            argv += [prompt]
     return argv
 
 
@@ -159,8 +166,10 @@ def parse_output(output):
     text, cost, session = output or "", None, ""
     try:
         data = json.loads(text.strip().splitlines()[-1]) if text.strip().startswith("{") or "\n{" in text else None
-        if isinstance(data, dict) and "result" in data:
-            text, cost, session = str(data.get("result") or ""), data.get("total_cost_usd"), str(data.get("session_id") or "")
+        if isinstance(data, dict) and ("result" in data or "response" in data):
+            text = str(data.get("result") if "result" in data else data.get("response") or "")
+            cost = data.get("total_cost_usd")
+            session = str(data.get("session_id") or data.get("conversation_id") or "")
     except (ValueError, IndexError):
         pass
     learned = [re.sub(r"\s+", " ", m).strip()[:400] for m in re.findall(r"^\s*LEARNED:\s*(.+)$", text, flags=re.M)][:3]

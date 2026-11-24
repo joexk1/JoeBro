@@ -134,7 +134,7 @@ struct ProviderBrand {
         if m.contains("gpt") || m.contains("openai") || m.hasPrefix("o1") || m.hasPrefix("o3") || m.contains("oss") {
             return .init(initial: "O", color: Color(red: 0.10, green: 0.65, blue: 0.55)) }
         if m.contains("claude") { return .init(initial: "C", color: Color(red: 0.85, green: 0.47, blue: 0.34)) }
-        if m.contains("gemini") || m.contains("gemma") { return .init(initial: "G", color: Color(red: 0.26, green: 0.52, blue: 0.96)) }
+        if m.contains("gemini") || m.contains("gemma") || m.contains("antigravity") || m == "agy" { return .init(initial: "G", color: Color(red: 0.26, green: 0.52, blue: 0.96)) }
         if m.contains("qwen") { return .init(initial: "Q", color: Color(red: 0.55, green: 0.36, blue: 0.96)) }
         if m.contains("llama") { return .init(initial: "L", color: Color(red: 0.0, green: 0.50, blue: 0.95)) }
         if m.contains("mistral") || m.contains("mixtral") { return .init(initial: "M", color: Color(red: 0.99, green: 0.44, blue: 0.13)) }

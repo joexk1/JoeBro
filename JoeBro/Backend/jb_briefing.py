@@ -147,7 +147,7 @@ class BriefingMixin:
         return "AGENTS: " + ("; ".join(bits) if bits else "nothing running, nothing failed.")
 
     def briefing_coding_facts(self, since=""):
-        """Coding agents (Claude Code / Codex / OpenCode) since the last briefing:
+        """Coding agents (Claude Code / Codex / OpenCode / Antigravity) since the last briefing:
         what finished, what is waiting on the user, what went quiet mid-task."""
         try:
             self._coding_table()

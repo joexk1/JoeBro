@@ -15,7 +15,7 @@ import time
 from datetime import datetime, timezone
 
 UTC = timezone.utc
-SOURCES = {"claude": "Claude Code", "codex": "Codex", "opencode": "OpenCode", "agy": "AGY"}
+SOURCES = {"claude": "Claude Code", "codex": "Codex", "opencode": "OpenCode", "agy": "Antigravity"}
 HOST_RX = re.compile(r"^[a-z0-9][a-z0-9-]{0,29}$")   # the computer name each link reports as
 EVENTS = {"start", "prompt", "tool", "tool_done", "waiting", "stop", "end", "subagent_start", "subagent_stop"}
 STALE_RUNNING = 25 * 60     # running with no event this long -> assume it died
@@ -26,7 +26,7 @@ DROP_ENDED = 15 * 60
 
 CODING_AGENTS_TOOL = {"type": "function", "function": {
     "name": "coding_agents",
-    "description": ("See the user's coding agents (Claude Code, Codex, OpenCode) running on their linked computers: "
+    "description": ("See the user's coding agents (Claude Code, Codex, OpenCode, Antigravity) running on their linked computers: "
                     "what each is working on, whether it is busy, waiting for approval or done, and its recent "
                     "activity. `list` = all current ones; `detail` = one agent's recent lines. To give one a "
                     "follow-up or answer it, use the joebro MCP tools (coding_agent_send / coding_agent_control) "
@@ -573,7 +573,7 @@ class CodingAgentsMixin:
     _OPTION = re.compile(r"^\s*([❯›>▶●])?\s*(?:(\d{1,2})[.)]\s+)?(\S.*?)\s*$")
     _CHROME = re.compile(r"^[\s─━═\-_│|╭╮╰╯]*$")
     _SKIP = re.compile(r"^(chat about this|type here to tell)", re.I)
-    _FREEFORM = re.compile(r"^(type something|other|no, and tell|tell (claude|codex) what)", re.I)
+    _FREEFORM = re.compile(r"^(type something|other|no, and tell|tell (claude|codex|antigravity|agy) what)", re.I)
 
     @classmethod
     def parse_menu(cls, screen):

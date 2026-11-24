@@ -16,7 +16,7 @@ def parse(body, existing):
     get = lambda k, n: str(body.get(k, cur.get(k)) or "").strip()[:n]
     agent, repo = get("coding_agent", 20), get("coding_repo", 500)
     if agent and agent != "any" and agent not in worker.COMMANDS:
-        raise ValueError("coding_agent is claude, codex, opencode or any")
+        raise ValueError("coding_agent is claude, codex, opencode, agy or any")
     if agent and not repo:
         raise ValueError("a coding task needs a folder (coding_repo)")
     if not agent:

@@ -45,7 +45,7 @@ struct NightTask: Decodable, Identifiable, Hashable {
     var needsReview: Bool { state == "review" || (state == "failed" && result != nil) }
     var isOpen: Bool { state == "queued" || state == "running" }
     var agentLabel: String {
-        switch agent ?? "any" { case "claude": "Claude Code"; case "codex": "Codex"; case "opencode": "OpenCode"; default: "Any agent" }
+        switch agent ?? "any" { case "claude": "Claude Code"; case "codex": "Codex"; case "opencode": "OpenCode"; case "agy": "Antigravity"; default: "Any agent" }
     }
 }
 
@@ -91,7 +91,7 @@ struct MemFact: Decodable, Identifiable, Hashable {
     var provenanceLine: String {
         guard let p = provenance else { return "" }
         let agent: String? = switch p.agent ?? "" {
-        case "claude": "Claude Code"; case "codex": "Codex"; case "opencode": "OpenCode"
+        case "claude": "Claude Code"; case "codex": "Codex"; case "opencode": "OpenCode"; case "agy": "Antigravity"
         case "app": "JoeBro app"; case "joebro": "JoeBro"; case "": nil; default: p.agent
         }
         let source: String? = switch p.source ?? "" {

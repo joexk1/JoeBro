@@ -71,7 +71,7 @@ DEFERRED_GROUPS = {
     "health": ({"health_data"},
                r"\b(?:health|sleep|slept|steps|workout|exercise|heart|hrv|resting|weight|fitness|calories|kcal|tired|energy|\brun\b|gym|apple health|recovery)"),
     "coding": ({"coding_agents", "recent_coding_sessions", "start_coding_session", "send_to_coding_session"},
-               r"\b(?:resum\w*|carry on|continue|follow.?up|tell (it|them|the)|agents?|claude|codex|opencode|coding|session|terminal|running|working on|build|deploy|repo|pr\b|project)"),
+               r"\b(?:resum\w*|carry on|continue|follow.?up|tell (it|them|the)|agents?|claude|codex|opencode|agy|antigravity|coding|session|terminal|running|working on|build|deploy|repo|pr\b|project)"),
     "proactive": ({"proactive_actions"},
                   r"\b(?:proactive|spotted|background|you added|did you add|undo|suggest\w*|approve)"),
     "transfer": ({"export_to_artifact", "deliver_artifact", "move_file", "describe_image"},

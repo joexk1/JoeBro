@@ -214,6 +214,10 @@ class Run(Base):
         self.assertEqual(worker.agent_argv("opencode", "go", resume_id="ses_1")[-2:], ["--session", "ses_1"])
         self.assertEqual(worker.session_argv("claude", "go on", resume_id="abc"), ["claude", "--resume", "abc", "go on"])
         self.assertEqual(worker.session_argv("codex", "go on", resume_id="abc"), ["codex", "resume", "abc", "go on"])
+        self.assertEqual(worker.agent_argv("agy", "do it", "gemini-4-neon-high", resume_id="c1"),
+                         ["agy", "-p", "do it", "--output-format", "json", "--mode", "accept-edits", "--model", "gemini-4-neon-high", "--resume", "c1"])
+        self.assertEqual(worker.session_argv("agy", "go on", resume_id="c1", permission="full"),
+                         ["agy", "--dangerously-skip-permissions", "--resume", "c1", "--prompt-interactive", "go on"])
 
 
 class Sessions(Base):

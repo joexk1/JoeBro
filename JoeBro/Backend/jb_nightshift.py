@@ -38,7 +38,7 @@ _LOCK = threading.Lock()
 
 RECENT_SESSIONS_TOOL = {"type": "function", "function": {
     "name": "recent_coding_sessions",
-    "description": ("The user's recent coding sessions (Claude Code, Codex, OpenCode) per project: repo, agent, model, computer, "
+    "description": ("The user's recent coding sessions (Claude Code, Codex, OpenCode, Antigravity) per project: repo, agent, model, computer, "
                     "branch, a one-line summary of where it stopped, and the id to resume it. Use before start_coding_session "
                     "when the user says things like 'carry on with what I was doing yesterday'."),
     "parameters": {"type": "object", "properties": {"project": {"type": "string", "description": "project name, key or repo path; omit for all"}}}}}
@@ -49,7 +49,7 @@ START_SESSION_TOOL = {"type": "function", "function": {
     "parameters": {"type": "object", "properties": {
         "project": {"type": "string", "description": "project name or key from recent_coding_sessions"},
         "repo": {"type": "string", "description": "or: absolute repo path"},
-        "agent": {"type": "string", "enum": ["claude", "codex", "opencode"]},
+        "agent": {"type": "string", "enum": ["claude", "codex", "opencode", "agy"]},
         "prompt": {"type": "string"},
         "resume": {"type": "boolean", "description": "true = resume the latest session in that project (native resume)"}},
         "required": ["prompt"]}}}
@@ -186,7 +186,7 @@ class NightShiftMixin:
             elif k == "on_approve" and v not in ("keep", "merge"):
                 raise ValueError("on_approve is keep or merge")
             elif k == "default_agent" and v not in worker.COMMANDS:
-                raise ValueError("default_agent is claude, codex or opencode")
+                raise ValueError("default_agent is claude, codex, opencode or agy")
             elif k == "parallel":
                 v = max(1, min(int(v), 4))
             elif k == "max_minutes":
@@ -240,7 +240,7 @@ class NightShiftMixin:
         if "permission" in f and f["permission"] not in worker.PERMISSIONS:
             raise ValueError("permission is ask, edits or full")
         if "agent" in f and f["agent"] not in ("any",) + tuple(worker.COMMANDS):
-            raise ValueError("agent is claude, codex, opencode or any")
+            raise ValueError("agent is claude, codex, opencode, agy or any")
         for k in ("window_start", "window_end"):
             if k in f:
                 f[k] = _hhmm(f[k])

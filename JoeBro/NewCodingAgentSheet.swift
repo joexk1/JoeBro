@@ -56,10 +56,11 @@ struct NewCodingAgentSheet: View {
                     }
                 }
                 field("Agent") {
-                    select(["claude": "Claude Code", "codex": "Codex", "opencode": "OpenCode"][agent] ?? agent) {
+                    select(["claude": "Claude Code", "codex": "Codex", "opencode": "OpenCode", "agy": "Antigravity"][agent] ?? agent) {
                         option("Claude Code", on: agent == "claude") { agent = "claude" }
                         option("Codex", on: agent == "codex") { agent = "codex" }
                         option("OpenCode", on: agent == "opencode") { agent = "opencode" }
+                        option("Antigravity", on: agent == "agy") { agent = "agy" }
                     }
                 }
                 field("Permissions") {
